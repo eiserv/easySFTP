@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"net"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pkg/sftp"
@@ -24,14 +25,29 @@ type testServer struct {
 	handlers      sftp.Handlers
 	sshConfig     *ssh.ServerConfig
 	listener      net.Listener
+
+	// Fault injection (set via options before the accept loop starts).
+	failRename bool  // make every rename fail with a non-transient error
+	dropAfter  int64 // if >0, kill each connection after it reads this many bytes
 }
+
+// serverOption tweaks a testServer before it starts serving.
+type serverOption func(*testServer)
+
+// withFailRename makes the server reject every (Posix)Rename, simulating a
+// server that lets the temp upload through but cannot swap it into place.
+func withFailRename() serverOption { return func(s *testServer) { s.failRename = true } }
+
+// withDropAfter closes each connection once it has read n bytes from the
+// client, simulating a mid-transfer connection drop.
+func withDropAfter(n int64) serverOption { return func(s *testServer) { s.dropAfter = n } }
 
 const (
 	testUser     = "testuser"
 	testPassword = "testpass"
 )
 
-func startTestServer(t *testing.T) *testServer {
+func startTestServer(t *testing.T, opts ...serverOption) *testServer {
 	t.Helper()
 
 	_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
@@ -87,6 +103,12 @@ func startTestServer(t *testing.T) *testServer {
 		sshConfig:     sshConfig,
 		listener:      listener,
 	}
+	for _, opt := range opts {
+		opt(srv)
+	}
+	if srv.failRename {
+		srv.handlers.FileCmd = &faultyRename{inner: srv.handlers.FileCmd}
+	}
 	tcpAddr := listener.Addr().(*net.TCPAddr)
 	srv.Host = tcpAddr.IP.String()
 	srv.Port = tcpAddr.Port
@@ -95,11 +117,45 @@ func startTestServer(t *testing.T) *testServer {
 	return srv
 }
 
+// faultyRename wraps a FileCmder and fails every rename, delegating everything
+// else to the real in-memory handler.
+type faultyRename struct{ inner sftp.FileCmder }
+
+func (f *faultyRename) Filecmd(r *sftp.Request) error {
+	if r.Method == "Rename" || r.Method == "PosixRename" {
+		return errors.New("injected rename failure")
+	}
+	return f.inner.Filecmd(r)
+}
+
+func (f *faultyRename) PosixRename(r *sftp.Request) error {
+	return errors.New("injected rename failure")
+}
+
+// dropConn closes the connection once it has read limit bytes, simulating a
+// network drop partway through a transfer.
+type dropConn struct {
+	net.Conn
+	limit int64
+	read  int64
+}
+
+func (c *dropConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if atomic.AddInt64(&c.read, int64(n)) > c.limit {
+		c.Conn.Close()
+	}
+	return n, err
+}
+
 func (s *testServer) acceptLoop() {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			return
+		}
+		if s.dropAfter > 0 {
+			conn = &dropConn{Conn: conn, limit: s.dropAfter}
 		}
 		go s.handleConn(conn)
 	}

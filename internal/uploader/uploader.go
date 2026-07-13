@@ -4,6 +4,7 @@ package uploader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -215,7 +216,7 @@ func executePlan(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 			if cfg.DryRun {
 				return nil
 			}
-			n, err := uploadFileWithRetry(f, client, cfg.Retries, log)
+			n, err := uploadFileWithRetry(ctx, f, client, cfg.Retries, log)
 			if err != nil {
 				return err
 			}
@@ -234,48 +235,138 @@ func executePlan(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 	return nil
 }
 
+// tmpSuffix is appended to the remote path while a file is still uploading.
+// It keeps the temp file in the same directory as its target so the final
+// rename stays on one filesystem and is atomic.
+const tmpSuffix = ".easysftp-tmp"
+
 // uploadFileWithRetry uploads one file, retrying transient failures with
-// exponential backoff.
-func uploadFileWithRetry(f fileItem, client *sftp.Client, retries int, log Logger) (int64, error) {
+// exponential backoff. It stops early when the context is cancelled or the
+// error is permanent (see isRetryable), so a doomed transfer fails fast.
+func uploadFileWithRetry(ctx context.Context, f fileItem, client *sftp.Client, retries int, log Logger) (int64, error) {
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(1<<(attempt-1)) * time.Second
 			log.Warningf("retrying upload of %s in %s (attempt %d/%d): %v", f.localPath, backoff, attempt+1, retries+1, lastErr)
-			time.Sleep(backoff)
+			if err := sleepCtx(ctx, backoff); err != nil {
+				return 0, err
+			}
 		}
-		n, err := uploadFile(f, client)
+		n, err := uploadFile(ctx, f, client, log)
 		if err == nil {
 			return n, nil
 		}
 		lastErr = err
+		if !isRetryable(err) {
+			break
+		}
 	}
 	return 0, fmt.Errorf("uploading %q to %q: %w", f.localPath, f.remotePath, lastErr)
 }
 
-func uploadFile(f fileItem, client *sftp.Client) (int64, error) {
+// uploadFile atomically uploads one file: it streams the content into a
+// temporary sibling and, only once that fully succeeds, renames it over the
+// target. Any failure removes the temporary file so a broken or partial upload
+// never replaces the live file and no debris is left behind.
+func uploadFile(ctx context.Context, f fileItem, client *sftp.Client, log Logger) (int64, error) {
 	src, err := os.Open(f.localPath)
 	if err != nil {
 		return 0, err
 	}
 	defer src.Close()
 
-	dst, err := client.OpenFile(f.remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	tmpPath := f.remotePath + tmpSuffix
+	dst, err := client.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return 0, err
 	}
 
-	n, err := io.Copy(dst, src)
+	// ctxReader aborts the copy promptly when the deployment is cancelled,
+	// instead of streaming a whole large file first.
+	n, err := io.Copy(dst, &ctxReader{ctx: ctx, r: src})
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
+		cleanupTmp(client, tmpPath, log)
 		return n, err
 	}
 
 	// Best effort: keep the local permission bits. Some servers reject this.
-	_ = client.Chmod(f.remotePath, f.mode.Perm())
+	_ = client.Chmod(tmpPath, f.mode.Perm())
+
+	if err := renameReplace(client, tmpPath, f.remotePath); err != nil {
+		cleanupTmp(client, tmpPath, log)
+		return n, fmt.Errorf("replacing %q: %w", f.remotePath, err)
+	}
 	return n, nil
+}
+
+// renameReplace atomically moves tmp onto final. It prefers the
+// posix-rename@openssh.com extension (a true atomic overwrite) and falls back
+// to a plain remove+rename for servers that do not support it.
+func renameReplace(client *sftp.Client, tmp, final string) error {
+	err := client.PosixRename(tmp, final)
+	if err == nil {
+		return nil
+	}
+	var se *sftp.StatusError
+	if !errors.As(err, &se) || se.FxCode() != sftp.ErrSSHFxOpUnsupported {
+		return err
+	}
+	// ponytail: non-atomic fallback — a brief window where final is missing.
+	// Only reached on servers lacking posix-rename; unavoidable there.
+	_ = client.Remove(final)
+	return client.Rename(tmp, final)
+}
+
+// cleanupTmp best-effort removes a leftover temp file, warning (but not
+// failing) if the server refuses, so an orphan is at least visible in the log.
+func cleanupTmp(client *sftp.Client, tmpPath string, log Logger) {
+	if err := client.Remove(tmpPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Warningf("could not remove temporary file %s: %v", tmpPath, err)
+	}
+}
+
+// isRetryable reports whether an error is worth another attempt. Permanent
+// failures (bad permissions, missing paths) and a cancelled/expired context
+// are not retried; transient ones (dropped connections, timeouts, EOF) are.
+func isRetryable(err error) bool {
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return false
+	case errors.Is(err, os.ErrPermission), errors.Is(err, os.ErrNotExist):
+		return false
+	default:
+		return true
+	}
+}
+
+// sleepCtx waits for d, returning early with the context error if the
+// deployment is cancelled meanwhile.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// ctxReader makes an io.Copy abort as soon as the context is cancelled.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // deleteRemoteContents removes everything inside dir (but not dir itself).
