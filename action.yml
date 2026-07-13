@@ -1,9 +1,6 @@
 name: easySFTP
 description: >-
-  Fast, secure and simple SFTP uploads for GitHub Actions. Deploy files to any
-  SFTP server with parallel transfers, gitignore-style excludes, host key
-  pinning, delete mode and dry runs. Written in Go, runs on Linux, macOS and
-  Windows runners.
+  Fast, secure SFTP uploads for GitHub Actions with parallel transfers and host key pinning. Written in Go.
 author: eiserv
 
 branding:
