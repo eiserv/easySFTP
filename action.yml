@@ -1,0 +1,131 @@
+name: easySFTP
+description: >-
+  Fast, secure and simple SFTP uploads for GitHub Actions. Deploy files to any
+  SFTP server with parallel transfers, gitignore-style excludes, host key
+  pinning, delete mode and dry runs. Written in Go, runs on Linux, macOS and
+  Windows runners.
+author: eiserv
+
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  server:
+    description: Hostname or IP address of the SFTP server (e.g. sftp.example.com).
+    required: true
+  port:
+    description: SSH port of the server.
+    required: false
+    default: "22"
+  username:
+    description: Username used for authentication.
+    required: true
+  password:
+    description: >-
+      Password used for authentication. Provide this or private-key (or both).
+      Always store this in a GitHub Actions secret.
+    required: false
+  private-key:
+    description: >-
+      SSH private key (PEM/OpenSSH format) used for authentication. Always
+      store this in a GitHub Actions secret.
+    required: false
+  passphrase:
+    description: Passphrase for the private key, if it is encrypted.
+    required: false
+  host-key-fingerprint:
+    description: >-
+      Expected SHA256 fingerprint of the server's host key (format
+      "SHA256:..."). Strongly recommended: without it, the server's identity
+      is not verified. Obtain it with:
+      ssh-keyscan -t ed25519 <server> | ssh-keygen -lf -
+    required: false
+  uploads:
+    description: >-
+      One "local => remote" mapping per line, e.g. "./dist/ => /var/www/html/".
+      Local paths may be directories (uploaded recursively) or single files.
+      Lines starting with "#" are ignored.
+    required: true
+  ignore:
+    description: >-
+      Gitignore-style exclude patterns, one per line (e.g. "*.log" or
+      "node_modules/"). Prefix with "!" to re-include files.
+    required: false
+  ignore-from:
+    description: Path to a file containing gitignore-style exclude patterns.
+    required: false
+  delete:
+    description: >-
+      If "true", delete all existing files inside each remote target directory
+      before uploading (a clean deploy).
+    required: false
+    default: "false"
+  dry-run:
+    description: >-
+      If "true", connect and log everything that would be uploaded or deleted
+      without changing anything on the server.
+    required: false
+    default: "false"
+  concurrency:
+    description: Number of files uploaded in parallel.
+    required: false
+    default: "4"
+  retries:
+    description: How often a failed file upload is retried (with backoff).
+    required: false
+    default: "2"
+  timeout:
+    description: Connection timeout in seconds.
+    required: false
+    default: "30"
+
+outputs:
+  files-uploaded:
+    description: Number of files that were uploaded (or would be, in dry-run mode).
+    value: ${{ steps.easysftp.outputs.files-uploaded }}
+  files-deleted:
+    description: Number of remote files deleted by delete mode.
+    value: ${{ steps.easysftp.outputs.files-deleted }}
+  bytes-uploaded:
+    description: Total number of bytes transferred.
+    value: ${{ steps.easysftp.outputs.bytes-uploaded }}
+  duration-ms:
+    description: Total runtime of the transfer in milliseconds.
+    value: ${{ steps.easysftp.outputs.duration-ms }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      with:
+        go-version-file: ${{ github.action_path }}/go.mod
+        cache: true
+        cache-dependency-path: ${{ github.action_path }}/go.sum
+
+    - name: Build easySFTP
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/easysftp$(go env GOEXE)" ./cmd/easysftp
+
+    - name: Upload via SFTP
+      id: easysftp
+      shell: bash
+      run: '"$RUNNER_TEMP/easysftp$(go env GOEXE)"'
+      env:
+        EASYSFTP_SERVER: ${{ inputs.server }}
+        EASYSFTP_PORT: ${{ inputs.port }}
+        EASYSFTP_USERNAME: ${{ inputs.username }}
+        EASYSFTP_PASSWORD: ${{ inputs.password }}
+        EASYSFTP_PRIVATE_KEY: ${{ inputs.private-key }}
+        EASYSFTP_PASSPHRASE: ${{ inputs.passphrase }}
+        EASYSFTP_HOST_KEY_FINGERPRINT: ${{ inputs.host-key-fingerprint }}
+        EASYSFTP_UPLOADS: ${{ inputs.uploads }}
+        EASYSFTP_IGNORE: ${{ inputs.ignore }}
+        EASYSFTP_IGNORE_FROM: ${{ inputs.ignore-from }}
+        EASYSFTP_DELETE: ${{ inputs.delete }}
+        EASYSFTP_DRY_RUN: ${{ inputs.dry-run }}
+        EASYSFTP_CONCURRENCY: ${{ inputs.concurrency }}
+        EASYSFTP_RETRIES: ${{ inputs.retries }}
+        EASYSFTP_TIMEOUT: ${{ inputs.timeout }}
