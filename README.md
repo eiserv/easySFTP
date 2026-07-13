@@ -8,14 +8,14 @@
 Deploy your build output to any SFTP server — from a three-line workflow step up to
 fully configured multi-target deployments.
 
-- ⚡ **Fast** — written in Go, files are transferred in parallel with concurrent
+- ⚡ **Fast**: written in Go, files are transferred in parallel with concurrent
   SFTP write requests per file.
-- 🔒 **Secure** — optional host key pinning verifies the server's identity;
+- 🔒 **Secure**: optional host key pinning verifies the server's identity;
   credentials are only ever read from environment variables.
-- 🧩 **Simple, but configurable** — sensible defaults for the simple case,
+- 🧩 **Simple, but configurable**: sensible defaults for the simple case,
   gitignore-style excludes, delete mode, dry runs, retries and outputs for the
   complex ones.
-- 🖥️ **Cross-platform** — runs on `ubuntu-*`, `macos-*` and `windows-*` runners.
+- 🖥️ **Cross-platform**: runs on `ubuntu-*`, `macos-*` and `windows-*` runners.
 
 ## Quick start
 
@@ -160,11 +160,11 @@ variables and never prints them.
 This project is inspired by [Dylan700/sftp-upload-action](https://github.com/Dylan700/sftp-upload-action),
 which is no longer actively maintained. easySFTP is a clean reimplementation in Go:
 
-- a compiled static binary instead of a Node.js runtime — fast startup, parallel transfers,
-- works on Linux, macOS **and** Windows runners (no Docker required),
-- host key verification, retries with backoff, structured outputs and a job summary,
-- an end-to-end test suite that runs against a real in-process SFTP server,
-  plus a CI self-test against a real OpenSSH server.
+- compiled static binary instead of a Node.js runtime (fast startup, parallel transfers)
+- works on Linux, macOS **and** Windows runners (no Docker required)
+- host key verification, retries with backoff, structured outputs and a job summary
+- end-to-end test suite that runs against a real in-process SFTP server
+  plus a CI self-test against a real OpenSSH server
 
 ## Development
 

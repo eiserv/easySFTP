@@ -8,7 +8,7 @@ or contact the maintainer directly. You will receive a response as soon as possi
 
 ## Hardening recommendations for users
 
-- Always set the `host-key-fingerprint` input so the server's identity is verified.
-- Store all credentials (`password`, `private-key`, `passphrase`) as encrypted GitHub Actions secrets.
-- Prefer key-based authentication over passwords.
-- Pin this action to a full commit SHA in your workflows if you require maximum supply-chain safety.
+- Always set the `host-key-fingerprint` input so the server's identity is verified
+- Store all credentials (`password`, `private-key`, `passphrase`) as encrypted GitHub Actions secrets
+- Prefer key-based authentication over passwords
+- Pin this action to a full commit SHA in your workflows if you require maximum supply-chain safety
