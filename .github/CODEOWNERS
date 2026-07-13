@@ -1,0 +1,7 @@
+# Code owners for easySFTP.
+#
+# Every change requires review from the owner below. Combined with branch
+# protection ("Require review from Code Owners") this blocks unreviewed merges,
+# including changes to the CI workflows and the action itself from fork PRs.
+
+* @eiserv69
