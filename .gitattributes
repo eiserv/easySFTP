@@ -1,0 +1,9 @@
+# Keep Go sources LF everywhere so gofmt agrees across platforms.
+* text=auto
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+LICENSE text eol=lf
