@@ -1,10 +1,9 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
+New entries are generated automatically by [Release Please](https://github.com/googleapis/release-please)
+from [Conventional Commits](https://www.conventionalcommits.org/); this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.0] - 2026-07-13
 
@@ -21,5 +20,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Step outputs (`files-uploaded`, `files-deleted`, `bytes-uploaded`, `duration-ms`) and a job summary
 - Support for Linux, macOS and Windows runners
 
-[Unreleased]: https://github.com/eiserv/easySFTP/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/eiserv/easySFTP/releases/tag/v1.0.0

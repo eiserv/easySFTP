@@ -122,6 +122,22 @@ Remote directories are created automatically.
 
 A summary table is also written to the job summary of every run.
 
+## Versioning
+
+easySFTP follows [Semantic Versioning](https://semver.org). Pick the pin that
+matches how much you want to move:
+
+```yaml
+uses: eiserv/easySFTP@v1        # latest 1.x — recommended, gets fixes & features
+uses: eiserv/easySFTP@v1.2      # latest 1.2.x patch
+uses: eiserv/easySFTP@v1.2.3    # exact, immutable pin
+```
+
+`v1` and `v1.2` are rolling tags that advance with each release; `v1.2.3` (and
+the commit SHA) never move. Releases, tags and the changelog are generated
+automatically from [Conventional Commits](https://www.conventionalcommits.org/) —
+see [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Security
 
 ### Pin the host key (recommended)

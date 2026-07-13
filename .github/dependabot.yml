@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Go module dependencies.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      # Produces "build(deps): ..." — Conventional and hidden from the changelog.
+      prefix: build
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  # Pinned GitHub Action SHAs (keeps the # vX comments and pins up to date).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      # Produces "ci(deps): ..." — Conventional and hidden from the changelog.
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ["*"]
