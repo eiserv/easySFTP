@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache: true
@@ -56,13 +56,18 @@ jobs:
           echo "::error::SFTP server did not become ready"
           exit 1
 
-      - name: Read host key fingerprint
+      - name: Read host key fingerprints
         id: hostkey
         run: |
           sleep 2
-          fp=$(ssh-keyscan -t ed25519 -p 2222 localhost 2>/dev/null | ssh-keygen -lf - | awk '{print $2}')
-          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
-          echo "Host key fingerprint: $fp"
+          fps=$(ssh-keyscan -p 2222 localhost 2>/dev/null | ssh-keygen -lf - | awk '{print $2}')
+          {
+            echo 'fingerprints<<EOF'
+            echo "$fps"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          echo "Host key fingerprints:"
+          echo "$fps"
 
       - name: Create test content
         run: |
@@ -78,7 +83,7 @@ jobs:
           port: 2222
           username: demo
           password: demopass
-          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprint }}
+          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
           uploads: ./site/ => /upload/
           ignore: "*.log"
           dry-run: true
@@ -98,7 +103,7 @@ jobs:
           port: 2222
           username: demo
           password: demopass
-          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprint }}
+          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
           uploads: ./site/ => /upload/
           ignore: "*.log"
 
@@ -124,7 +129,7 @@ jobs:
           port: 2222
           username: demo
           password: demopass
-          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprint }}
+          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
           uploads: ./site/ => /upload/
           ignore: "*.log"
           delete: true

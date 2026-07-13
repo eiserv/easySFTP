@@ -18,13 +18,13 @@ type UploadPair struct {
 
 // Config holds the fully parsed action configuration.
 type Config struct {
-	Server             string
-	Port               int
-	Username           string
-	Password           string
-	PrivateKey         string
-	Passphrase         string
-	HostKeyFingerprint string
+	Server              string
+	Port                int
+	Username            string
+	Password            string
+	PrivateKey          string
+	Passphrase          string
+	HostKeyFingerprints []string
 
 	Uploads     []UploadPair
 	IgnoreLines []string
@@ -45,12 +45,12 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Server:             get("SERVER"),
-		Username:           get("USERNAME"),
-		Password:           os.Getenv(envPrefix + "PASSWORD"),
-		PrivateKey:         os.Getenv(envPrefix + "PRIVATE_KEY"),
-		Passphrase:         os.Getenv(envPrefix + "PASSPHRASE"),
-		HostKeyFingerprint: get("HOST_KEY_FINGERPRINT"),
+		Server:              get("SERVER"),
+		Username:            get("USERNAME"),
+		Password:            os.Getenv(envPrefix + "PASSWORD"),
+		PrivateKey:          os.Getenv(envPrefix + "PRIVATE_KEY"),
+		Passphrase:          os.Getenv(envPrefix + "PASSPHRASE"),
+		HostKeyFingerprints: splitLines(os.Getenv(envPrefix + "HOST_KEY_FINGERPRINT")),
 	}
 
 	var err error

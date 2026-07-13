@@ -83,7 +83,7 @@ jobs:
 | `password` | ¹ | — | Password. **Use a secret.** |
 | `private-key` | ¹ | — | SSH private key (OpenSSH/PEM format). **Use a secret.** |
 | `passphrase` | | — | Passphrase of the private key, if encrypted. |
-| `host-key-fingerprint` | | — | Expected SHA256 host key fingerprint (`SHA256:...`). **Strongly recommended**, see [Security](#security). |
+| `host-key-fingerprint` | | — | Expected SHA256 host key fingerprint(s), one per line (`SHA256:...`). **Strongly recommended**, see [Security](#security). |
 | `uploads` | ✅ | — | One `local => remote` mapping per line. Directories are uploaded recursively; single files are supported too. |
 | `ignore` | | — | Gitignore-style exclude patterns, one per line. `!` re-includes. |
 | `ignore-from` | | — | Path to a file with exclude patterns (e.g. `.sftpignore`). |
@@ -128,15 +128,24 @@ A summary table is also written to the job summary of every run.
 
 Without `host-key-fingerprint`, easySFTP prints a warning and accepts any host
 key — convenient, but vulnerable to man-in-the-middle attacks. Pin your
-server's key once:
+server's keys once:
 
 ```console
-$ ssh-keyscan -t ed25519 sftp.example.com | ssh-keygen -lf -
-256 SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8 sftp.example.com (ED25519)
+$ ssh-keyscan sftp.example.com | ssh-keygen -lf -
+256  SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8 sftp.example.com (ED25519)
+256  SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM sftp.example.com (ECDSA)
+3072 SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s sftp.example.com (RSA)
 ```
 
-Store the `SHA256:...` value as a secret and pass it as `host-key-fingerprint`.
-If the server's key ever changes unexpectedly, the deploy fails instead of
+Store the `SHA256:...` values as a secret (one per line) and pass them as
+`host-key-fingerprint` — the connection is accepted if the server presents a
+key matching any of them:
+
+```yaml
+host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINTS }}
+```
+
+If the server's keys ever change unexpectedly, the deploy fails instead of
 talking to an impostor.
 
 ### Credentials

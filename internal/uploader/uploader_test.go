@@ -209,7 +209,19 @@ func TestHostKeyFingerprint(t *testing.T) {
 
 	t.Run("matching fingerprint succeeds", func(t *testing.T) {
 		cfg := baseConfig(srv)
-		cfg.HostKeyFingerprint = srv.HostKeySHA256
+		cfg.HostKeyFingerprints = []string{srv.HostKeySHA256}
+		cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/pinned"}}
+		if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("any of multiple fingerprints matches", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		cfg.HostKeyFingerprints = []string{
+			"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			srv.HostKeySHA256,
+		}
 		cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/pinned"}}
 		if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
 			t.Fatal(err)
@@ -218,7 +230,7 @@ func TestHostKeyFingerprint(t *testing.T) {
 
 	t.Run("wrong fingerprint fails", func(t *testing.T) {
 		cfg := baseConfig(srv)
-		cfg.HostKeyFingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		cfg.HostKeyFingerprints = []string{"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
 		cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/pinned"}}
 		_, err := Run(context.Background(), cfg, testLogger{t})
 		if err == nil || !strings.Contains(err.Error(), "host key mismatch") {
@@ -228,7 +240,7 @@ func TestHostKeyFingerprint(t *testing.T) {
 
 	t.Run("malformed fingerprint fails", func(t *testing.T) {
 		cfg := baseConfig(srv)
-		cfg.HostKeyFingerprint = "md5:abcdef"
+		cfg.HostKeyFingerprints = []string{"md5:abcdef"}
 		cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/pinned"}}
 		_, err := Run(context.Background(), cfg, testLogger{t})
 		if err == nil || !strings.Contains(err.Error(), "SHA256") {

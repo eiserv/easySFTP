@@ -36,10 +36,12 @@ inputs:
     required: false
   host-key-fingerprint:
     description: >-
-      Expected SHA256 fingerprint of the server's host key (format
-      "SHA256:..."). Strongly recommended: without it, the server's identity
-      is not verified. Obtain it with:
-      ssh-keyscan -t ed25519 <server> | ssh-keygen -lf -
+      Expected SHA256 fingerprint(s) of the server's host key, one per line
+      (format "SHA256:..."). The connection is accepted if the server presents
+      a key matching any of them, so you can simply pin all of your server's
+      keys. Strongly recommended: without this input, the server's identity is
+      not verified. Obtain the fingerprints with:
+      ssh-keyscan <server> | ssh-keygen -lf -
     required: false
   uploads:
     description: >-
@@ -97,16 +99,30 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Resolve action path
+      id: paths
+      shell: bash
+      # github.action_path may contain "\" or "/./" segments (e.g. when the
+      # action is used locally via "uses: ./"), which setup-go's cache glob
+      # rejects — normalize to a clean absolute path.
+      run: |
+        p='${{ github.action_path }}'
+        p="${p//\\//}"
+        while [[ "$p" == *"/./"* ]]; do p="${p//\/.\//\/}"; done
+        p="${p%/.}"
+        p="${p%/}"
+        echo "dir=$p" >> "$GITHUB_OUTPUT"
+
     - name: Set up Go
-      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
       with:
-        go-version-file: ${{ github.action_path }}/go.mod
+        go-version-file: ${{ steps.paths.outputs.dir }}/go.mod
         cache: true
-        cache-dependency-path: ${{ github.action_path }}/go.sum
+        cache-dependency-path: ${{ steps.paths.outputs.dir }}/go.sum
 
     - name: Build easySFTP
       shell: bash
-      working-directory: ${{ github.action_path }}
+      working-directory: ${{ steps.paths.outputs.dir }}
       run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/easysftp$(go env GOEXE)" ./cmd/easysftp
 
     - name: Upload via SFTP

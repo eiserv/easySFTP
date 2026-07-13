@@ -376,21 +376,25 @@ func authMethods(cfg *config.Config) ([]ssh.AuthMethod, error) {
 }
 
 func hostKeyCallback(cfg *config.Config, log Logger) (ssh.HostKeyCallback, error) {
-	if cfg.HostKeyFingerprint == "" {
+	if len(cfg.HostKeyFingerprints) == 0 {
 		log.Warningf("no host-key-fingerprint configured — the server's identity will NOT be verified. " +
 			"Run 'ssh-keyscan <server> | ssh-keygen -lf -' and set the host-key-fingerprint input to pin it.")
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
-	want := cfg.HostKeyFingerprint
-	if !strings.HasPrefix(want, "SHA256:") {
-		return nil, fmt.Errorf("host-key-fingerprint must be a SHA256 fingerprint like 'SHA256:...', got %q", want)
+	want := cfg.HostKeyFingerprints
+	for _, fp := range want {
+		if !strings.HasPrefix(fp, "SHA256:") {
+			return nil, fmt.Errorf("host-key-fingerprint must be a SHA256 fingerprint like 'SHA256:...', got %q", fp)
+		}
 	}
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		got := ssh.FingerprintSHA256(key)
-		if got != want {
-			return fmt.Errorf("host key mismatch for %s: got %s, want %s", hostname, got, want)
+		for _, fp := range want {
+			if got == fp {
+				return nil
+			}
 		}
-		return nil
+		return fmt.Errorf("host key mismatch for %s: got %s, want one of: %s", hostname, got, strings.Join(want, ", "))
 	}, nil
 }
 
