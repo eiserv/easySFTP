@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/eiserv/easySFTP/main/schema/easysftp.schema.json
+#
+# Example easySFTP config file. Point the action at it with:
+#   config-file: .github/easysftp.yml
+#
+# Connection settings (server, username, password/private-key, host key) stay
+# in the action inputs / GitHub secrets — never put credentials in this file.
+
+version: 1
+
+# Default strategy for every target unless overridden per target:
+#   overlay – upload only, never delete (default)
+#   sync    – upload changed files, delete files no longer present locally
+#   clean   – wipe the remote target directory, then upload
+strategy: overlay
+
+# Global excludes applied to every target (gitignore syntax).
+ignore:
+  - "*.map"
+  - "*.log"
+
+guards:
+  # Abort if a run would delete more than this many files (0 = unlimited).
+  # Deleting the remote root ("/") is always refused, independent of this.
+  max_deletes: 200
+
+targets:
+  - local: ./dist/
+    remote: /var/www/html/
+    strategy: sync
+    ignore:
+      - node_modules/
+
+  - local: ./docs/
+    remote: /var/www/docs/
+    strategy: clean
+
+  - local: ./robots.txt
+    remote: /var/www/html/robots.txt
+    # single files only support the overlay strategy

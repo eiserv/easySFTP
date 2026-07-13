@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/eiserv/easySFTP/main/schema/easysftp.schema.json",
+  "title": "easySFTP configuration",
+  "description": "Deployment configuration for the easySFTP GitHub Action. Connection settings (server, credentials, host key) are NOT part of this file — keep those in action inputs / secrets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "targets"],
+  "properties": {
+    "version": {
+      "description": "Config format version. Must be 1.",
+      "const": 1
+    },
+    "strategy": {
+      "$ref": "#/$defs/strategy",
+      "description": "Default strategy for all targets. Defaults to 'overlay'."
+    },
+    "ignore": {
+      "description": "Global gitignore-style exclude patterns applied to every target.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "guards": {
+      "description": "Safety limits applied before any deletion.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_deletes": {
+          "description": "Refuse a run that would delete more than this many files. 0 means unlimited. Deleting the remote root is always refused, regardless of this value.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "targets": {
+      "description": "One or more local => remote deployment targets.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["local", "remote"],
+        "properties": {
+          "local": {
+            "description": "Local path (file or directory) to upload.",
+            "type": "string",
+            "minLength": 1
+          },
+          "remote": {
+            "description": "Remote destination path.",
+            "type": "string",
+            "minLength": 1
+          },
+          "strategy": {
+            "$ref": "#/$defs/strategy",
+            "description": "Overrides the top-level strategy for this target."
+          },
+          "ignore": {
+            "description": "Target-specific exclude patterns, additive to the global ones.",
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "strategy": {
+      "type": "string",
+      "enum": ["overlay", "sync", "clean"]
+    }
+  }
+}

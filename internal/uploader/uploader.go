@@ -36,6 +36,7 @@ type Logger interface {
 type Stats struct {
 	FilesUploaded int
 	FilesDeleted  int
+	FilesSkipped  int // unchanged files skipped by the sync strategy
 	DirsCreated   int
 	BytesUploaded int64
 	Duration      time.Duration
@@ -45,13 +46,16 @@ type Stats struct {
 type fileItem struct {
 	localPath  string // absolute or workspace-relative OS path
 	remotePath string // slash-separated remote path
+	rel        string // slash path relative to the remote base (manifest key)
 	size       int64
 	mode       fs.FileMode
+	hash       string // sha256 hex of the local content; only set for the sync strategy
 }
 
 // plan is the complete set of transfers for one upload pair.
 type plan struct {
 	pair       config.UploadPair
+	strategy   config.Strategy
 	files      []fileItem
 	remoteDirs []string // directories to create, sorted parents-first
 }
@@ -61,13 +65,14 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	start := time.Now()
 	stats := &Stats{}
 
-	matcher := ignore.CompileIgnoreLines(cfg.IgnoreLines...)
-
 	// Build the full local plan first so config/path errors surface before
 	// we touch the network.
 	plans := make([]plan, 0, len(cfg.Uploads))
 	for _, pair := range cfg.Uploads {
-		p, err := buildPlan(pair, matcher)
+		st := effectiveStrategy(cfg, pair)
+		lines := append(append([]string{}, cfg.IgnoreLines...), pair.Ignore...)
+		matcher := ignore.CompileIgnoreLines(lines...)
+		p, err := buildPlan(pair, st, matcher)
 		if err != nil {
 			return stats, err
 		}
@@ -95,14 +100,21 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 }
 
 // buildPlan walks the local side of an upload pair and computes the remote
-// file and directory layout, honoring the ignore patterns.
-func buildPlan(pair config.UploadPair, matcher *ignore.GitIgnore) (plan, error) {
-	p := plan{pair: pair}
+// file and directory layout, honoring the ignore patterns. For the sync
+// strategy it also hashes each file so changed files can be detected.
+func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore) (plan, error) {
+	p := plan{pair: pair, strategy: strategy}
 	remoteBase := normalizeRemote(pair.Remote)
 
 	info, err := os.Stat(pair.Local)
 	if err != nil {
 		return p, fmt.Errorf("local path %q: %w", pair.Local, err)
+	}
+
+	// sync and clean reconcile a directory tree; they are meaningless for a
+	// single file and would delete the wrong things, so reject that up front.
+	if !info.IsDir() && strategy != config.StrategyOverlay {
+		return p, fmt.Errorf("strategy %q requires a directory, but local path %q is a single file (use the overlay strategy)", strategy, pair.Local)
 	}
 
 	// A single file maps directly onto the remote path. A trailing slash on
@@ -118,6 +130,7 @@ func buildPlan(pair config.UploadPair, matcher *ignore.GitIgnore) (plan, error) 
 		p.files = append(p.files, fileItem{
 			localPath:  pair.Local,
 			remotePath: remotePath,
+			rel:        filepath.Base(pair.Local),
 			size:       info.Size(),
 			mode:       info.Mode(),
 		})
@@ -138,7 +151,7 @@ func buildPlan(pair config.UploadPair, matcher *ignore.GitIgnore) (plan, error) 
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if matcher.MatchesPath(rel) {
+		if rel == manifestName || matcher.MatchesPath(rel) {
 			return nil
 		}
 		fi, err := d.Info()
@@ -149,14 +162,20 @@ func buildPlan(pair config.UploadPair, matcher *ignore.GitIgnore) (plan, error) 
 			// Symlinks, sockets etc. are skipped; SFTP uploads regular files.
 			return nil
 		}
-		remotePath := path.Join(remoteBase, rel)
-		p.files = append(p.files, fileItem{
+		item := fileItem{
 			localPath:  fpath,
-			remotePath: remotePath,
+			remotePath: path.Join(remoteBase, rel),
+			rel:        rel,
 			size:       fi.Size(),
 			mode:       fi.Mode(),
-		})
-		for _, dir := range parentDirs(remotePath) {
+		}
+		if strategy == config.StrategySync {
+			if item.hash, err = hashFile(fpath); err != nil {
+				return err
+			}
+		}
+		p.files = append(p.files, item)
+		for _, dir := range parentDirs(item.remotePath) {
 			dirSet[dir] = struct{}{}
 		}
 		return nil
@@ -173,24 +192,59 @@ func buildPlan(pair config.UploadPair, matcher *ignore.GitIgnore) (plan, error) 
 	return p, nil
 }
 
-// executePlan performs (or previews) the deletes, mkdirs and uploads of one plan.
+// executePlan performs (or previews) one plan according to its strategy.
 func executePlan(ctx context.Context, cfg *config.Config, client *sftp.Client, p plan, stats *Stats, log Logger) error {
-	verb := ""
-	if cfg.DryRun {
-		verb = "[dry-run] would "
-	}
-	log.Group(fmt.Sprintf("%s => %s (%d files)", p.pair.Local, p.pair.Remote, len(p.files)))
+	log.Group(fmt.Sprintf("%s => %s [%s] (%d local files)", p.pair.Local, p.pair.Remote, p.strategy, len(p.files)))
 	defer log.EndGroup()
 
-	if cfg.Delete {
-		deleted, err := deleteRemoteContents(client, normalizeRemote(p.pair.Remote), cfg.DryRun, verb, log)
-		if err != nil {
-			return fmt.Errorf("cleaning remote directory %q: %w", p.pair.Remote, err)
+	if p.strategy == config.StrategySync {
+		return executeSync(ctx, cfg, client, p, stats, log)
+	}
+	return executeOverlayOrClean(ctx, cfg, client, p, stats, log)
+}
+
+// executeOverlayOrClean uploads the plan, first wiping the remote target when
+// the strategy is clean.
+func executeOverlayOrClean(ctx context.Context, cfg *config.Config, client *sftp.Client, p plan, stats *Stats, log Logger) error {
+	verb := planVerb(cfg)
+
+	if p.strategy == config.StrategyClean {
+		base := normalizeRemote(p.pair.Remote)
+		if err := checkRemoteRoot(p.pair.Remote); err != nil {
+			return err
 		}
-		stats.FilesDeleted += deleted
+		files, dirs, err := listRemoteContents(client, base)
+		if err != nil {
+			return fmt.Errorf("scanning remote directory %q: %w", p.pair.Remote, err)
+		}
+		if err := checkMaxDeletes(len(files), cfg); err != nil {
+			return err
+		}
+		for _, f := range files {
+			log.Infof("%sdelete %s", verb, f)
+			if !cfg.DryRun {
+				if err := client.Remove(f); err != nil {
+					return fmt.Errorf("deleting %q: %w", f, err)
+				}
+			}
+			stats.FilesDeleted++
+		}
+		// Remove the now-empty directories, deepest first. Best effort: a
+		// directory that is not empty (e.g. an unreadable entry) is left be.
+		for i := len(dirs) - 1; i >= 0; i-- {
+			if !cfg.DryRun {
+				_ = client.RemoveDirectory(dirs[i])
+			}
+		}
 	}
 
-	for _, dir := range p.remoteDirs {
+	return uploadFiles(ctx, cfg, client, p.files, p.remoteDirs, stats, verb, log)
+}
+
+// uploadFiles creates the needed remote directories and uploads files in
+// parallel (or, in dry-run mode, only logs what it would do).
+func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, files []fileItem, dirs []string, stats *Stats, verb string, log Logger) error {
+	for _, dir := range dirs {
 		if cfg.DryRun {
 			continue
 		}
@@ -205,9 +259,9 @@ func executePlan(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(cfg.Concurrency)
-	results := make([]int64, len(p.files))
+	results := make([]int64, len(files))
 
-	for i, f := range p.files {
+	for i, f := range files {
 		g.Go(func() error {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -228,11 +282,77 @@ func executePlan(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 		return err
 	}
 
-	stats.FilesUploaded += len(p.files)
+	stats.FilesUploaded += len(files)
 	for _, n := range results {
 		stats.BytesUploaded += n
 	}
 	return nil
+}
+
+// planVerb returns the log prefix that distinguishes a dry run from a real one.
+func planVerb(cfg *config.Config) string {
+	if cfg.DryRun {
+		return "[dry-run] would "
+	}
+	return ""
+}
+
+// effectiveStrategy resolves the strategy for a pair, falling back to the
+// legacy delete flag for callers that construct a Config directly.
+func effectiveStrategy(cfg *config.Config, pair config.UploadPair) config.Strategy {
+	if pair.Strategy != "" {
+		return pair.Strategy
+	}
+	if cfg.Delete {
+		return config.StrategyClean
+	}
+	return config.StrategyOverlay
+}
+
+// checkRemoteRoot refuses a destructive strategy whose target resolves to the
+// filesystem root or an unspecific path — the one guard that is always on.
+func checkRemoteRoot(remote string) error {
+	switch normalizeRemote(remote) {
+	case "/", ".", "", "~":
+		return fmt.Errorf("refusing a destructive strategy on remote root %q — target a specific subdirectory instead", remote)
+	}
+	return nil
+}
+
+// checkMaxDeletes enforces the guards.max_deletes limit (0 means unlimited).
+func checkMaxDeletes(n int, cfg *config.Config) error {
+	if cfg.Guards.MaxDeletes > 0 && n > cfg.Guards.MaxDeletes {
+		return fmt.Errorf("refusing to delete %d files: exceeds guards.max_deletes=%d (raise the limit, or run with dry-run to inspect the plan)", n, cfg.Guards.MaxDeletes)
+	}
+	return nil
+}
+
+// listRemoteContents returns every regular file and directory under dir
+// (recursively, dir itself excluded), directories parents-first. A missing
+// dir yields empty lists and no error.
+func listRemoteContents(client *sftp.Client, dir string) (files, dirs []string, err error) {
+	entries, err := client.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	for _, e := range entries {
+		full := path.Join(dir, e.Name())
+		if e.IsDir() {
+			dirs = append(dirs, full)
+			subFiles, subDirs, err := listRemoteContents(client, full)
+			if err != nil {
+				return nil, nil, err
+			}
+			files = append(files, subFiles...)
+			dirs = append(dirs, subDirs...)
+			continue
+		}
+		files = append(files, full)
+	}
+	return files, dirs, nil
 }
 
 // tmpSuffix is appended to the remote path while a file is still uploading.
@@ -367,45 +487,6 @@ func (c *ctxReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return c.r.Read(p)
-}
-
-// deleteRemoteContents removes everything inside dir (but not dir itself).
-// A missing dir is not an error. Returns the number of files removed.
-func deleteRemoteContents(client *sftp.Client, dir string, dryRun bool, verb string, log Logger) (int, error) {
-	entries, err := client.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-
-	deleted := 0
-	for _, entry := range entries {
-		full := path.Join(dir, entry.Name())
-		if entry.IsDir() {
-			n, err := deleteRemoteContents(client, full, dryRun, verb, log)
-			deleted += n
-			if err != nil {
-				return deleted, err
-			}
-			log.Infof("%sdelete directory %s", verb, full)
-			if !dryRun {
-				if err := client.RemoveDirectory(full); err != nil {
-					return deleted, err
-				}
-			}
-			continue
-		}
-		log.Infof("%sdelete %s", verb, full)
-		if !dryRun {
-			if err := client.Remove(full); err != nil {
-				return deleted, err
-			}
-		}
-		deleted++
-	}
-	return deleted, nil
 }
 
 // connect dials the server and opens an SFTP session on top of SSH.

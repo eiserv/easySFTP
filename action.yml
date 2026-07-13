@@ -44,8 +44,22 @@ inputs:
     description: >-
       One "local => remote" mapping per line, e.g. "./dist/ => /var/www/html/".
       Local paths may be directories (uploaded recursively) or single files.
-      Lines starting with "#" are ignored.
-    required: true
+      Lines starting with "#" are ignored. Required unless config-file is set.
+    required: false
+  config-file:
+    description: >-
+      Path to an optional YAML config file describing the deployment targets,
+      their strategy and delete guards (see docs/CONFIG.md). When set, it
+      replaces the uploads/strategy/delete/ignore inputs. Connection settings
+      always come from the inputs above.
+    required: false
+  strategy:
+    description: >-
+      Reconciliation strategy for every target: "overlay" (upload only, never
+      delete — the default), "sync" (upload changed files and delete files no
+      longer present locally, tracked via a manifest) or "clean" (wipe the
+      remote target directory, then upload). Mutually exclusive with delete.
+    required: false
   ignore:
     description: >-
       Gitignore-style exclude patterns, one per line (e.g. "*.log" or
@@ -56,8 +70,8 @@ inputs:
     required: false
   delete:
     description: >-
-      If "true", delete all existing files inside each remote target directory
-      before uploading (a clean deploy).
+      Legacy alias for strategy "clean": if "true", delete all existing files
+      inside each remote target directory before uploading. Prefer "strategy".
     required: false
     default: "false"
   dry-run:
@@ -84,8 +98,11 @@ outputs:
     description: Number of files that were uploaded (or would be, in dry-run mode).
     value: ${{ steps.easysftp.outputs.files-uploaded }}
   files-deleted:
-    description: Number of remote files deleted by delete mode.
+    description: Number of remote files deleted by the clean/sync strategy.
     value: ${{ steps.easysftp.outputs.files-deleted }}
+  files-skipped:
+    description: Number of unchanged files skipped by the sync strategy.
+    value: ${{ steps.easysftp.outputs.files-skipped }}
   bytes-uploaded:
     description: Total number of bytes transferred.
     value: ${{ steps.easysftp.outputs.bytes-uploaded }}
@@ -135,6 +152,8 @@ runs:
         EASYSFTP_PASSPHRASE: ${{ inputs.passphrase }}
         EASYSFTP_HOST_KEY_FINGERPRINT: ${{ inputs.host-key-fingerprint }}
         EASYSFTP_UPLOADS: ${{ inputs.uploads }}
+        EASYSFTP_CONFIG_FILE: ${{ inputs.config-file }}
+        EASYSFTP_STRATEGY: ${{ inputs.strategy }}
         EASYSFTP_IGNORE: ${{ inputs.ignore }}
         EASYSFTP_IGNORE_FROM: ${{ inputs.ignore-from }}
         EASYSFTP_DELETE: ${{ inputs.delete }}

@@ -1,5 +1,5 @@
 // Package config loads and validates the action configuration from
-// environment variables set by action.yml.
+// environment variables set by action.yml, optionally from a YAML config file.
 package config
 
 import (
@@ -10,10 +10,42 @@ import (
 	"time"
 )
 
-// UploadPair maps a local path to a remote path.
+// Strategy selects how a target's remote directory is reconciled with the
+// local files.
+type Strategy string
+
+const (
+	// StrategyOverlay uploads files on top of whatever is already there and
+	// never deletes anything (the default, backwards-compatible behavior).
+	StrategyOverlay Strategy = "overlay"
+	// StrategySync uploads new/changed files and deletes remote files that are
+	// no longer present locally, tracked via a per-target manifest.
+	StrategySync Strategy = "sync"
+	// StrategyClean wipes the remote target directory, then uploads.
+	StrategyClean Strategy = "clean"
+)
+
+func (s Strategy) valid() bool {
+	switch s {
+	case StrategyOverlay, StrategySync, StrategyClean:
+		return true
+	}
+	return false
+}
+
+// UploadPair maps a local path to a remote path with its own strategy.
 type UploadPair struct {
-	Local  string
-	Remote string
+	Local    string
+	Remote   string
+	Strategy Strategy
+	Ignore   []string // target-specific ignore patterns, additive to the global ones
+}
+
+// Guards holds the safety limits applied before any destructive operation.
+type Guards struct {
+	// MaxDeletes refuses a run that would delete more than this many files.
+	// 0 means unlimited. The refusal to delete the remote root is always on.
+	MaxDeletes int
 }
 
 // Config holds the fully parsed action configuration.
@@ -28,8 +60,9 @@ type Config struct {
 
 	Uploads     []UploadPair
 	IgnoreLines []string
+	Guards      Guards
 
-	Delete      bool
+	Delete      bool // legacy input; mapped to the clean strategy
 	DryRun      bool
 	Concurrency int
 	Retries     int
@@ -76,23 +109,67 @@ func Load() (*Config, error) {
 	}
 	cfg.Timeout = time.Duration(timeoutSec) * time.Second
 
-	if cfg.Uploads, err = ParseUploads(os.Getenv(envPrefix + "UPLOADS")); err != nil {
-		return nil, err
-	}
+	// The deployment (targets, strategy, ignore, guards) comes either from a
+	// YAML config file or from the plain action inputs, never a mix of both.
+	configFile := get("CONFIG_FILE")
+	strategyInput := get("STRATEGY")
+	uploadsInput := os.Getenv(envPrefix + "UPLOADS")
+	ignoreInput := os.Getenv(envPrefix + "IGNORE")
+	ignoreFrom := get("IGNORE_FROM")
 
-	cfg.IgnoreLines = splitLines(os.Getenv(envPrefix + "IGNORE"))
-	if ignoreFrom := get("IGNORE_FROM"); ignoreFrom != "" {
-		data, err := os.ReadFile(ignoreFrom)
-		if err != nil {
-			return nil, fmt.Errorf("could not read ignore-from file: %w", err)
+	if configFile != "" {
+		if strings.TrimSpace(uploadsInput) != "" || strategyInput != "" || cfg.Delete ||
+			strings.TrimSpace(ignoreInput) != "" || ignoreFrom != "" {
+			return nil, fmt.Errorf("when 'config-file' is set, put targets/strategy/ignore/guards " +
+				"in the file — do not also set the uploads, strategy, delete, ignore or ignore-from inputs")
 		}
-		cfg.IgnoreLines = append(cfg.IgnoreLines, splitLines(string(data))...)
+		if err := loadConfigFile(cfg, configFile); err != nil {
+			return nil, err
+		}
+	} else {
+		strategy, err := resolveStrategy(strategyInput, cfg.Delete)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Uploads, err = ParseUploads(uploadsInput); err != nil {
+			return nil, err
+		}
+		for i := range cfg.Uploads {
+			cfg.Uploads[i].Strategy = strategy
+		}
+		cfg.IgnoreLines = splitLines(ignoreInput)
+		if ignoreFrom != "" {
+			data, err := os.ReadFile(ignoreFrom)
+			if err != nil {
+				return nil, fmt.Errorf("could not read ignore-from file: %w", err)
+			}
+			cfg.IgnoreLines = append(cfg.IgnoreLines, splitLines(string(data))...)
+		}
 	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// resolveStrategy maps the strategy input (and the legacy delete flag) to a
+// concrete strategy, rejecting an ambiguous combination of both.
+func resolveStrategy(input string, delete bool) (Strategy, error) {
+	if input != "" {
+		if delete {
+			return "", fmt.Errorf("set either 'strategy' or 'delete', not both")
+		}
+		s := Strategy(input)
+		if !s.valid() {
+			return "", fmt.Errorf("input 'strategy' must be overlay, sync or clean, got %q", input)
+		}
+		return s, nil
+	}
+	if delete {
+		return StrategyClean, nil
+	}
+	return StrategyOverlay, nil
 }
 
 func (c *Config) validate() error {
@@ -111,6 +188,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("input 'concurrency' must be at least 1, got %d", c.Concurrency)
 	case c.Retries < 0:
 		return fmt.Errorf("input 'retries' must not be negative, got %d", c.Retries)
+	case c.Guards.MaxDeletes < 0:
+		return fmt.Errorf("guards.max_deletes must not be negative, got %d", c.Guards.MaxDeletes)
 	}
 	return nil
 }
