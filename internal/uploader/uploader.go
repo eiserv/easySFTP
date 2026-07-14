@@ -64,6 +64,7 @@ type plan struct {
 func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	start := time.Now()
 	stats := &Stats{}
+	defer func() { stats.Duration = time.Since(start) }()
 
 	// Build the full local plan first so config/path errors surface before
 	// we touch the network.
@@ -95,7 +96,6 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		}
 	}
 
-	stats.Duration = time.Since(start)
 	return stats, nil
 }
 
@@ -263,6 +263,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(cfg.Concurrency)
 	results := make([]int64, len(files))
+	completed := make([]bool, len(files))
 
 	for i, f := range files {
 		g.Go(func() error {
@@ -271,6 +272,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 			}
 			log.Infof("%supload %s => %s (%s)", verb, f.localPath, f.remotePath, humanSize(f.size))
 			if cfg.DryRun {
+				completed[i] = true
 				return nil
 			}
 			n, err := uploadFileWithRetry(ctx, f, client, cfg.Retries, log)
@@ -278,18 +280,18 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 				return err
 			}
 			results[i] = n
+			completed[i] = true
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
-		return err
+	runErr := g.Wait()
+	for i, n := range results {
+		if completed[i] {
+			stats.FilesUploaded++
+			stats.BytesUploaded += n
+		}
 	}
-
-	stats.FilesUploaded += len(files)
-	for _, n := range results {
-		stats.BytesUploaded += n
-	}
-	return nil
+	return runErr
 }
 
 // planVerb returns the log prefix that distinguishes a dry run from a real one.

@@ -46,17 +46,25 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	stats, err := uploader.Run(ctx, cfg, ghaLogger{})
-	if err != nil {
-		return err
-	}
-
+	stats, runErr := uploader.Run(ctx, cfg, ghaLogger{})
 	mode := "uploaded"
 	if cfg.DryRun {
 		mode = "would upload (dry-run)"
 	}
-	gha.Infof("done: %s %d file(s), %d byte(s), deleted %d file(s), skipped %d unchanged, took %s",
-		mode, stats.FilesUploaded, stats.BytesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.Duration.Round(1e6))
+	if runErr == nil {
+		gha.Infof("done: %s %d file(s), %d byte(s), deleted %d file(s), skipped %d unchanged, took %s",
+			mode, stats.FilesUploaded, stats.BytesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.Duration.Round(1e6))
+	}
+
+	reportStats(stats, mode, runErr)
+	return runErr
+}
+
+func reportStats(stats *uploader.Stats, mode string, runErr error) {
+	status := "✅ Succeeded"
+	if runErr != nil {
+		status = fmt.Sprintf("❌ Failed after %d file(s), %d byte(s)", stats.FilesUploaded, stats.BytesUploaded)
+	}
 
 	gha.SetOutput("files-uploaded", fmt.Sprintf("%d", stats.FilesUploaded))
 	gha.SetOutput("files-deleted", fmt.Sprintf("%d", stats.FilesDeleted))
@@ -65,8 +73,6 @@ func run() error {
 	gha.SetOutput("duration-ms", fmt.Sprintf("%d", stats.Duration.Milliseconds()))
 
 	gha.AppendSummary(fmt.Sprintf(
-		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %d |\n| Duration | %s |\n",
-		mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.BytesUploaded, stats.Duration.Round(1e6)))
-
-	return nil
+		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %d |\n| Duration | %s |\n",
+		status, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.BytesUploaded, stats.Duration.Round(1e6)))
 }
