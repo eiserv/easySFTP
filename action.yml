@@ -49,7 +49,7 @@ inputs:
   config-file:
     description: >-
       Path to an optional YAML config file describing the deployment targets,
-      their strategy and delete guards (see docs/CONFIG.md). When set, it
+      their strategy and delete guards (see docs/configuration.md). When set, it
       replaces the uploads/strategy/delete/ignore inputs. Connection settings
       always come from the inputs above.
     required: false
