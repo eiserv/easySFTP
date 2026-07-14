@@ -5,6 +5,14 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1](https://github.com/eiserv/easySFTP/compare/v1.2.0...v1.2.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **ci:** derive the prebuilt test ref from .easysftp-version ([9554ccf](https://github.com/eiserv/easySFTP/commit/9554ccf58112e1e5c231f4adf8ae04521285188b))
+* **ci:** derive the prebuilt test ref from .easysftp-version ([416767a](https://github.com/eiserv/easySFTP/commit/416767a8b87ec08ff792a1968ded693fe6dc312a))
+
 ## [1.2.0](https://github.com/eiserv/easySFTP/compare/v1.1.0...v1.2.0) (2026-07-14)
 
 
