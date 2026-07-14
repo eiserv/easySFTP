@@ -248,8 +248,11 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 		if cfg.DryRun {
 			continue
 		}
-		if _, err := client.Stat(dir); err == nil {
-			continue
+		if info, err := client.Stat(dir); err == nil {
+			if info.IsDir() {
+				continue
+			}
+			return fmt.Errorf("remote path %q exists but is not a directory", dir)
 		}
 		if err := client.MkdirAll(dir); err != nil {
 			return fmt.Errorf("creating remote directory %q: %w", dir, err)

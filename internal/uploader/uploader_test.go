@@ -96,6 +96,37 @@ func TestUploadDirectoryWithIgnore(t *testing.T) {
 	}
 }
 
+func TestUploadDirectoryFailsWhenRemoteDirIsFile(t *testing.T) {
+	srv := startTestServer(t)
+	client := srv.verifyClient(t)
+	f, err := client.Create("/www")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("not a directory")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{
+		"index.html": "fresh",
+	})
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	_, err = Run(context.Background(), cfg, testLogger{t})
+	if err == nil {
+		t.Fatal("expected remote file conflict error")
+	}
+	if got, want := err.Error(), `remote path "/www" exists but is not a directory`; !strings.Contains(got, want) {
+		t.Fatalf("expected error containing %q, got %q", want, got)
+	}
+}
+
 func TestUploadSingleFile(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
