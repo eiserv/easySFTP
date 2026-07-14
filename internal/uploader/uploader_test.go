@@ -122,7 +122,7 @@ func TestUploadDirectoryFailsWhenRemoteDirIsFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected remote file conflict error")
 	}
-	if got, want := err.Error(), `remote path "/www" exists but is not a directory`; !strings.Contains(got, want) {
+	if got, want := err.Error(), "remote path \"/www\" exists but is not a directory"; !strings.Contains(got, want) {
 		t.Fatalf("expected error containing %q, got %q", want, got)
 	}
 }
