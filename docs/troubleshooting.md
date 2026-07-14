@@ -4,6 +4,21 @@ Common errors, what they mean and how to fix them. If your problem is not
 listed, [open an issue](https://github.com/eiserv/easySFTP/issues), ideally
 with the log of a `dry-run: true` run.
 
+## Action startup problems
+
+### `prebuilt mode requires a release tag ref ... Use build-mode: source`
+
+Prebuilt mode accepts `@vX`, `@vX.Y`, `@vX.Y.Z`, or the full commit SHA behind
+that exact release. For `@main`, other commit SHAs, or local `uses: ./`, add
+`build-mode: source`. This avoids silently running the last published binary
+for newer source code.
+
+### `SHA-256 mismatch` or `checksums.txt has no SHA-256 entry`
+
+The release is incomplete or an asset does not match its published checksum.
+The binary is not executed. Retry after the maintainer repairs the exact
+release; do not bypass checksum verification.
+
 ## Connection problems
 
 ### `connecting to <host>:22: dial tcp ...: i/o timeout`

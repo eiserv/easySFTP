@@ -8,16 +8,17 @@
 Deploy your build output to any SFTP server, from a three-line workflow step
 up to fully configured multi-target deployments.
 
-- ⚡ **Fast**: written in Go, files are transferred in parallel with concurrent
-  SFTP write requests per file.
+- ⚡ **Fast**: release tags use a prebuilt, checksum-verified Go binary by
+  default, and files are transferred in parallel with concurrent SFTP write
+  requests per file.
 - 🔒 **Secure**: optional host key pinning verifies the server's identity;
   atomic per-file uploads never leave half-written files; credentials are only
   ever read from environment variables.
 - 🧩 **Simple, but configurable**: sensible defaults for the simple case;
   gitignore-style excludes, sync/clean strategies, delete guards, dry runs,
   retries and outputs for the complex ones.
-- 🖥️ **Cross-platform**: runs natively on `ubuntu-*`, `macos-*` and
-  `windows-*` runners, with no Docker required.
+- 🖥️ **Cross-platform**: native amd64 and arm64 binaries for Linux, macOS and
+  Windows, with no Docker required.
 
 ## Table of contents
 
@@ -100,6 +101,7 @@ The most used inputs:
 
 | Input | Default | Description |
 |---|---|---|
+| `build-mode` | `prebuilt` | `prebuilt` downloads and verifies the release binary; `source` installs Go and compiles this checkout. |
 | `server` / `port` / `username` | - / `22` / - | Where and as whom to connect. |
 | `password` / `private-key` / `passphrase` | - | Authentication, at least one of password/key. **Use secrets.** |
 | `host-key-fingerprint` | - | Pin the server's SHA256 host key(s). **Strongly recommended.** |
@@ -190,8 +192,27 @@ uses: eiserv/easySFTP@v1        # latest 1.x, recommended, gets fixes & features
 uses: eiserv/easySFTP@v1.2.3    # exact, immutable pin
 ```
 
-`v1`/`v1.2` are rolling tags; `v1.2.3` and commit SHAs never move. Releases and
-the changelog are generated automatically from Conventional Commits. See
+`v1`, `v1.2` and `v1.2.3` use the exact version recorded in
+`.easysftp-version` and download the corresponding asset only from this
+repository's GitHub Release. The asset's SHA-256 digest is checked against
+`checksums.txt` before it is executed. `v1`/`v1.2` are rolling tags; exact tags
+never move.
+
+An exact release-commit SHA is accepted after it is matched against the exact
+tag recorded in `.easysftp-version`. Development refs such as `@main`, local
+`uses: ./`, and commit SHAs that do not match that release do not silently reuse
+the last binary. Select the source fallback explicitly for those checkouts:
+
+```yaml
+- uses: eiserv/easySFTP@<commit-sha>
+  with:
+    build-mode: source
+    # connection and upload inputs...
+```
+
+Source mode installs the Go version from `go.mod` and builds that exact
+checkout with `CGO_ENABLED=0`, `-trimpath`, and stripped symbols. Releases and
+the changelog remain managed by Release Please and Conventional Commits. See
 [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Contributing

@@ -1,0 +1,269 @@
+name: Release binaries
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing exact release tag to build and publish.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate exact trusted release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Verify tag, version, release, and ancestry
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Repair/build tag must be an exact vMAJOR.MINOR.PATCH tag"
+            exit 1
+          fi
+          git show-ref --verify --quiet "refs/tags/$TAG"
+          commit=$(git rev-parse "$TAG^{}")
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::Release tag $TAG is not reachable from main"
+            exit 1
+          fi
+          source scripts/action-lib.sh
+          version=$(read_release_version .easysftp-version)
+          if [[ "$version" != "$TAG" ]]; then
+            echo "::error::.easysftp-version contains $version, expected $TAG"
+            exit 1
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  unit-tests:
+    name: Test exact release source
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: go test -race ./...
+
+  build:
+    name: Build ${{ matrix.asset }}
+    needs: [validate, unit-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            asset: easysftp_linux_x64
+          - goos: linux
+            goarch: arm64
+            asset: easysftp_linux_arm64
+          - goos: darwin
+            goarch: amd64
+            asset: easysftp_macos_x64
+          - goos: darwin
+            goarch: arm64
+            asset: easysftp_macos_arm64
+          - goos: windows
+            goarch: amd64
+            asset: easysftp_windows_x64.exe
+          - goos: windows
+            goarch: arm64
+            asset: easysftp_windows_arm64.exe
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cross-compile static binary
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          set -euo pipefail
+          mkdir dist
+          go build -trimpath -ldflags="-s -w" -o "dist/$ASSET" ./cmd/easysftp
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 1
+
+  smoke-test:
+    name: Smoke test ${{ matrix.asset }}
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            asset: easysftp_linux_x64
+            windows: false
+          - runner: ubuntu-24.04-arm
+            asset: easysftp_linux_arm64
+            windows: false
+          - runner: macos-15-intel
+            asset: easysftp_macos_x64
+            windows: false
+          - runner: macos-15
+            asset: easysftp_macos_arm64
+            windows: false
+          - runner: windows-latest
+            asset: easysftp_windows_x64.exe
+            windows: true
+          - runner: windows-11-arm
+            asset: easysftp_windows_arm64.exe
+            windows: true
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-${{ matrix.asset }}
+
+      - name: Run network-free help smoke test
+        if: matrix.windows == false
+        shell: bash
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          set -euo pipefail
+          chmod +x "$ASSET"
+          "./$ASSET" --help
+
+      - name: Run network-free help smoke test
+        if: matrix.windows == true
+        shell: pwsh
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: '& (Join-Path $PWD $env:ASSET) --help'
+
+  upload:
+    name: Upload assets and checksums
+    needs: [validate, build, smoke-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Verify asset set and generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            easysftp_linux_x64
+            easysftp_linux_arm64
+            easysftp_macos_x64
+            easysftp_macos_arm64
+            easysftp_windows_x64.exe
+            easysftp_windows_arm64.exe
+          )
+          for asset in "${expected[@]}"; do
+            test -f "release/$asset"
+          done
+          count=$(find release -maxdepth 1 -type f | wc -l)
+          if [[ "$count" -ne "${#expected[@]}" ]]; then
+            echo "::error::Expected ${#expected[@]} release binaries, found $count files"
+            exit 1
+          fi
+          (
+            cd release
+            sha256sum "${expected[@]}" > checksums.txt
+          )
+
+      - name: Upload or replace release assets
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          actual_commit=$(git rev-parse "$TAG^{}")
+          if [[ "$actual_commit" != "$EXPECTED_COMMIT" ]]; then
+            echo "::error::Exact release tag $TAG moved during this run"
+            exit 1
+          fi
+          gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  rolling-tags:
+    name: Update rolling major and minor tags
+    needs: [validate, upload]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+
+      - name: Move rolling tags after successful publication
+        shell: bash
+        env:
+          COMMIT: ${{ needs.validate.outputs.commit }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+            echo "::error::Invalid exact release tag: $TAG"
+            exit 1
+          fi
+          major=${BASH_REMATCH[1]}
+          minor=${BASH_REMATCH[2]}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "v$major" "$COMMIT"
+          git tag -f "v$major.$minor" "$COMMIT"
+          git push --force origin "v$major" "v$major.$minor"

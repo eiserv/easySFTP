@@ -9,6 +9,32 @@ permissions:
   contents: read
 
 jobs:
+  action-tests:
+    name: Action launcher and metadata (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Lint shell scripts
+        if: runner.os == 'Linux'
+        run: shellcheck scripts/*.sh
+
+      - name: Test action launcher modes and validation
+        shell: bash
+        run: bash scripts/test-action.sh
+
+      - name: Validate action metadata
+        run: go test ./internal/actionmeta
+
   test:
     name: Unit tests (${{ matrix.os }})
     strategy:
@@ -79,6 +105,7 @@ jobs:
       - name: Dry run
         uses: ./
         with:
+          build-mode: source
           server: localhost
           port: 2222
           username: demo
@@ -99,6 +126,7 @@ jobs:
         id: upload
         uses: ./
         with:
+          build-mode: source
           server: localhost
           port: 2222
           username: demo
@@ -125,6 +153,7 @@ jobs:
         id: clean-upload
         uses: ./
         with:
+          build-mode: source
           server: localhost
           port: 2222
           username: demo
@@ -148,6 +177,7 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
+          build-mode: source
           server: localhost
           port: 2222
           username: demo
