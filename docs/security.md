@@ -6,7 +6,7 @@ How to run easySFTP safely. See also the project's
 ## Pin the host key (strongly recommended)
 
 Without `host-key-fingerprint`, easySFTP prints a warning and accepts **any**
-host key — convenient for a first test, but vulnerable to man-in-the-middle
+host key. Convenient for a first test, but vulnerable to man-in-the-middle
 attacks. Pin your server's keys once:
 
 ```console
@@ -17,7 +17,7 @@ $ ssh-keyscan sftp.example.com | ssh-keygen -lf -
 ```
 
 Store the `SHA256:...` values as a secret (one per line) and pass them as
-`host-key-fingerprint` — the connection is accepted if the server presents a
+`host-key-fingerprint`. The connection is accepted if the server presents a
 key matching **any** of them, so you can simply pin all of your server's keys:
 
 ```yaml
@@ -32,7 +32,7 @@ new fingerprints.
 
 - Always store `password`, `private-key` and `passphrase` as
   [encrypted secrets](https://docs.github.com/en/actions/security-guides/encrypted-secrets)
-  — never hardcode them in a workflow file.
+  and never hardcode them in a workflow file.
 - easySFTP receives credentials via environment variables and never prints them.
 - **Prefer key-based authentication** over passwords. Generate a dedicated
   deploy key and restrict what its account can do on the server:
@@ -61,6 +61,6 @@ new fingerprints.
   ```
 
 - Exact version tags (`v1.2.3`) are immutable once published; `v1` and `v1.2`
-  are rolling tags — see [RELEASING.md](RELEASING.md#tag-policy).
+  are rolling tags, see [RELEASING.md](RELEASING.md#tag-policy).
 - Grant the deploy job only the permissions it needs
   (`permissions: contents: read` is enough for easySFTP itself).

@@ -5,7 +5,7 @@
 
 **Fast, secure and simple SFTP uploads for GitHub Actions.**
 
-Deploy your build output to any SFTP server — from a three-line workflow step
+Deploy your build output to any SFTP server, from a three-line workflow step
 up to fully configured multi-target deployments.
 
 - ⚡ **Fast**: written in Go, files are transferred in parallel with concurrent
@@ -17,10 +17,11 @@ up to fully configured multi-target deployments.
   gitignore-style excludes, sync/clean strategies, delete guards, dry runs,
   retries and outputs for the complex ones.
 - 🖥️ **Cross-platform**: runs natively on `ubuntu-*`, `macos-*` and
-  `windows-*` runners — no Docker required.
+  `windows-*` runners, with no Docker required.
 
 ## Table of contents
 
+- [Why easySFTP?](#why-easysftp)
 - [Quick start](#quick-start)
 - [Inputs & outputs](#inputs--outputs)
 - [Strategies](#strategies)
@@ -28,9 +29,55 @@ up to fully configured multi-target deployments.
 - [Security](#security)
 - [Documentation](#documentation)
 - [Versioning](#versioning)
-- [Why another SFTP action?](#why-another-sftp-action)
 - [Contributing](#contributing)
 - [License](#license)
+
+## Why easySFTP?
+
+I needed an SFTP upload step for a GitHub Actions deploy, and none of the
+existing options really fit. They were either no longer actively maintained,
+not resource-friendly, hard or barely configurable, or they simply did not work
+reliably. So I built my own and made it available for everyone with the same
+problem: an action that stays out of your way for the simple case and still
+handles the complex ones.
+
+Here is how easySFTP compares to other open-source actions that tackle the same
+job:
+
+| Feature | easySFTP | [Dylan700/sftp&#8209;upload&#8209;action][dylan] | [SamKirkland/FTP&#8209;Deploy&#8209;Action][sam] | [wlixcc/SFTP&#8209;Deploy&#8209;Action][wlixcc] | [wangyucode/sftp&#8209;upload&#8209;action][wang] |
+|---|---|---|---|---|---|
+| Protocol | SFTP | SFTP | FTP / FTPS only | SFTP | SFTP |
+| Implementation | Go binary | Node.js | Node.js | Docker (rsync) | Python |
+| Linux / macOS / Windows | yes / yes / yes | yes / yes / yes | yes / yes / yes | Linux only (Docker) | needs Python on runner |
+| Host key verification | yes (pinned fingerprints) | no | n/a | not documented | not documented |
+| Atomic per-file upload | yes | no | no | rsync temp file | no |
+| Skip unchanged files | yes (SHA256 manifest) | no | yes (state file) | partial (rsync) | yes (MD5 hashes) |
+| Delete removed files | yes (tracked, via sync) | yes (full wipe) | yes | yes (full wipe) | yes (tracked) |
+| Delete safety guards | yes (root refusal, max_deletes) | no | no | no | no |
+| Multiple targets / strategies | yes (config file) | multiple mappings | single directory | single directory | single directory |
+| Dry run | yes | no | yes | no | no |
+| Actively maintained | yes | last release 2024 | yes | yes | yes |
+
+The matrix reflects each project's public documentation as of July 2026.
+"Not documented" means the feature was not found in that action's README, not
+that it is impossible. SamKirkland's FTP-Deploy-Action is by far the most
+popular deploy action, but it speaks FTP/FTPS rather than SFTP, so it is listed
+for context rather than as a direct SFTP alternative.
+
+easySFTP is a clean, from-scratch implementation in Go, inspired by the
+no-longer-maintained [Dylan700/sftp-upload-action][dylan]:
+
+- compiled static binary instead of a Node.js runtime (fast startup, parallel transfers)
+- works on Linux, macOS **and** Windows runners, with no Docker required
+- host key verification, atomic uploads, retries with backoff, structured
+  outputs and a job summary
+- end-to-end test suite against an in-process SFTP server, plus a CI self-test
+  against a real OpenSSH server
+
+[dylan]: https://github.com/Dylan700/sftp-upload-action
+[sam]: https://github.com/SamKirkland/FTP-Deploy-Action
+[wlixcc]: https://github.com/wlixcc/SFTP-Deploy-Action
+[wang]: https://github.com/wangyucode/sftp-upload-action
 
 ## Quick start
 
@@ -44,8 +91,8 @@ up to fully configured multi-target deployments.
     uploads: ./dist/ => /var/www/html/
 ```
 
-That's it. Everything else is optional. More recipes — key auth, multi-target
-deploys, PR previews, `.sftpignore` — live in [docs/examples.md](docs/examples.md).
+That's it. Everything else is optional. More recipes (key auth, multi-target
+deploys, PR previews, `.sftpignore`) live in [docs/examples.md](docs/examples.md).
 
 ## Inputs & outputs
 
@@ -53,17 +100,17 @@ The most used inputs:
 
 | Input | Default | Description |
 |---|---|---|
-| `server` / `port` / `username` | — / `22` / — | Where and as whom to connect. |
-| `password` / `private-key` / `passphrase` | — | Authentication — at least one of password/key. **Use secrets.** |
-| `host-key-fingerprint` | — | Pin the server's SHA256 host key(s). **Strongly recommended.** |
-| `uploads` | — | One `local => remote` mapping per line; directories are recursive. |
+| `server` / `port` / `username` | - / `22` / - | Where and as whom to connect. |
+| `password` / `private-key` / `passphrase` | - | Authentication, at least one of password/key. **Use secrets.** |
+| `host-key-fingerprint` | - | Pin the server's SHA256 host key(s). **Strongly recommended.** |
+| `uploads` | - | One `local => remote` mapping per line; directories are recursive. |
 | `strategy` | `overlay` | How the remote side is reconciled: `overlay`, `sync` or `clean`. |
-| `ignore` / `ignore-from` | — | Gitignore-style excludes (inline / from a file). |
+| `ignore` / `ignore-from` | - | Gitignore-style excludes (inline / from a file). |
 | `dry-run` | `false` | Log what would happen, change nothing. |
 | `concurrency` / `retries` / `timeout` | `4` / `2` / `30` | Parallelism, per-file retries, connection timeout (s). |
 
 Outputs: `files-uploaded`, `files-deleted`, `files-skipped`, `bytes-uploaded`,
-`duration-ms` — plus a summary table in the job summary.
+`duration-ms`, plus a summary table in the job summary.
 
 ➡ Full reference with every input, output and rule:
 [docs/configuration.md](docs/configuration.md)
@@ -76,7 +123,7 @@ Outputs: `files-uploaded`, `files-deleted`, `files-skipped`, `bytes-uploaded`,
 | `sync` | new & changed files | files a previous sync uploaded but that are now gone locally | keeping a directory an exact mirror of your build, safely |
 | `clean` | all files | **everything** in the remote target first | a guaranteed-fresh deploy |
 
-`sync` is manifest-based — it only ever deletes files it uploaded itself, skips
+`sync` is manifest-based: it only ever deletes files it uploaded itself, skips
 unchanged files by content hash, and re-deploys only transfer what changed.
 Destructive strategies are protected by [delete guards](docs/strategies.md#delete-guards):
 the remote root is always refused, and `max_deletes` caps how much a single run
@@ -103,7 +150,7 @@ targets:
     strategy: clean
 ```
 
-A JSON Schema for editor autocomplete/validation is bundled — see
+A JSON Schema for editor autocomplete/validation is bundled. See
 [docs/configuration.md](docs/configuration.md#the-yaml-config-file) and the
 commented [example config](docs/easysftp.example.yml).
 
@@ -112,7 +159,7 @@ commented [example config](docs/easysftp.example.yml).
 Two rules cover most of it:
 
 1. **Pin the host key.** Without `host-key-fingerprint`, any server is
-   accepted — set it so a man-in-the-middle fails the deploy instead:
+   accepted. Set it so a man-in-the-middle fails the deploy instead:
 
    ```console
    $ ssh-keyscan sftp.example.com | ssh-keygen -lf -
@@ -139,25 +186,13 @@ Vulnerability reports: [SECURITY.md](SECURITY.md)
 easySFTP follows [Semantic Versioning](https://semver.org):
 
 ```yaml
-uses: eiserv/easySFTP@v1        # latest 1.x — recommended, gets fixes & features
+uses: eiserv/easySFTP@v1        # latest 1.x, recommended, gets fixes & features
 uses: eiserv/easySFTP@v1.2.3    # exact, immutable pin
 ```
 
 `v1`/`v1.2` are rolling tags; `v1.2.3` and commit SHAs never move. Releases and
-the changelog are generated automatically from Conventional Commits — see
+the changelog are generated automatically from Conventional Commits. See
 [docs/RELEASING.md](docs/RELEASING.md).
-
-## Why another SFTP action?
-
-This project is inspired by [Dylan700/sftp-upload-action](https://github.com/Dylan700/sftp-upload-action),
-which is no longer actively maintained. easySFTP is a clean reimplementation in Go:
-
-- compiled static binary instead of a Node.js runtime (fast startup, parallel transfers)
-- works on Linux, macOS **and** Windows runners (no Docker required)
-- host key verification, atomic uploads, retries with backoff, structured
-  outputs and a job summary
-- end-to-end test suite against an in-process SFTP server, plus a CI self-test
-  against a real OpenSSH server
 
 ## Contributing
 

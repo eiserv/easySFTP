@@ -14,13 +14,13 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 
 | Input | Required | Default | Description |
 |---|---|---|---|
-| `server` | ✅ | — | Hostname or IP of the SFTP server. |
+| `server` | ✅ | - | Hostname or IP of the SFTP server. |
 | `port` | | `22` | SSH port. |
-| `username` | ✅ | — | Username for authentication. |
-| `password` | ¹ | — | Password. **Use a secret.** |
-| `private-key` | ¹ | — | SSH private key (OpenSSH/PEM format). **Use a secret.** |
-| `passphrase` | | — | Passphrase of the private key, if encrypted. |
-| `host-key-fingerprint` | | — | Expected SHA256 host key fingerprint(s), one per line (`SHA256:...`). **Strongly recommended** — see [Security](security.md). |
+| `username` | ✅ | - | Username for authentication. |
+| `password` | ¹ | - | Password. **Use a secret.** |
+| `private-key` | ¹ | - | SSH private key (OpenSSH/PEM format). **Use a secret.** |
+| `passphrase` | | - | Passphrase of the private key, if encrypted. |
+| `host-key-fingerprint` | | - | Expected SHA256 host key fingerprint(s), one per line (`SHA256:...`). **Strongly recommended**, see [Security](security.md). |
 | `timeout` | | `30` | Connection timeout in seconds. |
 
 ¹ At least one of `password` / `private-key` is required. If both are set, the key is tried first.
@@ -29,11 +29,11 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 
 | Input | Required | Default | Description |
 |---|---|---|---|
-| `uploads` | ² | — | One `local => remote` mapping per line. Directories are uploaded recursively; single files are supported too. |
-| `config-file` | | — | Path to a [YAML config file](#the-yaml-config-file) with per-target strategies and delete guards. Mutually exclusive with `uploads`/`strategy`/`delete`/`ignore`/`ignore-from`. |
+| `uploads` | ² | - | One `local => remote` mapping per line. Directories are uploaded recursively; single files are supported too. |
+| `config-file` | | - | Path to a [YAML config file](#the-yaml-config-file) with per-target strategies and delete guards. Mutually exclusive with `uploads`/`strategy`/`delete`/`ignore`/`ignore-from`. |
 | `strategy` | | `overlay` | [Reconciliation strategy](strategies.md): `overlay`, `sync` or `clean`. |
-| `ignore` | | — | Gitignore-style exclude patterns, one per line. `!` re-includes. |
-| `ignore-from` | | — | Path to a file with exclude patterns (e.g. `.sftpignore`). |
+| `ignore` | | - | Gitignore-style exclude patterns, one per line. `!` re-includes. |
+| `ignore-from` | | - | Path to a file with exclude patterns (e.g. `.sftpignore`). |
 | `delete` | | `false` | Legacy alias for `strategy: clean`. Prefer `strategy`. |
 
 ² Required unless `config-file` is set.
@@ -78,7 +78,7 @@ uploads: |
 Rules:
 
 - **Directories** are uploaded recursively. Remote directories are created automatically.
-- **Single files** map onto the exact remote path — unless the remote side ends
+- **Single files** map onto the exact remote path, unless the remote side ends
   with `/`, which means "into this directory" keeping the original file name.
 - Single files only support the `overlay` strategy (`sync`/`clean` reconcile a
   directory tree and are rejected for single-file targets).
@@ -106,7 +106,7 @@ ignore: |
 
 For multiple targets with different strategies, point `config-file` at a YAML
 file. Connection settings (server, credentials, host key) always stay in the
-action inputs — **never put credentials in this file**.
+action inputs. **Never put credentials in this file**.
 
 ```yaml
 - uses: eiserv/easySFTP@v1
@@ -140,15 +140,15 @@ targets:
 
 | Field | Required | Default | Description |
 |---|---|---|---|
-| `version` | ✅ | — | Config format version. Must be `1`. |
+| `version` | ✅ | - | Config format version. Must be `1`. |
 | `strategy` | | `overlay` | Default strategy for all targets. |
-| `ignore` | | — | Global gitignore-style excludes, applied to every target. |
+| `ignore` | | - | Global gitignore-style excludes, applied to every target. |
 | `guards.max_deletes` | | `0` | Abort a run that would delete more files than this (0 = unlimited). See [delete guards](strategies.md#delete-guards). |
-| `targets` | ✅ | — | List of upload targets (at least one). |
-| `targets[].local` | ✅ | — | Local file or directory. |
-| `targets[].remote` | ✅ | — | Remote path. |
+| `targets` | ✅ | - | List of upload targets (at least one). |
+| `targets[].local` | ✅ | - | Local file or directory. |
+| `targets[].remote` | ✅ | - | Remote path. |
 | `targets[].strategy` | | global | Per-target strategy override. |
-| `targets[].ignore` | | — | Per-target excludes, additive to the global list. |
+| `targets[].ignore` | | - | Per-target excludes, additive to the global list. |
 
 Unknown keys are rejected with an error (they are never silently ignored), and
 `config-file` cannot be combined with the `uploads`, `strategy`, `delete`,

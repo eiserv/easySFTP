@@ -19,7 +19,7 @@ is ever deleted. This is the default and the backwards-compatible behavior.
 
 Uploads are **atomic per file**: content is streamed to a temporary sibling
 file (`<name>.easysftp-tmp`) and renamed over the target only once the transfer
-fully succeeded — a broken connection never leaves a half-written file where
+fully succeeded. A broken connection never leaves a half-written file where
 the live one was.
 
 ## `sync`
@@ -31,7 +31,7 @@ changed.
 
 `sync` is **manifest-based**: it keeps a small `.easysftp-manifest.json` in
 each target directory listing the relative path and content hash of every file
-it uploaded. Only files listed in the manifest are ever deleted — files put on
+it uploaded. Only files listed in the manifest are ever deleted. Files put on
 the server by anyone else (uploads from other tools, server-generated files,
 user content) are never touched.
 
@@ -56,7 +56,7 @@ The `delete: true` input is a legacy alias for `strategy: clean`.
 
 Two safety nets apply before `sync` or `clean` delete anything:
 
-- **Remote root is refused — always.** A target that resolves to `/` (or `.`)
+- **Remote root is always refused.** A target that resolves to `/` (or `.`)
   is rejected outright. No strategy will ever wipe a server root.
 - **`guards.max_deletes`** ([config file](configuration.md#fields) only) aborts
   a run that would delete more files than the limit, catching a
@@ -71,6 +71,6 @@ dry-run: true
 ```
 
 easySFTP connects, plans everything and logs exactly what would be uploaded,
-skipped and deleted — but changes nothing. The `files-uploaded` /
+skipped and deleted, but changes nothing. The `files-uploaded` /
 `files-deleted` outputs report the *planned* counts, so you can use a dry run
 in a pull request to preview a deploy.

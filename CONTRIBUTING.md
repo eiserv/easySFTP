@@ -13,7 +13,7 @@ by participating you agree to abide by it.
 - **Bugs:** include your workflow step (redact secrets!), the action version,
   the runner OS and the relevant log output. A `dry-run: true` log is often
   enough to reproduce planning problems.
-- **Security vulnerabilities:** do **not** open a public issue — see
+- **Security vulnerabilities:** do **not** open a public issue, see
   [SECURITY.md](SECURITY.md).
 - **Features:** describe the use case, not just the solution. Issues labeled
   [`good first issue`](https://github.com/eiserv/easySFTP/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
@@ -22,7 +22,7 @@ by participating you agree to abide by it.
 
 ## Development setup
 
-You need [Go](https://go.dev/dl/) (version from [go.mod](go.mod)) — nothing
+You need [Go](https://go.dev/dl/) (version from [go.mod](go.mod)), nothing
 else. No Docker required for tests.
 
 ```console
@@ -48,8 +48,8 @@ docs/                    user documentation
 
 ### Running the binary locally
 
-The binary is configured entirely through `EASYSFTP_*` environment variables —
-see [action.yml](action.yml) for the mapping. Example against a local SFTP
+The binary is configured entirely through `EASYSFTP_*` environment variables.
+See [action.yml](action.yml) for the mapping. Example against a local SFTP
 server:
 
 ```console
@@ -78,7 +78,7 @@ $ EASYSFTP_SERVER=localhost EASYSFTP_PORT=2222 \
 ### PR title = Conventional Commit (required)
 
 PRs are **squash-merged**, so the PR title becomes the commit message and must
-be a [Conventional Commit](https://www.conventionalcommits.org/) — CI enforces
+be a [Conventional Commit](https://www.conventionalcommits.org/). CI enforces
 this. The prefix decides the release bump
 (see [docs/RELEASING.md](docs/RELEASING.md)):
 
@@ -99,5 +99,5 @@ this. The prefix decides the release bump
 - Destructive-path changes (anything that deletes remote files) keep the
   [delete guards](docs/strategies.md#delete-guards) intact.
 
-Releases are fully automated — you never bump versions or edit the changelog
+Releases are fully automated: you never bump versions or edit the changelog
 by hand. Merged `feat:`/`fix:` PRs ship with the next release PR merge.

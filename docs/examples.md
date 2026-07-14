@@ -15,7 +15,7 @@ stored as [encrypted secrets](https://docs.github.com/en/actions/security-guides
 
 ## Deploy a static site
 
-The minimal setup — build, then upload the output on top of what's there:
+The minimal setup: build, then upload the output on top of what's there:
 
 ```yaml
 name: Deploy
@@ -43,7 +43,7 @@ jobs:
 ## Mirror a build with sync
 
 `sync` keeps the remote directory an exact mirror of your build output:
-unchanged files are skipped, files removed locally are deleted remotely — but
+unchanged files are skipped, files removed locally are deleted remotely, but
 only files easySFTP itself uploaded ([manifest-based](strategies.md#sync), so
 user uploads and server-generated files survive):
 
@@ -95,7 +95,7 @@ Full field reference: [configuration.md](configuration.md#the-yaml-config-file).
 
 ## Key-based authentication
 
-Preferred over passwords — see the [security guide](security.md#credentials):
+Preferred over passwords, see the [security guide](security.md#credentials):
 
 ```yaml
 - uses: eiserv/easySFTP@v1
@@ -110,7 +110,7 @@ Preferred over passwords — see the [security guide](security.md#credentials):
 
 ## Upload a single file (with rename)
 
-A single file maps onto the exact remote path — so you can rename on the fly.
+A single file maps onto the exact remote path, so you can rename on the fly.
 A trailing `/` on the remote side means "into this directory" instead:
 
 ```yaml
@@ -179,7 +179,7 @@ Keep the exclude list out of the workflow file:
 ```
 
 ```gitignore
-# .sftpignore — gitignore syntax
+# .sftpignore, gitignore syntax
 *.map
 *.log
 node_modules/
@@ -188,7 +188,7 @@ node_modules/
 
 ## Windows and macOS runners
 
-Nothing changes — easySFTP is a compiled Go binary and runs natively on
+Nothing changes: easySFTP is a compiled Go binary and runs natively on
 `ubuntu-*`, `macos-*` and `windows-*` runners (no Docker required):
 
 ```yaml
