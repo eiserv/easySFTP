@@ -47,6 +47,9 @@ trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/action" "$tmp/assets" "$tmp/bin" "$tmp/runner"
 cp "$repo_root/.easysftp-version" "$tmp/action/.easysftp-version"
+# The prebuilt launcher rejects a ref that disagrees with .easysftp-version, so the
+# ref has to follow the release-please bump instead of being pinned to one release.
+release_version=$(read_release_version "$repo_root/.easysftp-version")
 printf '#!/usr/bin/env bash\necho prebuilt-ok\n' > "$tmp/assets/easysftp_linux_x64"
 chmod +x "$tmp/assets/easysftp_linux_x64"
 hash=$(sha256_file "$tmp/assets/easysftp_linux_x64")
@@ -99,7 +102,7 @@ PATH="$tmp/bin:$PATH" \
 MOCK_ASSET_DIR="$tmp/assets" \
 INPUT_BUILD_MODE=prebuilt \
 ACTION_PATH="$tmp/action" \
-ACTION_REF=v1.1.0 \
+ACTION_REF="$release_version" \
 RUNNER_OS=Linux \
 RUNNER_ARCH=X64 \
 RUNNER_TEMP="$tmp/runner" \
