@@ -104,7 +104,7 @@ RUNNER_OS=Linux \
 RUNNER_ARCH=X64 \
 RUNNER_TEMP="$tmp/runner" \
 GITHUB_OUTPUT="$output_file" \
-  "$repo_root/scripts/prepare-action.sh"
+  bash "$repo_root/scripts/prepare-action.sh"
 prepared_binary=$(sed -n 's/^binary=//p' "$output_file")
 prebuilt_result=$("$prepared_binary")
 expect_equal 'prebuilt execution' 'prebuilt-ok' "$prebuilt_result"
@@ -127,7 +127,7 @@ RUNNER_OS="$source_runner_os" \
 RUNNER_ARCH=X64 \
 RUNNER_TEMP="$source_runner_temp" \
 GITHUB_OUTPUT="$source_github_output" \
-  "$repo_root/scripts/prepare-action.sh"
+  bash "$repo_root/scripts/prepare-action.sh"
 expect_equal 'source preparation' 'source' "$(sed -n 's/^build-mode=//p' "$source_output")"
 
 printf '%s\n' '# x-release-please-start-version' '1.2.3' '# x-release-please-end' > "$tmp/bad-version"
