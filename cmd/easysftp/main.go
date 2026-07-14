@@ -18,6 +18,8 @@ import (
 
 type ghaLogger struct{}
 
+var buildVersion string
+
 func (ghaLogger) Infof(format string, args ...any)    { gha.Infof(format, args...) }
 func (ghaLogger) Warningf(format string, args ...any) { gha.Warningf(format, args...) }
 func (ghaLogger) Group(name string)                   { gha.Group(name) }
@@ -68,12 +70,12 @@ func logBuildInfo() {
 	if !ok {
 		return
 	}
-	if line := buildInfoLine(info); line != "" {
+	if line := buildInfoLine(info, buildVersion); line != "" {
 		gha.Infof("%s", line)
 	}
 }
 
-func buildInfoLine(info *debug.BuildInfo) string {
+func buildInfoLine(info *debug.BuildInfo, version string) string {
 	if info == nil {
 		return ""
 	}
@@ -87,7 +89,9 @@ func buildInfoLine(info *debug.BuildInfo) string {
 		if len(revision) > 12 {
 			revision = revision[:12]
 		}
-		version := info.Main.Version
+		if version == "" {
+			version = info.Main.Version
+		}
 		if version == "" {
 			version = "(devel)"
 		}

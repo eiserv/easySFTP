@@ -35,9 +35,10 @@ func TestHelpRequested(t *testing.T) {
 
 func TestBuildInfoLine(t *testing.T) {
 	tests := []struct {
-		name string
-		info *debug.BuildInfo
-		want string
+		name    string
+		info    *debug.BuildInfo
+		version string
+		want    string
 	}{
 		{
 			name: "version and revision",
@@ -48,6 +49,17 @@ func TestBuildInfoLine(t *testing.T) {
 				},
 			},
 			want: "easySFTP v1.2.3 (0123456789ab)",
+		},
+		{
+			name: "injected release version",
+			info: &debug.BuildInfo{
+				Main: debug.Module{Version: "(devel)"},
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "0123456789abcdef"},
+				},
+			},
+			version: "v1.2.3",
+			want:    "easySFTP v1.2.3 (0123456789ab)",
 		},
 		{
 			name: "short revision and unknown version",
@@ -71,7 +83,7 @@ func TestBuildInfoLine(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := buildInfoLine(tt.info); got != tt.want {
+			if got := buildInfoLine(tt.info, tt.version); got != tt.want {
 				t.Fatalf("buildInfoLine() = %q, want %q", got, tt.want)
 			}
 		})
