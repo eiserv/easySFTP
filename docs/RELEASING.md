@@ -1,101 +1,124 @@
 # Releasing easySFTP
 
-Releases are fully automated with [Release Please](https://github.com/googleapis/release-please)
-driven by [Conventional Commits](https://www.conventionalcommits.org/). You never
-tag or draft a release by hand.
+Releases use [Release Please](https://github.com/googleapis/release-please) and
+[Conventional Commits](https://www.conventionalcommits.org/). Do not create
+version tags or releases by hand.
 
-## How a release happens
+## Release flow
 
-1. **Land Conventional Commits on `main`.** PRs are squash-merged, so the **PR
-   title** becomes the commit subject and must be a Conventional Commit. The
-   [`PR Title`](../.github/workflows/pr-title.yml) workflow enforces this.
+1. Land Conventional Commits on `main`. PRs are squash-merged, so the PR title
+   becomes the commit subject and is checked by the `PR Title` workflow.
 
-   | Prefix              | Version bump | Example                              |
-   | ------------------- | ------------ | ------------------------------------ |
-   | `fix:`              | patch        | `fix: retry on transient EOF`        |
-   | `feat:`             | minor        | `feat: add proxy-jump support`       |
-   | `feat!:` / `BREAKING CHANGE:` | major | `feat!: drop password auth`  |
-   | `docs:` `ci:` `chore:` `refactor:` `test:` `build:` `perf:` | none* | `docs: fix typo` |
+   | Prefix | Version bump | Example |
+   |---|---|---|
+   | `fix:` | patch | `fix: retry on transient EOF` |
+   | `feat:` | minor | `feat: add proxy-jump support` |
+   | `feat!:` / `BREAKING CHANGE:` | major | `feat!: drop password auth` |
+   | `docs:` `ci:` `chore:` `refactor:` `test:` `build:` `perf:` | none* | `perf: reduce startup time` |
 
-   \* `perf:` shows in the changelog but does not force a bump on its own.
+   \* `perf:` appears in the changelog but does not force a bump by itself.
 
-2. **Release Please opens/updates a release PR.** The
-   [`Release`](../.github/workflows/release-please.yml) workflow runs on every
-   push to `main`. It maintains a single "chore(main): release x.y.z" PR that
-   accumulates the changelog and the next version in
-   [`.release-please-manifest.json`](../.release-please-manifest.json).
+2. The `Release` workflow runs on pushes to `main`. Release Please maintains a
+   release PR containing `CHANGELOG.md`, `.release-please-manifest.json`, and
+   the exact `vMAJOR.MINOR.PATCH` value in `.easysftp-version`.
 
-3. **Merge the release PR.** On merge, Release Please:
-   - updates [`CHANGELOG.md`](../CHANGELOG.md),
-   - creates the **immutable** exact tag `vX.Y.Z`,
-   - publishes the GitHub Release.
+3. Merging the release PR makes Release Please create the immutable exact tag
+   and GitHub Release. Only when that release was created in the current
+   `push` run does the binary pipeline start.
 
-4. **Moving tags follow automatically.** The `update-major-tags` job force-moves
-   the rolling `vX` and `vX.Y` tags onto the new release commit, so
-   `uses: eiserv/easySFTP@v1` always points at the latest 1.x.
+4. The binary pipeline validates that the exact tag exists, is reachable from
+   `main`, matches `.easysftp-version`, and already has a GitHub Release. It
+   tests the exact tagged source and cross-compiles six binaries with
+   `CGO_ENABLED=0`, `-trimpath`, and `-ldflags="-s -w"`:
+
+   - Linux amd64 / arm64
+   - macOS amd64 / arm64
+   - Windows amd64 / arm64
+
+5. Each produced artifact is run on its native hosted runner with the
+   network-free `easysftp --help` smoke test. Build and test jobs have only
+   `contents: read`.
+
+6. After every smoke test passes, the upload job generates `checksums.txt` and
+   uploads (or deliberately replaces) the complete asset set on the exact
+   release. Only this job has release-upload write access.
+
+7. Only after upload succeeds are rolling `vX` and `vX.Y` tags force-moved to
+   the exact release commit. A failed build, test, or upload leaves rolling
+   tags unchanged. The exact `vX.Y.Z` tag is never moved.
+
+## Stable asset names
+
+```text
+easysftp_linux_x64
+easysftp_linux_arm64
+easysftp_macos_x64
+easysftp_macos_arm64
+easysftp_windows_x64.exe
+easysftp_windows_arm64.exe
+checksums.txt
+```
+
+## Repairing a failed binary publication
+
+Use `Actions → Repair release binaries → Run workflow` and enter an existing
+exact tag such as `v1.2.3`. The workflow never creates or chooses a version. It
+fails unless the tag is an exact SemVer release reachable from `main`, the
+GitHub Release already exists, and `.easysftp-version` matches it.
+
+The repair rebuilds and tests the binaries from the exact tagged commit,
+replaces the known assets with `gh release upload --clobber`, regenerates
+checksums, and moves rolling tags only after success. Do not use PR artifacts
+or locally built files to repair a release.
 
 ## Tag policy
 
-| Tag       | Mutable? | Purpose                                             |
-| --------- | -------- | --------------------------------------------------- |
-| `v1.2.3`  | **No**   | Exact, reproducible pin. Created once, never moved. |
-| `v1.2`    | Yes      | Latest patch within 1.2.                            |
-| `v1`      | Yes      | Latest release within major version 1.              |
-
-Consumers who want a byte-exact pin can also reference the commit SHA directly.
+| Tag | Mutable? | Purpose |
+|---|---|---|
+| `v1.2.3` | **No** | Exact source/release identity, created once by Release Please. |
+| `v1.2` | Yes | Latest fully published patch within 1.2. |
+| `v1` | Yes | Latest fully published release within major version 1. |
 
 ## Required repository settings
 
-The automation assumes these are configured once in the GitHub UI. They are not
-in version control, so they are documented here.
+### GitHub Actions
 
-### 1. Allow GitHub Actions to create pull requests
+In `Settings → Actions → General → Workflow permissions`, enable **Allow GitHub
+Actions to create and approve pull requests**. Global read/write permission is
+not needed because workflows declare job-level scopes.
 
-`Settings → Actions → General → Workflow permissions`:
+The repository must allow the official GitHub-hosted arm64 labels used by the
+smoke matrix (`ubuntu-24.04-arm`, `macos-15`, and `windows-11-arm`) as well as
+their x64 counterparts. If GitHub changes label availability for the repository
+plan, update only the runner labels; do not replace native smoke tests with
+cross-platform emulation.
 
-- Read and write permissions is **not** required globally (the workflows request
-  their own scopes), **but**
-- ✅ **Allow GitHub Actions to create and approve pull requests** must be on, or
-  Release Please cannot open its release PR.
+### Branch protection for `main`
 
-### 2. Branch protection for `main`
+Require pull requests, up-to-date branches, and these CI checks:
 
-`Settings → Branches → Add branch ruleset` (or classic branch protection),
-targeting `main`:
+- `Action launcher and metadata (ubuntu-latest)`
+- `Action launcher and metadata (windows-latest)`
+- `Unit tests (ubuntu-latest)`
+- `Unit tests (windows-latest)`
+- `Self-test against a real SFTP server`
+- `Validate Conventional Commit title`
 
-- ✅ Require a pull request before merging.
-- ✅ Require status checks to pass:
-  - `Unit tests (ubuntu-latest)`
-  - `Unit tests (windows-latest)`
-  - `Self-test against a real SFTP server`
-  - `Validate Conventional Commit title`
-- ✅ Require branches to be up to date before merging.
-- ✅ Block force pushes.
-- ✅ (Recommended) Require a linear history, matches the squash-merge model.
+Block force pushes to `main`. A linear squash-merge history is recommended.
 
-> Do **not** require signed commits or a second approving review on a
-> single-maintainer repo unless you are prepared to review Release Please and
-> Dependabot PRs yourself; both bots push under `github-actions[bot]`.
+### Tag and release settings
 
-### 3. Tag protection ruleset (keeps exact tags immutable)
+Create a tag ruleset matching `v*.*.*` that restricts updates and deletions.
+Leave `vX` and `vX.Y` updateable by `github-actions[bot]` so the post-upload job
+can move them.
 
-`Settings → Rules → Rulesets → New tag ruleset`:
-
-- **Target tags** by pattern (fnmatch): `v*.*.*`
-  This matches exact three-part tags like `v1.2.3` **but not** `v1` or `v1.2`.
-- ✅ **Restrict updates** and ✅ **Restrict deletions**, making `vX.Y.Z`
-  immutable once published.
-- Leave `v1` and `v1.*` **unprotected** so the `update-major-tags` job can
-  force-move them. (If you add a second ruleset for those, it must allow the
-  `github-actions[bot]` actor to update them.)
-
-If your plan supports it, enabling **immutable releases**
-(`Settings → General → ... → Immutable releases`) is a stronger guarantee for the
-exact tags than the ruleset alone.
+Do **not** enable GitHub's immutable-releases setting with this flow: Release
+Please creates the Release before the trusted binary jobs attach assets, and
+the controlled repair path must be able to replace those assets. Exact tag
+immutability is enforced by the tag ruleset instead.
 
 ## Dependencies
 
-[Dependabot](../.github/dependabot.yml) opens weekly grouped PRs for Go modules
-(`build(deps): ...`) and pinned GitHub Actions (`ci(deps): ...`). Both prefixes
-are Conventional Commits, so they pass the PR-title check and are hidden from the
-changelog. Review, let CI pass, and merge. No release is cut for them alone.
+Dependabot opens grouped updates for Go modules and pinned GitHub Actions. All
+external actions in CI and release workflows must remain pinned to full commit
+SHAs. Review and merge those PRs only after CI passes.

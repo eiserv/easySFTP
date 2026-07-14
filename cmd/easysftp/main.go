@@ -23,10 +23,18 @@ func (ghaLogger) Group(name string)                   { gha.Group(name) }
 func (ghaLogger) EndGroup()                           { gha.EndGroup() }
 
 func main() {
+	if helpRequested(os.Args[1:]) {
+		fmt.Print("easySFTP uploads files to an SFTP server using EASYSFTP_* environment variables.\n\nUsage:\n  easysftp\n  easysftp --help\n")
+		return
+	}
 	if err := run(); err != nil {
 		gha.Errorf("%v", err)
 		os.Exit(1)
 	}
+}
+
+func helpRequested(args []string) bool {
+	return len(args) == 1 && (args[0] == "--help" || args[0] == "-h")
 }
 
 func run() error {

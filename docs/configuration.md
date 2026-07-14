@@ -42,9 +42,18 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 
 | Input | Required | Default | Description |
 |---|---|---|---|
+| `build-mode` | | `prebuilt` | `prebuilt` downloads the platform-specific release binary and verifies its SHA-256 digest. `source` installs Go and compiles the selected action checkout. |
 | `dry-run` | | `false` | Connect and log what would happen, change nothing. |
 | `concurrency` | | `4` | Number of files uploaded in parallel. |
 | `retries` | | `2` | Retries per file on transient upload errors (exponential backoff). |
+
+Prebuilt binaries support Linux, macOS, and Windows on both x64 and arm64
+GitHub-hosted runners. Release refs `@vX`, `@vX.Y`, and `@vX.Y.Z` resolve via
+the exact version in `.easysftp-version`. A commit SHA is accepted in prebuilt
+mode only when it is the commit behind that exact release tag. Development
+refs (`@main`, other commit SHAs, and local `uses: ./`) require
+`build-mode: source`; prebuilt mode fails clearly instead of running an older
+release.
 
 ## Outputs
 

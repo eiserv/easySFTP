@@ -8,6 +8,12 @@ branding:
   color: blue
 
 inputs:
+  build-mode:
+    description: >-
+      How to obtain easySFTP: "prebuilt" downloads and verifies the matching
+      release binary (default); "source" installs Go and builds this checkout.
+    required: false
+    default: prebuilt
   server:
     description: Hostname or IP address of the SFTP server (e.g. sftp.example.com).
     required: true
@@ -113,37 +119,40 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Resolve action path
-      id: paths
+    - name: Prepare easySFTP
+      id: prepare
       shell: bash
-      # github.action_path may contain "\" or "/./" segments (e.g. when the
-      # action is used locally via "uses: ./"), which setup-go's cache glob
-      # rejects — normalize to a clean absolute path.
       run: |
-        p='${{ github.action_path }}'
-        p="${p//\\//}"
-        while [[ "$p" == *"/./"* ]]; do p="${p//\/.\//\/}"; done
-        p="${p%/.}"
-        p="${p%/}"
-        echo "dir=$p" >> "$GITHUB_OUTPUT"
+        action_path="${ACTION_PATH//\\//}"
+        bash "$action_path/scripts/prepare-action.sh"
+      env:
+        INPUT_BUILD_MODE: ${{ inputs.build-mode }}
+        ACTION_PATH: ${{ github.action_path }}
+        ACTION_REF: ${{ github.action_ref }}
 
     - name: Set up Go
+      if: steps.prepare.outputs.build-mode == 'source'
       uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
       with:
-        go-version-file: ${{ steps.paths.outputs.dir }}/go.mod
+        go-version-file: ${{ steps.prepare.outputs.action-dir }}/go.mod
         cache: true
-        cache-dependency-path: ${{ steps.paths.outputs.dir }}/go.sum
+        cache-dependency-path: ${{ steps.prepare.outputs.action-dir }}/go.sum
 
     - name: Build easySFTP
+      if: steps.prepare.outputs.build-mode == 'source'
       shell: bash
-      working-directory: ${{ steps.paths.outputs.dir }}
-      run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/easysftp$(go env GOEXE)" ./cmd/easysftp
+      working-directory: ${{ steps.prepare.outputs.action-dir }}
+      run: go build -trimpath -ldflags="-s -w" -o "$BINARY" ./cmd/easysftp
+      env:
+        BINARY: ${{ steps.prepare.outputs.binary }}
+        CGO_ENABLED: "0"
 
     - name: Upload via SFTP
       id: easysftp
       shell: bash
-      run: '"$RUNNER_TEMP/easysftp$(go env GOEXE)"'
+      run: '"$BINARY"'
       env:
+        BINARY: ${{ steps.prepare.outputs.binary }}
         EASYSFTP_SERVER: ${{ inputs.server }}
         EASYSFTP_PORT: ${{ inputs.port }}
         EASYSFTP_USERNAME: ${{ inputs.username }}

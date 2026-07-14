@@ -1,0 +1,21 @@
+name: Repair release binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing exact release tag (vMAJOR.MINOR.PATCH) to rebuild.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    name: Rebuild an existing exact release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-binaries.yml
+    with:
+      tag: ${{ inputs.tag }}

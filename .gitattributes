@@ -7,3 +7,6 @@ go.sum text eol=lf
 *.yaml text eol=lf
 *.md text eol=lf
 LICENSE text eol=lf
+# Bash reads these verbatim; CRLF would break the version parser on Windows runners.
+*.sh text eol=lf
+.easysftp-version text eol=lf

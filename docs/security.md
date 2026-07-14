@@ -53,14 +53,28 @@ new fingerprints.
 
 ## Supply-chain safety
 
-- Pin the action to a major tag for convenience (`eiserv/easySFTP@v1`) or to a
-  full commit SHA for maximum supply-chain safety:
+- Release refs use `build-mode: prebuilt` by default. The launcher validates
+  `.easysftp-version`, maps only the supported OS/architecture pairs, downloads
+  only the matching binary and `checksums.txt` from
+  `eiserv/easySFTP`'s exact GitHub Release, and verifies SHA-256 before
+  execution. Release downloads may follow GitHub's HTTPS redirect to its own
+  release-asset CDN; no third-party download source is configured.
+- Pin the action to a major tag for convenience (`eiserv/easySFTP@v1`) or to
+  the full commit SHA of an exact release. Prebuilt mode verifies that a SHA is
+  the commit behind the version file's release tag. For any development SHA,
+  explicitly build that checkout from source so a stale release binary can
+  never be substituted:
 
   ```yaml
-  uses: eiserv/easySFTP@<commit-sha>
+  - uses: eiserv/easySFTP@<commit-sha>
+    with:
+      build-mode: source
   ```
 
 - Exact version tags (`v1.2.3`) are immutable once published; `v1` and `v1.2`
   are rolling tags, see [RELEASING.md](RELEASING.md#tag-policy).
+- `build-mode: source` installs Go and compiles the selected action checkout.
+  Use it for `@main`, local actions, non-release commit SHAs, or source-level
+  debugging.
 - Grant the deploy job only the permissions it needs
   (`permissions: contents: read` is enough for easySFTP itself).

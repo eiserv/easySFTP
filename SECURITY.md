@@ -11,4 +11,5 @@ or contact the maintainer directly. You will receive a response as soon as possi
 - Always set the `host-key-fingerprint` input so the server's identity is verified
 - Store all credentials (`password`, `private-key`, `passphrase`) as encrypted GitHub Actions secrets
 - Prefer key-based authentication over passwords
-- Pin this action to a full commit SHA in your workflows if you require maximum supply-chain safety
+- Release refs download only this repository's platform binary and verify it against the release's `checksums.txt`
+- Prebuilt mode accepts a commit SHA only if it matches the exact release tag in `.easysftp-version`; use `build-mode: source` for all other SHAs
