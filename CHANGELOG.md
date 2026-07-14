@@ -5,6 +5,23 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0](https://github.com/eiserv/easySFTP/compare/v1.1.0...v1.2.0) (2026-07-14)
+
+
+### Features
+
+* add build-mode input and enhance prebuilt mode documentation ([67873f5](https://github.com/eiserv/easySFTP/commit/67873f5bdfc636d7e4ddc474a95dde6f89f266d1))
+
+
+### Bug Fixes
+
+* **ci:** keep version file LF and run prepare-action.sh via bash ([d3dc3a2](https://github.com/eiserv/easySFTP/commit/d3dc3a27ffff4799f25547e4655f4962aa1deb51))
+
+
+### Performance
+
+* use prebuilt binaries by default ([e390319](https://github.com/eiserv/easySFTP/commit/e390319b4016287f0246ff9bce5e7fce62ae2232))
+
 ## [1.1.0](https://github.com/eiserv/easySFTP/compare/v1.0.0...v1.1.0) (2026-07-14)
 
 
