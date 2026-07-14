@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,51 @@ func TestHelpRequested(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := helpRequested(tt.args); got != tt.want {
 				t.Fatalf("helpRequested(%q) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildInfoLine(t *testing.T) {
+	tests := []struct {
+		name string
+		info *debug.BuildInfo
+		want string
+	}{
+		{
+			name: "version and revision",
+			info: &debug.BuildInfo{
+				Main: debug.Module{Version: "v1.2.3"},
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "0123456789abcdef0123456789abcdef01234567"},
+				},
+			},
+			want: "easySFTP v1.2.3 (0123456789ab)",
+		},
+		{
+			name: "short revision and unknown version",
+			info: &debug.BuildInfo{
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "abc123"},
+				},
+			},
+			want: "easySFTP (devel) (abc123)",
+		},
+		{
+			name: "missing revision",
+			info: &debug.BuildInfo{
+				Main: debug.Module{Version: "v1.2.3"},
+			},
+		},
+		{
+			name: "build info unavailable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildInfoLine(tt.info); got != tt.want {
+				t.Fatalf("buildInfoLine() = %q, want %q", got, tt.want)
 			}
 		})
 	}

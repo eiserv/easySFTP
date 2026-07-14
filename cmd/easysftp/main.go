@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/eiserv/easySFTP/internal/config"
@@ -38,6 +39,8 @@ func helpRequested(args []string) bool {
 }
 
 func run() error {
+	logBuildInfo()
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -58,6 +61,40 @@ func run() error {
 
 	reportStats(stats, mode, runErr)
 	return runErr
+}
+
+func logBuildInfo() {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	if line := buildInfoLine(info); line != "" {
+		gha.Infof("%s", line)
+	}
+}
+
+func buildInfoLine(info *debug.BuildInfo) string {
+	if info == nil {
+		return ""
+	}
+
+	for _, setting := range info.Settings {
+		if setting.Key != "vcs.revision" || setting.Value == "" {
+			continue
+		}
+
+		revision := setting.Value
+		if len(revision) > 12 {
+			revision = revision[:12]
+		}
+		version := info.Main.Version
+		if version == "" {
+			version = "(devel)"
+		}
+		return fmt.Sprintf("easySFTP %s (%s)", version, revision)
+	}
+
+	return ""
 }
 
 func reportStats(stats *uploader.Stats, mode string, runErr error) {
