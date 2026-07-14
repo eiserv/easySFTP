@@ -71,7 +71,7 @@ targeting `main`:
   - `Validate Conventional Commit title`
 - ✅ Require branches to be up to date before merging.
 - ✅ Block force pushes.
-- ✅ (Recommended) Require a linear history — matches the squash-merge model.
+- ✅ (Recommended) Require a linear history, matches the squash-merge model.
 
 > Do **not** require signed commits or a second approving review on a
 > single-maintainer repo unless you are prepared to review Release Please and
@@ -83,7 +83,7 @@ targeting `main`:
 
 - **Target tags** by pattern (fnmatch): `v*.*.*`
   This matches exact three-part tags like `v1.2.3` **but not** `v1` or `v1.2`.
-- ✅ **Restrict updates** and ✅ **Restrict deletions** — makes `vX.Y.Z`
+- ✅ **Restrict updates** and ✅ **Restrict deletions**, making `vX.Y.Z`
   immutable once published.
 - Leave `v1` and `v1.*` **unprotected** so the `update-major-tags` job can
   force-move them. (If you add a second ruleset for those, it must allow the
@@ -98,4 +98,4 @@ exact tags than the ruleset alone.
 [Dependabot](../.github/dependabot.yml) opens weekly grouped PRs for Go modules
 (`build(deps): ...`) and pinned GitHub Actions (`ci(deps): ...`). Both prefixes
 are Conventional Commits, so they pass the PR-title check and are hidden from the
-changelog. Review, let CI pass, and merge — no release is cut for them alone.
+changelog. Review, let CI pass, and merge. No release is cut for them alone.
