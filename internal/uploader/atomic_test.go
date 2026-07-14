@@ -102,6 +102,36 @@ func TestConnectionDropFailsCleanly(t *testing.T) {
 	}
 }
 
+// TestFailedBatchReturnsPartialStats verifies successful files in a batch are
+// still reported when a later file fails.
+func TestFailedBatchReturnsPartialStats(t *testing.T) {
+	srv := startTestServer(t)
+
+	client := srv.verifyClient(t)
+	if err := client.MkdirAll("/www/z.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "a", "z.txt": "z"})
+
+	cfg := baseConfig(srv)
+	cfg.Concurrency = 1
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err == nil {
+		t.Fatal("expected the second upload to fail")
+	}
+	if stats.FilesUploaded != 1 || stats.BytesUploaded != 1 {
+		t.Errorf("partial stats = %d file(s), %d byte(s); want 1 file, 1 byte",
+			stats.FilesUploaded, stats.BytesUploaded)
+	}
+	if stats.Duration <= 0 {
+		t.Errorf("partial duration = %s; want a positive duration", stats.Duration)
+	}
+}
+
 // TestAbortedDeploymentStops verifies that a cancelled context aborts the
 // deployment with the context error and uploads nothing.
 func TestAbortedDeploymentStops(t *testing.T) {

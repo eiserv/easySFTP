@@ -112,7 +112,9 @@ The most used inputs:
 | `concurrency` / `retries` / `timeout` | `4` / `2` / `30` | Parallelism, per-file retries, connection timeout (s). |
 
 Outputs: `files-uploaded`, `files-deleted`, `files-skipped`, `bytes-uploaded`,
-`duration-ms`, plus a summary table in the job summary.
+`duration-ms`, plus a summary table in the job summary. If a transfer fails
+partway, the outputs contain the progress completed before the failure and the
+summary is marked as failed.
 
 ➡ Full reference with every input, output and rule:
 [docs/configuration.md](docs/configuration.md)

@@ -65,8 +65,12 @@ release.
 | `bytes-uploaded` | Total bytes transferred. |
 | `duration-ms` | Total runtime in milliseconds. |
 
-A summary table is also written to the job summary of every run. See
-[examples](examples.md#using-the-outputs) for how to consume outputs in later steps.
+A summary table is also written to the job summary of every run. Outputs and
+the summary are populated even if a transfer fails partway: the values reflect
+the progress completed before the failure, and the summary is clearly marked
+as failed. Use `if: ${{ always() }}` when a later reporting or rollback step
+must consume these partial results. See [examples](examples.md#using-the-outputs)
+for how to consume outputs in later steps.
 
 ## The `uploads` mapping
 
