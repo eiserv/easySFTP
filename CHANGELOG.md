@@ -5,6 +5,25 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2](https://github.com/eiserv/easySFTP/compare/v1.2.1...v1.2.2) (2026-07-15)
+
+
+### Bug Fixes
+
+* inject version into release binaries ([375a585](https://github.com/eiserv/easySFTP/commit/375a5854e1a3d0269b6aec42f2c721e44978b945))
+* log build version and revision at startup ([a8d1879](https://github.com/eiserv/easySFTP/commit/a8d1879706fed67a899d4dc46948df6384d455de))
+* log build version and revision at startup ([38b45ef](https://github.com/eiserv/easySFTP/commit/38b45ef8fb107d8c4a8bc1252fbe09a32e1a719f))
+* report partial progress on failed runs ([d1f35b4](https://github.com/eiserv/easySFTP/commit/d1f35b4908b3fb67be7171357bf7ad05544eba13))
+* report partial progress on failed runs ([d3f6861](https://github.com/eiserv/easySFTP/commit/d3f6861191b5262b9eec560fa0f16006da9a3182))
+
+
+### Performance
+
+* create only leaf remote directories to cut round-trips ([8dc5dfb](https://github.com/eiserv/easySFTP/commit/8dc5dfbe81f7da0a46b9cf88d4e8d62beaecbd0e))
+* create only leaf remote directories to cut round-trips ([753688c](https://github.com/eiserv/easySFTP/commit/753688c4d31897996b2ef4fcbab859a5b060d74c))
+* hash sync files through a bounded worker pool ([1f9cb84](https://github.com/eiserv/easySFTP/commit/1f9cb846939eccb49dc867a2e75e511d7d438898))
+* hash sync files through a bounded worker pool ([301ba03](https://github.com/eiserv/easySFTP/commit/301ba03db1748a2aeedfc839ba8171adec2d40f6))
+
 ## [1.2.1](https://github.com/eiserv/easySFTP/compare/v1.2.0...v1.2.1) (2026-07-14)
 
 
