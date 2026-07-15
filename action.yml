@@ -87,7 +87,9 @@ inputs:
     required: false
     default: "false"
   concurrency:
-    description: Number of files uploaded in parallel.
+    description: >-
+      Number of files uploaded in parallel. Also bounds the worker pool that
+      hashes local files for the sync strategy.
     required: false
     default: "4"
   retries:

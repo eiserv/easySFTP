@@ -73,7 +73,7 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		st := effectiveStrategy(cfg, pair)
 		lines := append(append([]string{}, cfg.IgnoreLines...), pair.Ignore...)
 		matcher := ignore.CompileIgnoreLines(lines...)
-		p, err := buildPlan(pair, st, matcher)
+		p, err := buildPlan(ctx, pair, st, matcher, cfg.Concurrency)
 		if err != nil {
 			return stats, err
 		}
@@ -101,8 +101,10 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 
 // buildPlan walks the local side of an upload pair and computes the remote
 // file and directory layout, honoring the ignore patterns. For the sync
-// strategy it also hashes each file so changed files can be detected.
-func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore) (plan, error) {
+// strategy it also hashes each file so changed files can be detected; the
+// hashing runs through a bounded worker pool so a large tree uses the
+// available runner CPU instead of being read one file at a time.
+func buildPlan(ctx context.Context, pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore, concurrency int) (plan, error) {
 	p := plan{pair: pair, strategy: strategy}
 	remoteBase := normalizeRemote(pair.Remote)
 
@@ -169,11 +171,6 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 			size:       fi.Size(),
 			mode:       fi.Mode(),
 		}
-		if strategy == config.StrategySync {
-			if item.hash, err = hashFile(fpath); err != nil {
-				return err
-			}
-		}
 		p.files = append(p.files, item)
 		for _, dir := range parentDirs(item.remotePath) {
 			dirSet[dir] = struct{}{}
@@ -184,12 +181,44 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 		return p, fmt.Errorf("walking local path %q: %w", pair.Local, err)
 	}
 
+	// The sync strategy needs a content hash per file to detect changes.
+	// Hashing is the slow part of planning a large tree, so run it through a
+	// bounded worker pool instead of reading each file sequentially.
+	if strategy == config.StrategySync {
+		if err := hashPlanFiles(ctx, p.files, concurrency); err != nil {
+			return p, fmt.Errorf("hashing local files under %q: %w", pair.Local, err)
+		}
+	}
+
 	for dir := range dirSet {
 		p.remoteDirs = append(p.remoteDirs, dir)
 	}
 	// Parents sort before their children, so creation order is safe.
 	sort.Strings(p.remoteDirs)
 	return p, nil
+}
+
+// hashPlanFiles fills in each file's sha256 content hash, hashing through a
+// worker pool bounded to concurrency workers so a large tree uses the runner's
+// CPU instead of being read and hashed one file at a time. It is used only by
+// the sync strategy, whose changed-file detection compares content hashes.
+func hashPlanFiles(ctx context.Context, files []fileItem, concurrency int) error {
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(concurrency)
+	for i := range files {
+		g.Go(func() error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			hash, err := hashFile(files[i].localPath)
+			if err != nil {
+				return err
+			}
+			files[i].hash = hash
+			return nil
+		})
+	}
+	return g.Wait()
 }
 
 // executePlan performs (or previews) one plan according to its strategy.

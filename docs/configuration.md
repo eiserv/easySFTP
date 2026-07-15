@@ -44,7 +44,7 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 |---|---|---|---|
 | `build-mode` | | `prebuilt` | `prebuilt` downloads the platform-specific release binary and verifies its SHA-256 digest. `source` installs Go and compiles the selected action checkout. |
 | `dry-run` | | `false` | Connect and log what would happen, change nothing. |
-| `concurrency` | | `4` | Number of files uploaded in parallel. |
+| `concurrency` | | `4` | Number of files uploaded in parallel. Also bounds the worker pool that hashes local files for the `sync` strategy. |
 | `retries` | | `2` | Retries per file on transient upload errors (exponential backoff). |
 
 Prebuilt binaries support Linux, macOS, and Windows on both x64 and arm64
