@@ -42,6 +42,41 @@ func withFailRename() serverOption { return func(s *testServer) { s.failRename =
 // client, simulating a mid-transfer connection drop.
 func withDropAfter(n int64) serverOption { return func(s *testServer) { s.dropAfter = n } }
 
+// withOpCounter wraps the in-memory handlers so the given counter tallies the
+// SFTP methods (Mkdir, Stat) a run issues, letting tests assert how many
+// directory round-trips it makes.
+func withOpCounter(c *opCounter) serverOption {
+	return func(s *testServer) {
+		c.cmd = s.handlers.FileCmd
+		c.list = s.handlers.FileList
+		s.handlers.FileCmd = c
+		s.handlers.FileList = c
+	}
+}
+
+// opCounter delegates to the real in-memory handlers while counting the
+// directory-related methods that flow through them.
+type opCounter struct {
+	cmd   sftp.FileCmder
+	list  sftp.FileLister
+	mkdir int64
+	stat  int64
+}
+
+func (c *opCounter) Filecmd(r *sftp.Request) error {
+	if r.Method == "Mkdir" {
+		atomic.AddInt64(&c.mkdir, 1)
+	}
+	return c.cmd.Filecmd(r)
+}
+
+func (c *opCounter) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
+	if r.Method == "Stat" {
+		atomic.AddInt64(&c.stat, 1)
+	}
+	return c.list.Filelist(r)
+}
+
 const (
 	testUser     = "testuser"
 	testPassword = "testpass"
