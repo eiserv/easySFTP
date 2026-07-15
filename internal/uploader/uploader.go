@@ -273,20 +273,10 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, client *sftp
 // uploadFiles creates the needed remote directories and uploads files in
 // parallel (or, in dry-run mode, only logs what it would do).
 func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, files []fileItem, dirs []string, stats *Stats, verb string, log Logger) error {
-	for _, dir := range dirs {
-		if cfg.DryRun {
-			continue
+	if !cfg.DryRun {
+		if err := createRemoteDirs(client, dirs, stats); err != nil {
+			return err
 		}
-		if info, err := client.Stat(dir); err == nil {
-			if info.IsDir() {
-				continue
-			}
-			return fmt.Errorf("remote path %q exists but is not a directory", dir)
-		}
-		if err := client.MkdirAll(dir); err != nil {
-			return fmt.Errorf("creating remote directory %q: %w", dir, err)
-		}
-		stats.DirsCreated++
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -321,6 +311,58 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 		}
 	}
 	return runErr
+}
+
+// createRemoteDirs creates every remote directory the plan needs with as few
+// SFTP round-trips as possible. It calls MkdirAll only on the deepest (leaf)
+// directories: MkdirAll creates any missing parents in the same walk and
+// treats an already-existing directory as success, so ancestors are never
+// stat'd or created one level at a time. Only when a creation fails does it
+// look closer, to report a path that already exists as a file clearly.
+func createRemoteDirs(client *sftp.Client, dirs []string, stats *Stats) error {
+	for _, dir := range leafDirs(dirs) {
+		if err := client.MkdirAll(dir); err != nil {
+			if bad := nonDirConflict(client, dir); bad != "" {
+				return fmt.Errorf("remote path %q exists but is not a directory", bad)
+			}
+			return fmt.Errorf("creating remote directory %q: %w", dir, err)
+		}
+		stats.DirsCreated++
+	}
+	return nil
+}
+
+// leafDirs reduces a directory set to just the deepest members: those that are
+// not the parent of another directory in the set. The plan already lists every
+// ancestor of every file, so calling MkdirAll on the leaves alone still creates
+// the whole tree — but with far fewer calls on deep hierarchies, where each
+// leaf's parents would otherwise be created and checked one level at a time.
+func leafDirs(dirs []string) []string {
+	hasChild := make(map[string]struct{}, len(dirs))
+	for _, d := range dirs {
+		hasChild[path.Dir(d)] = struct{}{}
+	}
+	leaves := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if _, parent := hasChild[d]; !parent {
+			leaves = append(leaves, d)
+		}
+	}
+	sort.Strings(leaves)
+	return leaves
+}
+
+// nonDirConflict returns the shallowest ancestor of dir (dir itself included)
+// that exists on the server but is not a directory, or "" if there is none. It
+// is consulted only after MkdirAll fails, to turn a low-level error into a
+// clear message naming the offending path.
+func nonDirConflict(client *sftp.Client, dir string) string {
+	for _, d := range append(parentDirs(dir), dir) {
+		if info, err := client.Stat(d); err == nil && !info.IsDir() {
+			return d
+		}
+	}
+	return ""
 }
 
 // planVerb returns the log prefix that distinguishes a dry run from a real one.
