@@ -2,6 +2,7 @@ package uploader
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,6 +148,47 @@ func TestSyncSingleFileRejected(t *testing.T) {
 	_, err := Run(context.Background(), cfg, testLogger{t})
 	if err == nil || !strings.Contains(err.Error(), "requires a directory") {
 		t.Fatalf("expected single-file rejection, got %v", err)
+	}
+}
+
+// hashPlanFiles hashes files concurrently; its result must be identical to
+// hashing each file sequentially with hashFile.
+func TestHashPlanFilesMatchesSequentialHash(t *testing.T) {
+	dir := t.TempDir()
+	files := make([]fileItem, 64)
+	for i := range files {
+		p := filepath.Join(dir, fmt.Sprintf("f%02d.txt", i))
+		if err := os.WriteFile(p, []byte(fmt.Sprintf("content-%d", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		files[i] = fileItem{localPath: p}
+	}
+
+	if err := hashPlanFiles(context.Background(), files, 8); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range files {
+		want, err := hashFile(files[i].localPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if files[i].hash == "" {
+			t.Errorf("file %d: hash was not set", i)
+		}
+		if files[i].hash != want {
+			t.Errorf("file %d: hash = %q, want %q", i, files[i].hash, want)
+		}
+	}
+}
+
+// A read error on any file must surface from the pool rather than being lost.
+func TestHashPlanFilesPropagatesError(t *testing.T) {
+	files := []fileItem{
+		{localPath: filepath.Join(t.TempDir(), "does-not-exist")},
+	}
+	if err := hashPlanFiles(context.Background(), files, 4); err == nil {
+		t.Fatal("expected an error hashing a missing file, got nil")
 	}
 }
 

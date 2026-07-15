@@ -43,6 +43,8 @@ Notes:
 - The manifest trusts itself: a file changed *on the server* out of band is not
   re-detected until its local content changes. Run `clean` once to reset.
 - Directories left empty by deletions are pruned automatically.
+- Local files are hashed in parallel through a worker pool bounded by
+  `concurrency`, so planning a large tree uses the available runner CPU.
 
 ## `clean`
 
