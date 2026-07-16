@@ -18,9 +18,10 @@ Uploads every local file on top of whatever is already on the server. Nothing
 is ever deleted. This is the default and the backwards-compatible behavior.
 
 Uploads are **atomic per file**: content is streamed to a temporary sibling
-file (`<name>.easysftp-tmp`) and renamed over the target only once the transfer
-fully succeeded. A broken connection never leaves a half-written file where
-the live one was.
+file (`<name>.easysftp-tmp.<n>`, `<n>` being the file's position in the plan so
+two planned transfers never share a temp name) and renamed over the target
+only once the transfer fully succeeded. A broken connection never leaves a
+half-written file where the live one was.
 
 ## `sync`
 

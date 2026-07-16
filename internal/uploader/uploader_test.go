@@ -62,6 +62,24 @@ func remoteExists(t *testing.T, srv *testServer, path string) bool {
 	return err == nil
 }
 
+// remoteHasTmpFile reports whether dir contains any leftover temp upload file
+// for base, i.e. an entry named "<base><tmpSuffix>" or "<base><tmpSuffix>.N".
+func remoteHasTmpFile(t *testing.T, srv *testServer, dir, base string) bool {
+	t.Helper()
+	client := srv.verifyClient(t)
+	entries, err := client.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := base + tmpSuffix
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestUploadDirectoryWithIgnore(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()

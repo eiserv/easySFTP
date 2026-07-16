@@ -42,7 +42,7 @@ func TestAtomicReplaceLeavesNoTempFile(t *testing.T) {
 	if got := readRemote(t, srv, "/www/index.html"); got != "new" {
 		t.Errorf("content not replaced: %q", got)
 	}
-	if remoteExists(t, srv, "/www/index.html"+tmpSuffix) {
+	if remoteHasTmpFile(t, srv, "/www", "index.html") {
 		t.Error("temporary upload file was left behind")
 	}
 }
@@ -79,8 +79,36 @@ func TestRenameFailureCleansUpAndKeepsOriginal(t *testing.T) {
 	if got := readRemote(t, srv, "/www/index.html"); got != "original" {
 		t.Errorf("live file was clobbered by a failed upload: %q", got)
 	}
-	if remoteExists(t, srv, "/www/index.html"+tmpSuffix) {
+	if remoteHasTmpFile(t, srv, "/www", "index.html") {
 		t.Error("temporary file was not cleaned up after the failed rename")
+	}
+}
+
+// TestTempNameCollisionAvoided verifies that a deployment containing both
+// "app.js" and a file literally named "app.js.easysftp-tmp" uploads both
+// correctly: the temp path used while streaming "app.js" must not collide
+// with the real target path of the other file (issue #42).
+func TestTempNameCollisionAvoided(t *testing.T) {
+	srv := startTestServer(t)
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{
+		"app.js":             "real-app-content",
+		"app.js" + tmpSuffix: "literal-file-named-like-a-temp",
+	})
+
+	cfg := baseConfig(srv)
+	cfg.Concurrency = 4
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readRemote(t, srv, "/www/app.js"); got != "real-app-content" {
+		t.Errorf("/www/app.js = %q, want unclobbered content", got)
+	}
+	if got := readRemote(t, srv, "/www/app.js"+tmpSuffix); got != "literal-file-named-like-a-temp" {
+		t.Errorf("/www/app.js%s = %q, want unclobbered content", tmpSuffix, got)
 	}
 }
 
