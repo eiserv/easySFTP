@@ -62,7 +62,6 @@ type Config struct {
 	IgnoreLines []string
 	Guards      Guards
 
-	Delete      bool // legacy input; mapped to the clean strategy
 	DryRun      bool
 	Concurrency int
 	Retries     int
@@ -96,8 +95,12 @@ func Load() (*Config, error) {
 	if cfg.Retries, err = parseInt(get("RETRIES"), 2); err != nil {
 		return nil, fmt.Errorf("invalid retries: %w", err)
 	}
-	if cfg.Delete, err = parseBool(get("DELETE"), false); err != nil {
+	// Tombstone: 'delete' is still declared in action.yml so that a workflow
+	// passing it fails loudly here instead of silently falling back to overlay.
+	if deleted, err := parseBool(get("DELETE"), false); err != nil {
 		return nil, fmt.Errorf("invalid delete: %w", err)
+	} else if deleted {
+		return nil, fmt.Errorf("the 'delete' input was removed in v2 — use 'strategy: clean' instead")
 	}
 	if cfg.DryRun, err = parseBool(get("DRY_RUN"), false); err != nil {
 		return nil, fmt.Errorf("invalid dry-run: %w", err)
@@ -118,16 +121,16 @@ func Load() (*Config, error) {
 	ignoreFrom := get("IGNORE_FROM")
 
 	if configFile != "" {
-		if strings.TrimSpace(uploadsInput) != "" || strategyInput != "" || cfg.Delete ||
+		if strings.TrimSpace(uploadsInput) != "" || strategyInput != "" ||
 			strings.TrimSpace(ignoreInput) != "" || ignoreFrom != "" {
 			return nil, fmt.Errorf("when 'config-file' is set, put targets/strategy/ignore/guards " +
-				"in the file — do not also set the uploads, strategy, delete, ignore or ignore-from inputs")
+				"in the file — do not also set the uploads, strategy, ignore or ignore-from inputs")
 		}
 		if err := loadConfigFile(cfg, configFile); err != nil {
 			return nil, err
 		}
 	} else {
-		strategy, err := resolveStrategy(strategyInput, cfg.Delete)
+		strategy, err := resolveStrategy(strategyInput)
 		if err != nil {
 			return nil, err
 		}
@@ -153,23 +156,16 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// resolveStrategy maps the strategy input (and the legacy delete flag) to a
-// concrete strategy, rejecting an ambiguous combination of both.
-func resolveStrategy(input string, delete bool) (Strategy, error) {
-	if input != "" {
-		if delete {
-			return "", fmt.Errorf("set either 'strategy' or 'delete', not both")
-		}
-		s := Strategy(input)
-		if !s.valid() {
-			return "", fmt.Errorf("input 'strategy' must be overlay, sync or clean, got %q", input)
-		}
-		return s, nil
+// resolveStrategy maps the strategy input to a concrete strategy.
+func resolveStrategy(input string) (Strategy, error) {
+	if input == "" {
+		return StrategyOverlay, nil
 	}
-	if delete {
-		return StrategyClean, nil
+	s := Strategy(input)
+	if !s.valid() {
+		return "", fmt.Errorf("input 'strategy' must be overlay, sync or clean, got %q", input)
 	}
-	return StrategyOverlay, nil
+	return s, nil
 }
 
 func (c *Config) validate() error {

@@ -149,7 +149,7 @@ jobs:
       - name: Plant stale remote file
         run: docker exec sftp sh -c 'echo stale > /home/demo/upload/stale.html && chown demo /home/demo/upload/stale.html'
 
-      - name: Upload with delete mode
+      - name: Upload with clean strategy
         id: clean-upload
         uses: ./
         with:
@@ -161,12 +161,12 @@ jobs:
           host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
           uploads: ./site/ => /upload/
           ignore: "*.log"
-          delete: true
+          strategy: clean
 
-      - name: Verify delete mode
+      - name: Verify clean strategy
         run: |
           if docker exec sftp test -e /home/demo/upload/stale.html; then
-            echo "::error::stale file survived delete mode"
+            echo "::error::stale file survived the clean strategy"
             exit 1
           fi
           docker exec sftp test -f /home/demo/upload/index.html

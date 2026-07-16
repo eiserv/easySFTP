@@ -56,7 +56,7 @@ inputs:
     description: >-
       Path to an optional YAML config file describing the deployment targets,
       their strategy and delete guards (see docs/configuration.md). When set, it
-      replaces the uploads/strategy/delete/ignore inputs. Connection settings
+      replaces the uploads/strategy/ignore inputs. Connection settings
       always come from the inputs above.
     required: false
   strategy:
@@ -64,7 +64,7 @@ inputs:
       Reconciliation strategy for every target: "overlay" (upload only, never
       delete — the default), "sync" (upload changed files and delete files no
       longer present locally, tracked via a manifest) or "clean" (wipe the
-      remote target directory, then upload). Mutually exclusive with delete.
+      remote target directory, then upload).
     required: false
   ignore:
     description: >-
@@ -76,8 +76,9 @@ inputs:
     required: false
   delete:
     description: >-
-      Legacy alias for strategy "clean": if "true", delete all existing files
-      inside each remote target directory before uploading. Prefer "strategy".
+      Removed in v2 — use "strategy: clean" instead. Still declared so that a
+      workflow passing it fails loudly rather than silently degrading to the
+      "overlay" default. Will be deleted in v3.
     required: false
     default: "false"
   dry-run:

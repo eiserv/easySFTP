@@ -70,7 +70,7 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	// we touch the network.
 	plans := make([]plan, 0, len(cfg.Uploads))
 	for _, pair := range cfg.Uploads {
-		st := effectiveStrategy(cfg, pair)
+		st := effectiveStrategy(pair)
 		lines := append(append([]string{}, cfg.IgnoreLines...), pair.Ignore...)
 		matcher := ignore.CompileIgnoreLines(lines...)
 		p, err := buildPlan(ctx, pair, st, matcher, cfg.Concurrency)
@@ -373,14 +373,11 @@ func planVerb(cfg *config.Config) string {
 	return ""
 }
 
-// effectiveStrategy resolves the strategy for a pair, falling back to the
-// legacy delete flag for callers that construct a Config directly.
-func effectiveStrategy(cfg *config.Config, pair config.UploadPair) config.Strategy {
+// effectiveStrategy resolves the strategy for a pair, defaulting to overlay for
+// callers that construct a Config directly.
+func effectiveStrategy(pair config.UploadPair) config.Strategy {
 	if pair.Strategy != "" {
 		return pair.Strategy
-	}
-	if cfg.Delete {
-		return config.StrategyClean
 	}
 	return config.StrategyOverlay
 }
