@@ -49,6 +49,7 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 | `build-mode` | | `prebuilt` | `prebuilt` downloads the platform-specific release binary and verifies its SHA-256 digest. `source` installs Go and compiles the selected action checkout. |
 | `dry-run` | | `false` | Connect and log what would happen, change nothing. |
 | `concurrency` | | `4` | Number of files uploaded in parallel. Also bounds the worker pool that hashes local files for the `sync` strategy. |
+| `sftp-request-concurrency` | | `16` | Advanced. Maximum in-flight SFTP requests *per file* — pipelining within one file's transfer, independent of `concurrency` (which controls how many files transfer at once). The two multiply: with the defaults, a single large file can have up to 16 requests in flight, and up to `concurrency` files transfer at a time. Lower it for a small or resource-constrained server; raise it for more throughput per file on a fast link to a capable server. |
 | `sync-fast-path` | | `false` | For the `sync` strategy, reuse a file's manifest hash instead of re-reading it when size and modification time still match. See [the sync-fast-path trade-off](strategies.md#sync-fast-path-skip-re-hashing-unchanged-files). |
 | `retries` | | `2` | Retries per file on transient upload errors (exponential backoff). |
 

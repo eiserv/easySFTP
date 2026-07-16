@@ -44,7 +44,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("EASYSFTP_PASSWORD", "hunter2")
 	t.Setenv("EASYSFTP_UPLOADS", "./dist/ => /www/")
 	for _, name := range []string{"PORT", "PRIVATE_KEY", "PASSPHRASE", "HOST_KEY_FINGERPRINT",
-		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "RETRIES", "TIMEOUT",
+		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "SFTP_REQUEST_CONCURRENCY", "RETRIES", "TIMEOUT",
 		"SYNC_FAST_PATH", "CONFIG_FILE", "STRATEGY", "MAX_DELETES"} {
 		t.Setenv("EASYSFTP_"+name, "")
 	}
@@ -56,7 +56,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.Retries != 2 || cfg.DryRun || cfg.SyncFastPath {
+	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.SftpRequestConcurrency != 16 || cfg.Retries != 2 || cfg.DryRun || cfg.SyncFastPath {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
 	if cfg.Timeout.Seconds() != 30 {
@@ -78,6 +78,8 @@ func TestLoadValidation(t *testing.T) {
 		{"bad bool", map[string]string{"EASYSFTP_DRY_RUN": "yes-please"}, "invalid dry-run"},
 		{"bad sync-fast-path bool", map[string]string{"EASYSFTP_SYNC_FAST_PATH": "yes-please"}, "invalid sync-fast-path"},
 		{"bad max-deletes", map[string]string{"EASYSFTP_MAX_DELETES": "not-a-number"}, "invalid max-deletes"},
+		{"bad sftp-request-concurrency", map[string]string{"EASYSFTP_SFTP_REQUEST_CONCURRENCY": "not-a-number"}, "invalid sftp-request-concurrency"},
+		{"zero sftp-request-concurrency", map[string]string{"EASYSFTP_SFTP_REQUEST_CONCURRENCY": "0"}, "'sftp-request-concurrency' must be at least 1"},
 		{"negative max-deletes", map[string]string{"EASYSFTP_MAX_DELETES": "-1"}, "guards.max_deletes must not be negative"},
 	}
 	for _, tc := range cases {
