@@ -72,6 +72,15 @@ The SFTP user cannot write to the target directory. Check ownership and
 permissions on the server. With chrooted SFTP setups remember that paths are
 relative to the chroot: `/upload/...`, not `/home/user/upload/...`.
 
+### Site deploys "successfully" but returns 403s, or files land with the wrong owner-readable bits
+
+Directories created by the run get whatever the server's umask produces, and
+uploaded files mirror their local permission bits. On shared hosting where the
+web server runs as a different user than your SFTP account, that default can
+produce directories the web server can't read. Set `dir-mode` (and, if needed,
+`file-mode`) to force a known-good permission, e.g. `dir-mode: "755"` and
+`file-mode: "644"`. Both are best-effort — see [configuration.md](configuration.md#behavior).
+
 ### `replacing "<path>": ...` or leftover `.easysftp-tmp` files
 
 easySFTP uploads to a temporary sibling file and renames it over the target

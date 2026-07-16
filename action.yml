@@ -131,6 +131,20 @@ inputs:
     description: Connection timeout in seconds.
     required: false
     default: "30"
+  dir-mode:
+    description: >-
+      Octal permission (e.g. "755") applied to every remote directory the run
+      creates or touches, overriding the server's umask default. Off by
+      default. Best-effort: a server that rejects the chmod produces one
+      warning per run, not a failure.
+    required: false
+  file-mode:
+    description: >-
+      Octal permission (e.g. "644") applied to every uploaded file, overriding
+      the default of mirroring the local file's permission bits. Off by
+      default. Best-effort: a server that rejects the chmod produces one
+      warning per run, not a failure.
+    required: false
 
 outputs:
   files-uploaded:
@@ -206,3 +220,5 @@ runs:
         EASYSFTP_SYNC_FAST_PATH: ${{ inputs.sync-fast-path }}
         EASYSFTP_RETRIES: ${{ inputs.retries }}
         EASYSFTP_TIMEOUT: ${{ inputs.timeout }}
+        EASYSFTP_DIR_MODE: ${{ inputs.dir-mode }}
+        EASYSFTP_FILE_MODE: ${{ inputs.file-mode }}

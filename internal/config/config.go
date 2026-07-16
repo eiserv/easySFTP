@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
@@ -62,6 +63,14 @@ type Config struct {
 	IgnoreLines []string
 	Guards      Guards
 
+	// DirMode, if set, chmods every remote directory the run creates or
+	// touches to this permission, overriding the server's umask default.
+	// FileMode, if set, chmods every uploaded file to this permission instead
+	// of mirroring the local file's mode bits. Both are best-effort: a server
+	// that rejects the chmod produces one warning per run, not a failure.
+	DirMode  *fs.FileMode
+	FileMode *fs.FileMode
+
 	DryRun                 bool
 	Concurrency            int
 	SftpRequestConcurrency int
@@ -112,6 +121,12 @@ func Load() (*Config, error) {
 	}
 	if cfg.SyncFastPath, err = parseBool(get("SYNC_FAST_PATH"), false); err != nil {
 		return nil, fmt.Errorf("invalid sync-fast-path: %w", err)
+	}
+	if cfg.DirMode, err = parseMode(get("DIR_MODE"), "dir-mode"); err != nil {
+		return nil, err
+	}
+	if cfg.FileMode, err = parseMode(get("FILE_MODE"), "file-mode"); err != nil {
+		return nil, err
 	}
 
 	timeoutSec, err := parseInt(get("TIMEOUT"), 30)
@@ -247,4 +262,18 @@ func parseBool(s string, def bool) (bool, error) {
 		return def, nil
 	}
 	return strconv.ParseBool(s)
+}
+
+// parseMode parses an octal permission string like "755" or "0755". An empty
+// string means "unset" (nil), keeping the current default behavior.
+func parseMode(s, name string) (*fs.FileMode, error) {
+	if s == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseUint(s, 8, 32)
+	if err != nil || v > 0o777 {
+		return nil, fmt.Errorf("invalid %s: must be an octal permission like \"755\", got %q", name, s)
+	}
+	m := fs.FileMode(v)
+	return &m, nil
 }
