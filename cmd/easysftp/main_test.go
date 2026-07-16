@@ -109,15 +109,16 @@ func TestReportStatsOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"files-uploaded=3",
-		"files-deleted=1",
-		"files-skipped=4",
-		"bytes-uploaded=2048",
-		"duration-ms=1500",
+	got := parseGithubOutput(t, string(output))
+	for name, want := range map[string]string{
+		"files-uploaded": "3",
+		"files-deleted":  "1",
+		"files-skipped":  "4",
+		"bytes-uploaded": "2048",
+		"duration-ms":    "1500",
 	} {
-		if !strings.Contains(string(output), want) {
-			t.Errorf("output does not contain %q:\n%s", want, output)
+		if got[name] != want {
+			t.Errorf("output %q = %q, want %q:\n%s", name, got[name], want, output)
 		}
 	}
 
@@ -136,4 +137,29 @@ func TestReportStatsOnFailure(t *testing.T) {
 			t.Errorf("summary does not contain %q:\n%s", want, summary)
 		}
 	}
+}
+
+// parseGithubOutput parses the file-based GITHUB_OUTPUT "name<<delimiter"
+// heredoc format into a map, the same way the GitHub Actions runner does.
+func parseGithubOutput(t *testing.T, raw string) map[string]string {
+	t.Helper()
+	out := make(map[string]string)
+	lines := strings.Split(raw, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		idx := strings.Index(line, "<<")
+		if idx == -1 {
+			continue
+		}
+		name := line[:idx]
+		delimiter := line[idx+2:]
+		var value []string
+		i++
+		for i < len(lines) && lines[i] != delimiter {
+			value = append(value, lines[i])
+			i++
+		}
+		out[name] = strings.Join(value, "\n")
+	}
+	return out
 }

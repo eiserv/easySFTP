@@ -3,6 +3,7 @@
 package gha
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"strings"
@@ -45,6 +46,12 @@ func EndGroup() {
 }
 
 // SetOutput writes a step output. It is a no-op outside of GitHub Actions.
+//
+// $GITHUB_OUTPUT is a file-based protocol, not a workflow command: values are
+// written verbatim using the "name<<delimiter" heredoc syntax so that any
+// value (including one containing "%" or newlines) round-trips exactly,
+// instead of the "::...::" workflow-command percent-encoding used elsewhere
+// in this package, which does not apply here.
 func SetOutput(name, value string) {
 	path := os.Getenv("GITHUB_OUTPUT")
 	if path == "" {
@@ -56,7 +63,20 @@ func SetOutput(name, value string) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s=%s\n", name, escapeData(value))
+
+	delimiter := randomDelimiter()
+	for strings.Contains(value, delimiter) {
+		delimiter = randomDelimiter()
+	}
+	fmt.Fprintf(f, "%s<<%s\n%s\n%s\n", name, delimiter, value, delimiter)
+}
+
+// randomDelimiter returns a delimiter for the GITHUB_OUTPUT heredoc syntax
+// that is vanishingly unlikely to collide with real output content.
+func randomDelimiter() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("ghadelimiter_%x", b)
 }
 
 // AppendSummary appends markdown to the job summary. It is a no-op outside
