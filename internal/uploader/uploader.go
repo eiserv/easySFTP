@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -280,7 +281,7 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, client *sftp
 // parallel (or, in dry-run mode, only logs what it would do).
 func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, files []fileItem, dirs []string, stats *Stats, verb string, log Logger) error {
 	if !cfg.DryRun {
-		if err := createRemoteDirs(client, dirs, stats); err != nil {
+		if err := createRemoteDirs(client, dirs, cfg.DirMode, stats, log); err != nil {
 			return err
 		}
 	}
@@ -289,6 +290,12 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 	g.SetLimit(cfg.Concurrency)
 	results := make([]int64, len(files))
 	completed := make([]bool, len(files))
+	// modeWarned is only armed when file-mode is an explicit override: a
+	// mirrored local mode (the default) stays silent on failure, as before.
+	var modeWarned *atomic.Bool
+	if cfg.FileMode != nil {
+		modeWarned = new(atomic.Bool)
+	}
 
 	for i, f := range files {
 		g.Go(func() error {
@@ -300,7 +307,11 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 				completed[i] = true
 				return nil
 			}
-			n, err := uploadFileWithRetry(ctx, f, client, cfg.Retries, log)
+			mode := f.mode.Perm()
+			if cfg.FileMode != nil {
+				mode = *cfg.FileMode
+			}
+			n, err := uploadFileWithRetry(ctx, f, mode, client, cfg.Retries, log, modeWarned)
 			if err != nil {
 				return err
 			}
@@ -325,7 +336,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 // treats an already-existing directory as success, so ancestors are never
 // stat'd or created one level at a time. Only when a creation fails does it
 // look closer, to report a path that already exists as a file clearly.
-func createRemoteDirs(client *sftp.Client, dirs []string, stats *Stats) error {
+func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, stats *Stats, log Logger) error {
 	for _, dir := range leafDirs(dirs) {
 		if err := client.MkdirAll(dir); err != nil {
 			if bad := nonDirConflict(client, dir); bad != "" {
@@ -334,6 +345,16 @@ func createRemoteDirs(client *sftp.Client, dirs []string, stats *Stats) error {
 			return fmt.Errorf("creating remote directory %q: %w", dir, err)
 		}
 		stats.DirsCreated++
+	}
+
+	if dirMode != nil {
+		warned := false
+		for _, dir := range dirs {
+			if err := client.Chmod(dir, dirMode.Perm()); err != nil && !warned {
+				log.Warningf("could not set dir-mode %04o on %s (server may reject SETSTAT); not warning again this run: %v", dirMode.Perm(), dir, err)
+				warned = true
+			}
+		}
 	}
 	return nil
 }
@@ -442,7 +463,7 @@ const tmpSuffix = ".easysftp-tmp"
 // uploadFileWithRetry uploads one file, retrying transient failures with
 // exponential backoff. It stops early when the context is cancelled or the
 // error is permanent (see isRetryable), so a doomed transfer fails fast.
-func uploadFileWithRetry(ctx context.Context, f fileItem, client *sftp.Client, retries int, log Logger) (int64, error) {
+func uploadFileWithRetry(ctx context.Context, f fileItem, mode fs.FileMode, client *sftp.Client, retries int, log Logger, modeWarned *atomic.Bool) (int64, error) {
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
@@ -452,7 +473,7 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, client *sftp.Client, r
 				return 0, err
 			}
 		}
-		n, err := uploadFile(ctx, f, client, log)
+		n, err := uploadFile(ctx, f, mode, client, log, modeWarned)
 		if err == nil {
 			return n, nil
 		}
@@ -468,7 +489,7 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, client *sftp.Client, r
 // temporary sibling and, only once that fully succeeds, renames it over the
 // target. Any failure removes the temporary file so a broken or partial upload
 // never replaces the live file and no debris is left behind.
-func uploadFile(ctx context.Context, f fileItem, client *sftp.Client, log Logger) (int64, error) {
+func uploadFile(ctx context.Context, f fileItem, mode fs.FileMode, client *sftp.Client, log Logger, modeWarned *atomic.Bool) (int64, error) {
 	src, err := os.Open(f.localPath)
 	if err != nil {
 		return 0, err
@@ -492,8 +513,13 @@ func uploadFile(ctx context.Context, f fileItem, client *sftp.Client, log Logger
 		return n, err
 	}
 
-	// Best effort: keep the local permission bits. Some servers reject this.
-	_ = client.Chmod(tmpPath, f.mode.Perm())
+	// Best effort: mirrors the local permission bits, or the file-mode
+	// override when set. Some servers reject SETSTAT; an explicit override
+	// warns once per run so the user knows it isn't taking effect, but a
+	// mirrored local mode stays silent as before.
+	if cerr := client.Chmod(tmpPath, mode); cerr != nil && modeWarned != nil && !modeWarned.Swap(true) {
+		log.Warningf("could not set file-mode %04o on %s (server may reject SETSTAT); not warning again this run: %v", mode, f.remotePath, cerr)
+	}
 
 	if err := renameReplace(client, tmpPath, f.remotePath); err != nil {
 		cleanupTmp(client, tmpPath, log)
@@ -514,7 +540,7 @@ func renameReplace(client *sftp.Client, tmp, final string) error {
 	if !errors.As(err, &se) || se.FxCode() != sftp.ErrSSHFxOpUnsupported {
 		return err
 	}
-	// ponytail: non-atomic fallback — a brief window where final is missing.
+	// note: non-atomic fallback — a brief window where final is missing.
 	// Only reached on servers lacking posix-rename; unavoidable there.
 	_ = client.Remove(final)
 	return client.Rename(tmp, final)

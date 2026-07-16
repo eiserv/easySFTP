@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -27,8 +29,9 @@ type testServer struct {
 	listener      net.Listener
 
 	// Fault injection (set via options before the accept loop starts).
-	failRename bool  // make every rename fail with a non-transient error
-	dropAfter  int64 // if >0, kill each connection after it reads this many bytes
+	failRename  bool  // make every rename fail with a non-transient error
+	failSetstat bool  // make every chmod (Setstat) fail
+	dropAfter   int64 // if >0, kill each connection after it reads this many bytes
 }
 
 // serverOption tweaks a testServer before it starts serving.
@@ -41,6 +44,44 @@ func withFailRename() serverOption { return func(s *testServer) { s.failRename =
 // withDropAfter closes each connection once it has read n bytes from the
 // client, simulating a mid-transfer connection drop.
 func withDropAfter(n int64) serverOption { return func(s *testServer) { s.dropAfter = n } }
+
+// withFailSetstat makes the server reject every chmod (Setstat) request,
+// simulating a server that refuses SETSTAT.
+func withFailSetstat() serverOption { return func(s *testServer) { s.failSetstat = true } }
+
+// setstatCall records one chmod request the server received.
+type setstatCall struct {
+	path string
+	mode uint32
+}
+
+// setstatRecorder delegates to the real in-memory handlers while recording
+// every Setstat request that carries permission bits, so tests can assert
+// which remote paths were chmod'd and to what mode.
+type setstatRecorder struct {
+	inner sftp.FileCmder
+	mu    sync.Mutex
+	calls []setstatCall
+}
+
+func (r *setstatRecorder) Filecmd(req *sftp.Request) error {
+	if req.Method == "Setstat" && req.AttrFlags().Permissions {
+		r.mu.Lock()
+		r.calls = append(r.calls, setstatCall{path: req.Filepath, mode: req.Attributes().Mode})
+		r.mu.Unlock()
+	}
+	return r.inner.Filecmd(req)
+}
+
+// withSetstatRecorder records chmod requests. It must be given before any
+// fault-injecting option so the recorder observes the request regardless of
+// whether a later wrapper then fails it.
+func withSetstatRecorder(rec *setstatRecorder) serverOption {
+	return func(s *testServer) {
+		rec.inner = s.handlers.FileCmd
+		s.handlers.FileCmd = rec
+	}
+}
 
 // withOpCounter wraps the in-memory handlers so the given counter tallies the
 // SFTP methods (Mkdir, Stat) a run issues, letting tests assert how many
@@ -144,6 +185,9 @@ func startTestServer(t *testing.T, opts ...serverOption) *testServer {
 	if srv.failRename {
 		srv.handlers.FileCmd = &faultyRename{inner: srv.handlers.FileCmd}
 	}
+	if srv.failSetstat {
+		srv.handlers.FileCmd = &faultySetstat{inner: srv.handlers.FileCmd}
+	}
 	tcpAddr := listener.Addr().(*net.TCPAddr)
 	srv.Host = tcpAddr.IP.String()
 	srv.Port = tcpAddr.Port
@@ -165,6 +209,18 @@ func (f *faultyRename) Filecmd(r *sftp.Request) error {
 
 func (f *faultyRename) PosixRename(r *sftp.Request) error {
 	return errors.New("injected rename failure")
+}
+
+// faultySetstat wraps a FileCmder and fails every chmod (Setstat) request,
+// simulating a server that rejects SETSTAT, delegating everything else to the
+// real in-memory handler.
+type faultySetstat struct{ inner sftp.FileCmder }
+
+func (f *faultySetstat) Filecmd(r *sftp.Request) error {
+	if r.Method == "Setstat" {
+		return errors.New("injected setstat failure")
+	}
+	return f.inner.Filecmd(r)
 }
 
 // dropConn closes the connection once it has read limit bytes, simulating a
@@ -257,3 +313,19 @@ func (l testLogger) Infof(format string, args ...any)    { l.t.Logf("INFO  "+for
 func (l testLogger) Warningf(format string, args ...any) { l.t.Logf("WARN  "+format, args...) }
 func (l testLogger) Group(name string)                   { l.t.Logf("GROUP %s", name) }
 func (l testLogger) EndGroup()                           {}
+
+// recordingLogger wraps testLogger and additionally records every warning
+// message, so tests can assert how many warnings a run produced. Safe for
+// concurrent use since uploads happen in parallel workers.
+type recordingLogger struct {
+	testLogger
+	mu       sync.Mutex
+	warnings []string
+}
+
+func (l *recordingLogger) Warningf(format string, args ...any) {
+	l.testLogger.Warningf(format, args...)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
+}

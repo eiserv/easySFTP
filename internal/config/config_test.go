@@ -45,7 +45,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("EASYSFTP_UPLOADS", "./dist/ => /www/")
 	for _, name := range []string{"PORT", "PRIVATE_KEY", "PASSPHRASE", "HOST_KEY_FINGERPRINT",
 		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "SFTP_REQUEST_CONCURRENCY", "RETRIES", "TIMEOUT",
-		"SYNC_FAST_PATH", "CONFIG_FILE", "STRATEGY", "MAX_DELETES"} {
+		"SYNC_FAST_PATH", "CONFIG_FILE", "STRATEGY", "MAX_DELETES", "DIR_MODE", "FILE_MODE"} {
 		t.Setenv("EASYSFTP_"+name, "")
 	}
 }
@@ -81,6 +81,9 @@ func TestLoadValidation(t *testing.T) {
 		{"bad sftp-request-concurrency", map[string]string{"EASYSFTP_SFTP_REQUEST_CONCURRENCY": "not-a-number"}, "invalid sftp-request-concurrency"},
 		{"zero sftp-request-concurrency", map[string]string{"EASYSFTP_SFTP_REQUEST_CONCURRENCY": "0"}, "'sftp-request-concurrency' must be at least 1"},
 		{"negative max-deletes", map[string]string{"EASYSFTP_MAX_DELETES": "-1"}, "guards.max_deletes must not be negative"},
+		{"bad dir-mode", map[string]string{"EASYSFTP_DIR_MODE": "not-octal"}, "invalid dir-mode"},
+		{"dir-mode out of range", map[string]string{"EASYSFTP_DIR_MODE": "1755"}, "invalid dir-mode"},
+		{"bad file-mode", map[string]string{"EASYSFTP_FILE_MODE": "999"}, "invalid file-mode"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,6 +149,29 @@ func TestLoadMaxDeletesRejectedWithConfigFile(t *testing.T) {
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "do not also set") {
 		t.Fatalf("expected rejection error, got %v", err)
+	}
+}
+
+func TestLoadDirFileMode(t *testing.T) {
+	setBaseEnv(t)
+	if cfg, err := Load(); err != nil {
+		t.Fatal(err)
+	} else if cfg.DirMode != nil || cfg.FileMode != nil {
+		t.Errorf("expected unset dir-mode/file-mode by default, got %v / %v", cfg.DirMode, cfg.FileMode)
+	}
+
+	t.Setenv("EASYSFTP_DIR_MODE", "0755")
+	t.Setenv("EASYSFTP_FILE_MODE", "644")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DirMode == nil || *cfg.DirMode != 0o755 {
+		t.Errorf("expected DirMode 0755, got %v", cfg.DirMode)
+	}
+	if cfg.FileMode == nil || *cfg.FileMode != 0o644 {
+		t.Errorf("expected FileMode 0644, got %v", cfg.FileMode)
 	}
 }
 

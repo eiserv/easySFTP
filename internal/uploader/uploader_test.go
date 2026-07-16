@@ -3,6 +3,7 @@ package uploader
 import (
 	"context"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -278,6 +279,139 @@ func TestHostKeyFingerprint(t *testing.T) {
 			t.Fatalf("expected SHA256 format error, got %v", err)
 		}
 	})
+}
+
+func TestDirModeChmodsEveryRemoteDirectory(t *testing.T) {
+	var rec setstatRecorder
+	srv := startTestServer(t, withSetstatRecorder(&rec))
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"assets/deep/app.js": "x"})
+
+	mode := fs.FileMode(0o700)
+	cfg := baseConfig(srv)
+	cfg.DirMode = &mode
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]uint32{"/www": 0o700, "/www/assets": 0o700, "/www/assets/deep": 0o700}
+	got := map[string]uint32{}
+	rec.mu.Lock()
+	for _, c := range rec.calls {
+		got[c.path] = c.mode & 0o777
+	}
+	rec.mu.Unlock()
+	for path, mode := range want {
+		if got[path] != mode {
+			t.Errorf("expected %s chmod'd to %04o, got %04o (all calls: %+v)", path, mode, got[path], got)
+		}
+	}
+}
+
+func TestFileModeOverridesLocalPermissionBits(t *testing.T) {
+	var rec setstatRecorder
+	srv := startTestServer(t, withSetstatRecorder(&rec))
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "content"})
+
+	mode := fs.FileMode(0o600)
+	cfg := baseConfig(srv)
+	cfg.FileMode = &mode
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.calls) != 1 || rec.calls[0].mode&0o777 != 0o600 {
+		t.Errorf("expected exactly one chmod to 0600, got %+v", rec.calls)
+	}
+}
+
+func TestDirModeFailureWarnsOnceNotPerDirectory(t *testing.T) {
+	srv := startTestServer(t, withFailSetstat())
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"assets/deep/app.js": "x", "assets/other.js": "y"})
+
+	mode := fs.FileMode(0o700)
+	cfg := baseConfig(srv)
+	cfg.DirMode = &mode
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	if _, err := Run(context.Background(), cfg, log); err != nil {
+		t.Fatalf("a rejected dir-mode chmod must not fail the run: %v", err)
+	}
+
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	n := 0
+	for _, w := range log.warnings {
+		if strings.Contains(w, "dir-mode") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("expected exactly 1 dir-mode warning, got %d: %v", n, log.warnings)
+	}
+}
+
+func TestFileModeFailureWarnsOnceNotPerFile(t *testing.T) {
+	srv := startTestServer(t, withFailSetstat())
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "1", "b.txt": "2", "c.txt": "3"})
+
+	mode := fs.FileMode(0o600)
+	cfg := baseConfig(srv)
+	cfg.FileMode = &mode
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	stats, err := Run(context.Background(), cfg, log)
+	if err != nil {
+		t.Fatalf("a rejected file-mode chmod must not fail the run: %v", err)
+	}
+	if stats.FilesUploaded != 3 {
+		t.Errorf("expected all 3 files to still upload, got %d", stats.FilesUploaded)
+	}
+
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	n := 0
+	for _, w := range log.warnings {
+		if strings.Contains(w, "file-mode") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("expected exactly 1 file-mode warning, got %d: %v", n, log.warnings)
+	}
+}
+
+func TestDefaultModeMirrorsLocalBitsSilentlyOnFailure(t *testing.T) {
+	srv := startTestServer(t, withFailSetstat())
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "1"})
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	if _, err := Run(context.Background(), cfg, log); err != nil {
+		t.Fatalf("a rejected chmod must not fail the run: %v", err)
+	}
+
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	for _, w := range log.warnings {
+		if strings.Contains(w, "SETSTAT") {
+			t.Errorf("expected no chmod warning when mirroring local mode (no explicit override), got %v", log.warnings)
+		}
+	}
 }
 
 func TestMissingLocalPathFailsBeforeConnecting(t *testing.T) {
