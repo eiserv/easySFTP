@@ -150,7 +150,7 @@ func TestUploadSingleFile(t *testing.T) {
 	}
 }
 
-func TestDeleteMode(t *testing.T) {
+func TestCleanStrategy(t *testing.T) {
 	srv := startTestServer(t)
 
 	// Pre-populate the remote target with stale content.
@@ -173,8 +173,7 @@ func TestDeleteMode(t *testing.T) {
 	writeTree(t, local, map[string]string{"index.html": "fresh"})
 
 	cfg := baseConfig(srv)
-	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
-	cfg.Delete = true
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www", Strategy: config.StrategyClean}}
 
 	stats, err := Run(context.Background(), cfg, testLogger{t})
 	if err != nil {

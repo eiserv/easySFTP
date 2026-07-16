@@ -126,8 +126,14 @@ the limit in the config file.
 
 ### `when 'config-file' is set, put targets/strategy/ignore/guards in the file`
 
-`config-file` replaces the `uploads`, `strategy`, `delete`, `ignore` and
-`ignore-from` inputs. Remove them from the step. Connection inputs stay.
+`config-file` replaces the `uploads`, `strategy`, `ignore` and `ignore-from`
+inputs. Remove them from the step. Connection inputs stay.
+
+### `the 'delete' input was removed in v2 — use 'strategy: clean' instead`
+
+Replace `delete: true` with `strategy: clean` in your step. The inputs are
+equivalent; `delete` only remains declared so that this error fires instead of
+the run silently degrading to the `overlay` default.
 
 ### `strategy "sync" requires a directory, but local path ... is a single file`
 

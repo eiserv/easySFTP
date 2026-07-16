@@ -52,7 +52,7 @@ Deletes **everything** inside the remote target directory first, then uploads
 all local files. Use it when you want a guaranteed-fresh deploy and nothing in
 the target directory needs to survive.
 
-The `delete: true` input is a legacy alias for `strategy: clean`.
+The `delete: true` input was removed in v2; `strategy: clean` replaces it.
 
 ## Delete guards
 

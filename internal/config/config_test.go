@@ -56,7 +56,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.Retries != 2 || cfg.Delete || cfg.DryRun {
+	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.Retries != 2 || cfg.DryRun {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
 	if cfg.Timeout.Seconds() != 30 {

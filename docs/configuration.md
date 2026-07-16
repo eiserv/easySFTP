@@ -30,13 +30,16 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 | Input | Required | Default | Description |
 |---|---|---|---|
 | `uploads` | ² | - | One `local => remote` mapping per line. Directories are uploaded recursively; single files are supported too. |
-| `config-file` | | - | Path to a [YAML config file](#the-yaml-config-file) with per-target strategies and delete guards. Mutually exclusive with `uploads`/`strategy`/`delete`/`ignore`/`ignore-from`. |
+| `config-file` | | - | Path to a [YAML config file](#the-yaml-config-file) with per-target strategies and delete guards. Mutually exclusive with `uploads`/`strategy`/`ignore`/`ignore-from`. |
 | `strategy` | | `overlay` | [Reconciliation strategy](strategies.md): `overlay`, `sync` or `clean`. |
 | `ignore` | | - | Gitignore-style exclude patterns, one per line. `!` re-includes. |
 | `ignore-from` | | - | Path to a file with exclude patterns (e.g. `.sftpignore`). |
-| `delete` | | `false` | Legacy alias for `strategy: clean`. Prefer `strategy`. |
 
 ² Required unless `config-file` is set.
+
+> **Removed in v2:** the `delete` input is gone — use `strategy: clean`.
+> Passing `delete: true` now fails the run with a migration hint instead of
+> silently falling back to `overlay`. The declaration disappears in v3.
 
 ### Behavior
 
@@ -164,8 +167,8 @@ targets:
 | `targets[].ignore` | | - | Per-target excludes, additive to the global list. |
 
 Unknown keys are rejected with an error (they are never silently ignored), and
-`config-file` cannot be combined with the `uploads`, `strategy`, `delete`,
-`ignore` or `ignore-from` inputs.
+`config-file` cannot be combined with the `uploads`, `strategy`, `ignore` or
+`ignore-from` inputs.
 
 ### Editor support
 

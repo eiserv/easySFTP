@@ -107,23 +107,18 @@ func TestStrategyInput(t *testing.T) {
 	}
 }
 
-func TestStrategyInputConflictsWithDelete(t *testing.T) {
+func TestDeleteInputIsRejected(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("EASYSFTP_STRATEGY", "clean")
 	t.Setenv("EASYSFTP_DELETE", "true")
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "not both") {
-		t.Fatalf("expected strategy/delete conflict error, got %v", err)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "strategy: clean") {
+		t.Fatalf("expected the delete tombstone error, got %v", err)
 	}
 }
 
-func TestDeleteMapsToClean(t *testing.T) {
+func TestDeleteFalseIsAccepted(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("EASYSFTP_DELETE", "true")
-	cfg, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Uploads[0].Strategy != StrategyClean {
-		t.Errorf("expected delete to map to clean, got %q", cfg.Uploads[0].Strategy)
+	t.Setenv("EASYSFTP_DELETE", "false")
+	if _, err := Load(); err != nil {
+		t.Fatalf("delete=false must stay accepted (it is the action.yml default): %v", err)
 	}
 }
