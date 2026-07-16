@@ -83,11 +83,13 @@ produce directories the web server can't read. Set `dir-mode` (and, if needed,
 
 ### `replacing "<path>": ...` or leftover `.easysftp-tmp` files
 
-easySFTP uploads to a temporary sibling file and renames it over the target
-(atomic on servers supporting the `posix-rename@openssh.com` extension, with a
-remove+rename fallback otherwise). A hard crash mid-upload can leave a
-`*.easysftp-tmp` file behind; it is safe to delete and will be cleaned up by
-the next successful upload of the same file.
+easySFTP uploads to a temporary sibling file (named `<path>.easysftp-tmp.<n>`)
+and renames it over the target (atomic on servers supporting the
+`posix-rename@openssh.com` extension, with a remove+rename fallback
+otherwise). A hard crash mid-upload can leave such a file behind; it is safe
+to delete manually. It usually gets overwritten by the next upload of the
+same file too, but that isn't guaranteed if the deployment's file set changed
+in the meantime and shifted its plan position.
 
 ### Ignored files are uploaded anyway / patterns don't match
 

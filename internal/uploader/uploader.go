@@ -311,7 +311,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 			if cfg.FileMode != nil {
 				mode = *cfg.FileMode
 			}
-			n, err := uploadFileWithRetry(ctx, f, mode, client, cfg.Retries, log, modeWarned)
+			n, err := uploadFileWithRetry(ctx, f, i, mode, client, cfg.Retries, log, modeWarned)
 			if err != nil {
 				return err
 			}
@@ -463,7 +463,12 @@ const tmpSuffix = ".easysftp-tmp"
 // uploadFileWithRetry uploads one file, retrying transient failures with
 // exponential backoff. It stops early when the context is cancelled or the
 // error is permanent (see isRetryable), so a doomed transfer fails fast.
-func uploadFileWithRetry(ctx context.Context, f fileItem, mode fs.FileMode, client *sftp.Client, retries int, log Logger, modeWarned *atomic.Bool) (int64, error) {
+//
+// index is the file's position in the plan and is folded into the temp
+// path (see uploadFile) so two planned transfers never race over the same
+// temporary name, even if one target's path happens to literally be
+// another's plus tmpSuffix.
+func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.FileMode, client *sftp.Client, retries int, log Logger, modeWarned *atomic.Bool) (int64, error) {
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
@@ -473,7 +478,7 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, mode fs.FileMode, clie
 				return 0, err
 			}
 		}
-		n, err := uploadFile(ctx, f, mode, client, log, modeWarned)
+		n, err := uploadFile(ctx, f, index, mode, client, log, modeWarned)
 		if err == nil {
 			return n, nil
 		}
@@ -489,14 +494,17 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, mode fs.FileMode, clie
 // temporary sibling and, only once that fully succeeds, renames it over the
 // target. Any failure removes the temporary file so a broken or partial upload
 // never replaces the live file and no debris is left behind.
-func uploadFile(ctx context.Context, f fileItem, mode fs.FileMode, client *sftp.Client, log Logger, modeWarned *atomic.Bool) (int64, error) {
+func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, client *sftp.Client, log Logger, modeWarned *atomic.Bool) (int64, error) {
 	src, err := os.Open(f.localPath)
 	if err != nil {
 		return 0, err
 	}
 	defer src.Close()
 
-	tmpPath := f.remotePath + tmpSuffix
+	// The index makes the temp path unique per planned transfer, so it can't
+	// collide with another planned file whose real name is this one's plus
+	// tmpSuffix (see issue #42).
+	tmpPath := fmt.Sprintf("%s%s.%d", f.remotePath, tmpSuffix, index)
 	dst, err := client.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return 0, err
