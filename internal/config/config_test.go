@@ -45,7 +45,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("EASYSFTP_UPLOADS", "./dist/ => /www/")
 	for _, name := range []string{"PORT", "PRIVATE_KEY", "PASSPHRASE", "HOST_KEY_FINGERPRINT",
 		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "RETRIES", "TIMEOUT",
-		"SYNC_FAST_PATH", "CONFIG_FILE", "STRATEGY"} {
+		"SYNC_FAST_PATH", "CONFIG_FILE", "STRATEGY", "MAX_DELETES"} {
 		t.Setenv("EASYSFTP_"+name, "")
 	}
 }
@@ -77,6 +77,8 @@ func TestLoadValidation(t *testing.T) {
 		{"bad port", map[string]string{"EASYSFTP_PORT": "99999"}, "'port' must be between"},
 		{"bad bool", map[string]string{"EASYSFTP_DRY_RUN": "yes-please"}, "invalid dry-run"},
 		{"bad sync-fast-path bool", map[string]string{"EASYSFTP_SYNC_FAST_PATH": "yes-please"}, "invalid sync-fast-path"},
+		{"bad max-deletes", map[string]string{"EASYSFTP_MAX_DELETES": "not-a-number"}, "invalid max-deletes"},
+		{"negative max-deletes", map[string]string{"EASYSFTP_MAX_DELETES": "-1"}, "guards.max_deletes must not be negative"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,6 +115,35 @@ func TestLoadIgnoreFrom(t *testing.T) {
 		if cfg.IgnoreLines[i] != want[i] {
 			t.Errorf("ignore line %d: expected %q, got %q", i, want[i], cfg.IgnoreLines[i])
 		}
+	}
+}
+
+func TestLoadMaxDeletes(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("EASYSFTP_MAX_DELETES", "200")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Guards.MaxDeletes != 200 {
+		t.Errorf("expected MaxDeletes 200, got %d", cfg.Guards.MaxDeletes)
+	}
+}
+
+func TestLoadMaxDeletesRejectedWithConfigFile(t *testing.T) {
+	setBaseEnv(t)
+	configFile := filepath.Join(t.TempDir(), "easysftp.yml")
+	if err := os.WriteFile(configFile, []byte("version: 1\ntargets:\n  - local: ./dist/\n    remote: /www/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EASYSFTP_UPLOADS", "")
+	t.Setenv("EASYSFTP_CONFIG_FILE", configFile)
+	t.Setenv("EASYSFTP_MAX_DELETES", "5")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "do not also set") {
+		t.Fatalf("expected rejection error, got %v", err)
 	}
 }
 

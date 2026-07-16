@@ -30,10 +30,11 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 | Input | Required | Default | Description |
 |---|---|---|---|
 | `uploads` | ² | - | One `local => remote` mapping per line. Directories are uploaded recursively; single files are supported too. |
-| `config-file` | | - | Path to a [YAML config file](#the-yaml-config-file) with per-target strategies and delete guards. Mutually exclusive with `uploads`/`strategy`/`ignore`/`ignore-from`. |
+| `config-file` | | - | Path to a [YAML config file](#the-yaml-config-file) with per-target strategies and delete guards. Mutually exclusive with `uploads`/`strategy`/`ignore`/`ignore-from`/`max-deletes`. |
 | `strategy` | | `overlay` | [Reconciliation strategy](strategies.md): `overlay`, `sync` or `clean`. |
 | `ignore` | | - | Gitignore-style exclude patterns, one per line. `!` re-includes. |
 | `ignore-from` | | - | Path to a file with exclude patterns (e.g. `.sftpignore`). |
+| `max-deletes` | | `0` | Abort a `sync`/`clean` run that would delete more files than this (`0` = unlimited). See [delete guards](strategies.md#delete-guards). |
 
 ² Required unless `config-file` is set.
 
