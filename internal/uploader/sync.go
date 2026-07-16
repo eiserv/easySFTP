@@ -22,10 +22,25 @@ import (
 // so files placed on the server by others are left untouched.
 const manifestName = ".easysftp-manifest.json"
 
-// manifest records the relative paths and content hashes of the last sync.
+// manifestVersion is written to every manifest this version of easySFTP
+// produces. v1 manifests (hash only, no size/mtime) are still read; see
+// readManifest.
+const manifestVersion = 2
+
+// manifestEntry records what is known about one file from the last sync.
+// Size and MTime enable the size+mtime fast path in hashPlanFiles: a v1
+// manifest entry has MTime 0, which never matches and always falls back to a
+// full re-hash.
+type manifestEntry struct {
+	Hash  string `json:"hash"`
+	Size  int64  `json:"size"`
+	MTime int64  `json:"mtime"` // local modification time at upload, unix seconds
+}
+
+// manifest records what the last sync uploaded, keyed by relative path.
 type manifest struct {
-	Version int               `json:"version"`
-	Files   map[string]string `json:"files"` // rel path => sha256 hex
+	Version int                      `json:"version"`
+	Files   map[string]manifestEntry `json:"files"`
 }
 
 // executeSync reconciles the remote target with the local tree using the
@@ -38,11 +53,23 @@ func executeSync(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 
 	old := readManifest(client, base, log)
 
-	local := make(map[string]string, len(p.files))
+	// Hash after reading the manifest (not during buildPlan) so that, with
+	// sync-fast-path opted in, unchanged files whose size and mtime still
+	// match their manifest entry can reuse the stored hash instead of being
+	// re-read from disk. See hashPlanFiles.
+	var cached map[string]manifestEntry
+	if cfg.SyncFastPath {
+		cached = old.Files
+	}
+	if err := hashPlanFiles(ctx, p.files, cfg.Concurrency, cached); err != nil {
+		return fmt.Errorf("hashing local files under %q: %w", p.pair.Local, err)
+	}
+
+	local := make(map[string]manifestEntry, len(p.files))
 	var upload []fileItem
 	for _, f := range p.files {
-		local[f.rel] = f.hash
-		if h, ok := old.Files[f.rel]; !ok || h != f.hash {
+		local[f.rel] = manifestEntry{Hash: f.hash, Size: f.size, MTime: f.mtime}
+		if e, ok := old.Files[f.rel]; !ok || e.Hash != f.hash {
 			upload = append(upload, f)
 		}
 	}
@@ -55,7 +82,7 @@ func executeSync(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 	}
 	sort.Strings(toDelete)
 
-	// ponytail: manifest is trusted — a file changed on the server out of band
+	// note: manifest is trusted — a file changed on the server out of band
 	// is not re-detected until its local content changes. Run clean to reset.
 	log.Infof("%ssync: %d to upload, %d to delete, %d unchanged",
 		verb, len(upload), len(toDelete), len(p.files)-len(upload))
@@ -89,7 +116,7 @@ func executeSync(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 	}
 
 	pruneEmptyDirs(client, base, toDelete)
-	if err := writeManifest(client, base, manifest{Version: 1, Files: local}); err != nil {
+	if err := writeManifest(client, base, manifest{Version: manifestVersion, Files: local}); err != nil {
 		return fmt.Errorf("writing sync manifest in %q: %w", base, err)
 	}
 	return nil
@@ -98,8 +125,13 @@ func executeSync(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 // readManifest loads the remote manifest. A missing manifest means a first
 // sync (empty). A corrupt one is treated the same, with a warning, so a bad
 // manifest degrades to "upload everything, delete nothing" instead of failing.
+//
+// Both the current (v2: hash+size+mtime) and old (v1: hash only) formats are
+// accepted; a v1 entry decodes with MTime 0, which never matches the fast
+// path in hashPlanFiles, so upgrading from a v1 manifest costs one full
+// re-hash and then writes v2 from then on.
 func readManifest(client *sftp.Client, dir string, log Logger) manifest {
-	empty := manifest{Version: 1, Files: map[string]string{}}
+	empty := manifest{Version: manifestVersion, Files: map[string]manifestEntry{}}
 	f, err := client.Open(path.Join(dir, manifestName))
 	if err != nil {
 		return empty
@@ -111,12 +143,26 @@ func readManifest(client *sftp.Client, dir string, log Logger) manifest {
 		log.Warningf("could not read sync manifest in %s (%v) — treating as first sync", dir, err)
 		return empty
 	}
-	var m manifest
-	if err := json.Unmarshal(data, &m); err != nil || m.Files == nil {
-		log.Warningf("sync manifest in %s is unreadable — treating as first sync", dir)
-		return empty
+
+	var v2 manifest
+	if err := json.Unmarshal(data, &v2); err == nil && v2.Files != nil {
+		return v2
 	}
-	return m
+
+	var v1 struct {
+		Version int               `json:"version"`
+		Files   map[string]string `json:"files"`
+	}
+	if err := json.Unmarshal(data, &v1); err == nil && v1.Files != nil {
+		files := make(map[string]manifestEntry, len(v1.Files))
+		for rel, hash := range v1.Files {
+			files[rel] = manifestEntry{Hash: hash}
+		}
+		return manifest{Version: v1.Version, Files: files}
+	}
+
+	log.Warningf("sync manifest in %s is unreadable — treating as first sync", dir)
+	return empty
 }
 
 // writeManifest atomically writes the manifest into dir.
