@@ -59,7 +59,7 @@ func TestActionMetadata(t *testing.T) {
 	wantInputs := []string{
 		"build-mode", "server", "port", "username", "password", "private-key",
 		"passphrase", "host-key-fingerprint", "uploads", "config-file", "strategy",
-		"ignore", "ignore-from", "delete", "dry-run", "concurrency", "retries", "timeout",
+		"ignore", "ignore-from", "max-deletes", "delete", "dry-run", "concurrency", "retries", "timeout",
 	}
 	for _, name := range wantInputs {
 		if _, ok := action.Inputs[name]; !ok {

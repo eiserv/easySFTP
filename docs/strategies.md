@@ -95,9 +95,10 @@ Two safety nets apply before `sync` or `clean` delete anything:
 
 - **Remote root is always refused.** A target that resolves to `/` (or `.`)
   is rejected outright. No strategy will ever wipe a server root.
-- **`guards.max_deletes`** ([config file](configuration.md#fields) only) aborts
-  a run that would delete more files than the limit, catching a
-  misconfiguration before it does damage. `0` means unlimited.
+- **`max_deletes`** aborts a run that would delete more files than the limit,
+  catching a misconfiguration before it does damage. `0` means unlimited. Set
+  it via the `max-deletes` input, or `guards.max_deletes` in the
+  [config file](configuration.md#fields) when using one.
 
 ## Dry runs
 

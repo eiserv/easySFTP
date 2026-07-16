@@ -123,12 +123,13 @@ func Load() (*Config, error) {
 	uploadsInput := os.Getenv(envPrefix + "UPLOADS")
 	ignoreInput := os.Getenv(envPrefix + "IGNORE")
 	ignoreFrom := get("IGNORE_FROM")
+	maxDeletesInput := get("MAX_DELETES")
 
 	if configFile != "" {
 		if strings.TrimSpace(uploadsInput) != "" || strategyInput != "" ||
-			strings.TrimSpace(ignoreInput) != "" || ignoreFrom != "" {
+			strings.TrimSpace(ignoreInput) != "" || ignoreFrom != "" || maxDeletesInput != "" {
 			return nil, fmt.Errorf("when 'config-file' is set, put targets/strategy/ignore/guards " +
-				"in the file — do not also set the uploads, strategy, ignore or ignore-from inputs")
+				"in the file — do not also set the uploads, strategy, ignore, ignore-from or max-deletes inputs")
 		}
 		if err := loadConfigFile(cfg, configFile); err != nil {
 			return nil, err
@@ -151,6 +152,9 @@ func Load() (*Config, error) {
 				return nil, fmt.Errorf("could not read ignore-from file: %w", err)
 			}
 			cfg.IgnoreLines = append(cfg.IgnoreLines, splitLines(string(data))...)
+		}
+		if cfg.Guards.MaxDeletes, err = parseInt(maxDeletesInput, 0); err != nil {
+			return nil, fmt.Errorf("invalid max-deletes: %w", err)
 		}
 	}
 
