@@ -128,7 +128,7 @@ summary is marked as failed.
 | `clean` | all files | **everything** in the remote target first | a guaranteed-fresh deploy |
 
 `sync` is manifest-based: it only ever deletes files it uploaded itself, skips
-unchanged files by content hash, and re-deploys only transfer what changed.
+unchanged files by content hash, and only transfers what changed on re-deploys.
 Destructive strategies are protected by [delete guards](docs/strategies.md#delete-guards):
 the remote root is always refused, and `max_deletes` caps how much a single run
 may delete. Preview anything with `dry-run: true`.
