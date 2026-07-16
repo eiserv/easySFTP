@@ -62,10 +62,11 @@ type Config struct {
 	IgnoreLines []string
 	Guards      Guards
 
-	DryRun      bool
-	Concurrency int
-	Retries     int
-	Timeout     time.Duration
+	DryRun       bool
+	Concurrency  int
+	Retries      int
+	Timeout      time.Duration
+	SyncFastPath bool
 }
 
 const envPrefix = "EASYSFTP_"
@@ -104,6 +105,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.DryRun, err = parseBool(get("DRY_RUN"), false); err != nil {
 		return nil, fmt.Errorf("invalid dry-run: %w", err)
+	}
+	if cfg.SyncFastPath, err = parseBool(get("SYNC_FAST_PATH"), false); err != nil {
+		return nil, fmt.Errorf("invalid sync-fast-path: %w", err)
 	}
 
 	timeoutSec, err := parseInt(get("TIMEOUT"), 30)

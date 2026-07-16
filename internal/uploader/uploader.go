@@ -48,6 +48,7 @@ type fileItem struct {
 	remotePath string // slash-separated remote path
 	rel        string // slash path relative to the remote base (manifest key)
 	size       int64
+	mtime      int64 // local modification time, unix seconds
 	mode       fs.FileMode
 	hash       string // sha256 hex of the local content; only set for the sync strategy
 }
@@ -73,7 +74,7 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		st := effectiveStrategy(pair)
 		lines := append(append([]string{}, cfg.IgnoreLines...), pair.Ignore...)
 		matcher := ignore.CompileIgnoreLines(lines...)
-		p, err := buildPlan(ctx, pair, st, matcher, cfg.Concurrency)
+		p, err := buildPlan(pair, st, matcher)
 		if err != nil {
 			return stats, err
 		}
@@ -100,11 +101,11 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 }
 
 // buildPlan walks the local side of an upload pair and computes the remote
-// file and directory layout, honoring the ignore patterns. For the sync
-// strategy it also hashes each file so changed files can be detected; the
-// hashing runs through a bounded worker pool so a large tree uses the
-// available runner CPU instead of being read one file at a time.
-func buildPlan(ctx context.Context, pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore, concurrency int) (plan, error) {
+// file and directory layout, honoring the ignore patterns. It does not touch
+// the network, so config/path errors surface before a connection is made.
+// Content hashing for the sync strategy happens later, once connected: see
+// executeSync.
+func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore) (plan, error) {
 	p := plan{pair: pair, strategy: strategy}
 	remoteBase := normalizeRemote(pair.Remote)
 
@@ -134,6 +135,7 @@ func buildPlan(ctx context.Context, pair config.UploadPair, strategy config.Stra
 			remotePath: remotePath,
 			rel:        filepath.Base(pair.Local),
 			size:       info.Size(),
+			mtime:      info.ModTime().Unix(),
 			mode:       info.Mode(),
 		})
 		p.remoteDirs = parentDirs(remotePath)
@@ -169,6 +171,7 @@ func buildPlan(ctx context.Context, pair config.UploadPair, strategy config.Stra
 			remotePath: path.Join(remoteBase, rel),
 			rel:        rel,
 			size:       fi.Size(),
+			mtime:      fi.ModTime().Unix(),
 			mode:       fi.Mode(),
 		}
 		p.files = append(p.files, item)
@@ -179,15 +182,6 @@ func buildPlan(ctx context.Context, pair config.UploadPair, strategy config.Stra
 	})
 	if err != nil {
 		return p, fmt.Errorf("walking local path %q: %w", pair.Local, err)
-	}
-
-	// The sync strategy needs a content hash per file to detect changes.
-	// Hashing is the slow part of planning a large tree, so run it through a
-	// bounded worker pool instead of reading each file sequentially.
-	if strategy == config.StrategySync {
-		if err := hashPlanFiles(ctx, p.files, concurrency); err != nil {
-			return p, fmt.Errorf("hashing local files under %q: %w", pair.Local, err)
-		}
 	}
 
 	for dir := range dirSet {
@@ -202,13 +196,25 @@ func buildPlan(ctx context.Context, pair config.UploadPair, strategy config.Stra
 // worker pool bounded to concurrency workers so a large tree uses the runner's
 // CPU instead of being read and hashed one file at a time. It is used only by
 // the sync strategy, whose changed-file detection compares content hashes.
-func hashPlanFiles(ctx context.Context, files []fileItem, concurrency int) error {
+//
+// cached is the previous sync's manifest entries, keyed by relative path. When
+// a file's size and mtime still match its cached entry, its hash is reused
+// instead of re-reading the file (the same fast path rsync's "quick check"
+// uses). A cached entry with mtime 0 (a manifest written before this fast
+// path existed) never matches, so upgrading from an older manifest costs one
+// full re-hash and nothing more.
+func hashPlanFiles(ctx context.Context, files []fileItem, concurrency int, cached map[string]manifestEntry) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(concurrency)
 	for i := range files {
 		g.Go(func() error {
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if entry, ok := cached[files[i].rel]; ok && entry.MTime != 0 &&
+				entry.Size == files[i].size && entry.MTime == files[i].mtime {
+				files[i].hash = entry.Hash
+				return nil
 			}
 			hash, err := hashFile(files[i].localPath)
 			if err != nil {
