@@ -596,7 +596,7 @@ func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, error) 
 
 	sftpClient, err := sftp.NewClient(sshClient,
 		sftp.UseConcurrentWrites(true),
-		sftp.MaxConcurrentRequestsPerFile(64),
+		sftp.MaxConcurrentRequestsPerFile(cfg.SftpRequestConcurrency),
 	)
 	if err != nil {
 		sshClient.Close()

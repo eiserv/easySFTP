@@ -101,6 +101,15 @@ inputs:
       hashes local files for the sync strategy.
     required: false
     default: "4"
+  sftp-request-concurrency:
+    description: >-
+      Advanced. Maximum number of in-flight SFTP requests per file (pipelining
+      within a single file's transfer, independent of "concurrency" which
+      controls how many files are transferred at once). Lower it if a small
+      or resource-constrained SFTP server struggles under load; raise it to
+      push more throughput per file on a fast link to a capable server.
+    required: false
+    default: "16"
   sync-fast-path:
     description: >-
       If "true", the sync strategy skips re-hashing a file whose size and
@@ -193,6 +202,7 @@ runs:
         EASYSFTP_DELETE: ${{ inputs.delete }}
         EASYSFTP_DRY_RUN: ${{ inputs.dry-run }}
         EASYSFTP_CONCURRENCY: ${{ inputs.concurrency }}
+        EASYSFTP_SFTP_REQUEST_CONCURRENCY: ${{ inputs.sftp-request-concurrency }}
         EASYSFTP_SYNC_FAST_PATH: ${{ inputs.sync-fast-path }}
         EASYSFTP_RETRIES: ${{ inputs.retries }}
         EASYSFTP_TIMEOUT: ${{ inputs.timeout }}

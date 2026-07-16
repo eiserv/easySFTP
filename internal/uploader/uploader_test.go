@@ -28,13 +28,14 @@ func writeTree(t *testing.T, root string, files map[string]string) {
 
 func baseConfig(srv *testServer) *config.Config {
 	return &config.Config{
-		Server:      srv.Host,
-		Port:        srv.Port,
-		Username:    testUser,
-		Password:    testPassword,
-		Concurrency: 4,
-		Retries:     0,
-		Timeout:     10 * time.Second,
+		Server:                 srv.Host,
+		Port:                   srv.Port,
+		Username:               testUser,
+		Password:               testPassword,
+		Concurrency:            4,
+		SftpRequestConcurrency: 16,
+		Retries:                0,
+		Timeout:                10 * time.Second,
 	}
 }
 

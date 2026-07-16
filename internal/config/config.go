@@ -62,11 +62,12 @@ type Config struct {
 	IgnoreLines []string
 	Guards      Guards
 
-	DryRun       bool
-	Concurrency  int
-	Retries      int
-	Timeout      time.Duration
-	SyncFastPath bool
+	DryRun                 bool
+	Concurrency            int
+	SftpRequestConcurrency int
+	Retries                int
+	Timeout                time.Duration
+	SyncFastPath           bool
 }
 
 const envPrefix = "EASYSFTP_"
@@ -92,6 +93,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Concurrency, err = parseInt(get("CONCURRENCY"), 4); err != nil {
 		return nil, fmt.Errorf("invalid concurrency: %w", err)
+	}
+	if cfg.SftpRequestConcurrency, err = parseInt(get("SFTP_REQUEST_CONCURRENCY"), 16); err != nil {
+		return nil, fmt.Errorf("invalid sftp-request-concurrency: %w", err)
 	}
 	if cfg.Retries, err = parseInt(get("RETRIES"), 2); err != nil {
 		return nil, fmt.Errorf("invalid retries: %w", err)
@@ -190,6 +194,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("input 'port' must be between 1 and 65535, got %d", c.Port)
 	case c.Concurrency < 1:
 		return fmt.Errorf("input 'concurrency' must be at least 1, got %d", c.Concurrency)
+	case c.SftpRequestConcurrency < 1:
+		return fmt.Errorf("input 'sftp-request-concurrency' must be at least 1, got %d", c.SftpRequestConcurrency)
 	case c.Retries < 0:
 		return fmt.Errorf("input 'retries' must not be negative, got %d", c.Retries)
 	case c.Guards.MaxDeletes < 0:
