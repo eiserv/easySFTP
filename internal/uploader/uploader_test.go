@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/eiserv/easySFTP/internal/config"
+	"golang.org/x/crypto/ssh"
 )
 
 // writeTree creates files under root; keys are slash-separated relative paths.
@@ -445,5 +447,43 @@ func TestMissingLocalPathFailsBeforeConnecting(t *testing.T) {
 	_, err := Run(context.Background(), cfg, testLogger{t})
 	if err == nil || !strings.Contains(err.Error(), "local path") {
 		t.Fatalf("expected local path error, got %v", err)
+	}
+}
+
+func TestSendKeepalivesPingsUntilCanceled(t *testing.T) {
+	var received int64
+	srv := startTestServer(t, withKeepaliveCounter(&received))
+
+	sshClient, err := ssh.Dial("tcp", srv.Addr, &ssh.ClientConfig{
+		User:            testUser,
+		Auth:            []ssh.AuthMethod{ssh.Password(testPassword)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sshClient.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		sendKeepalives(ctx, sshClient, 10*time.Millisecond)
+		close(done)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for atomic.LoadInt64(&received) < 3 {
+		select {
+		case <-deadline:
+			t.Fatalf("expected at least 3 keepalives, got %d", atomic.LoadInt64(&received))
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("sendKeepalives did not stop after context cancellation")
 	}
 }
