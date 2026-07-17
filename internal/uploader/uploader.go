@@ -89,6 +89,10 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	defer sshClient.Close()
 	defer sftpClient.Close()
 
+	keepaliveCtx, stopKeepalives := context.WithCancel(ctx)
+	defer stopKeepalives()
+	go sendKeepalives(keepaliveCtx, sshClient, keepaliveInterval)
+
 	for _, p := range plans {
 		if err := ctx.Err(); err != nil {
 			return stats, err
@@ -600,6 +604,31 @@ func (c *ctxReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return c.r.Read(p)
+}
+
+// keepaliveInterval is how often sendKeepalives pings the connection. It is
+// deliberately not configurable: it's cheap, harmless to send more often than
+// strictly needed, and there's no evidence yet that any user needs a
+// different value.
+const keepaliveInterval = 30 * time.Second
+
+// sendKeepalives periodically sends an SSH keepalive request until ctx is
+// canceled. This keeps long or idle-looking transfers alive across NAT
+// gateways and firewalls that drop idle TCP connections, and answers sshd's
+// own ClientAliveInterval probes so the server doesn't disconnect us first.
+// interval is a parameter (rather than always reading the keepaliveInterval
+// constant) so tests can drive it with a short tick instead of waiting 30s.
+func sendKeepalives(ctx context.Context, client *ssh.Client, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			_, _, _ = client.SendRequest("keepalive@openssh.com", true, nil)
+		}
+	}
 }
 
 // connect dials the server and opens an SFTP session on top of SSH.

@@ -32,6 +32,16 @@ The runner cannot reach the server.
 - Raise `timeout` (default 30 s) if the server is just slow to accept
   connections.
 
+### A large deploy dies partway through with an EOF or "connection lost"
+
+`timeout` only bounds the initial connection, not the whole run. Once
+connected, easySFTP sends an SSH keepalive every 30 seconds for the rest of
+the run, so idle-looking connections survive NAT gateways/firewalls that
+drop them, and the server's own `ClientAliveInterval` probes get answered.
+This is automatic and not configurable. If transfers still die mid-run, the
+connection itself is being reset (not just idled out) — check for a very
+short server-side session/idle limit, or a flaky network path.
+
 ### `connecting to <host>:22: ssh: handshake failed: ... unable to authenticate`
 
 The server rejected the credentials.

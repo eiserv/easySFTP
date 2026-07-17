@@ -32,6 +32,8 @@ type testServer struct {
 	failRename  bool  // make every rename fail with a non-transient error
 	failSetstat bool  // make every chmod (Setstat) fail
 	dropAfter   int64 // if >0, kill each connection after it reads this many bytes
+
+	keepalives *int64 // if set, counts "keepalive@openssh.com" global requests received
 }
 
 // serverOption tweaks a testServer before it starts serving.
@@ -48,6 +50,10 @@ func withDropAfter(n int64) serverOption { return func(s *testServer) { s.dropAf
 // withFailSetstat makes the server reject every chmod (Setstat) request,
 // simulating a server that refuses SETSTAT.
 func withFailSetstat() serverOption { return func(s *testServer) { s.failSetstat = true } }
+
+// withKeepaliveCounter makes the server tally every "keepalive@openssh.com"
+// global request it receives into c, instead of just discarding it.
+func withKeepaliveCounter(c *int64) serverOption { return func(s *testServer) { s.keepalives = c } }
 
 // setstatCall records one chmod request the server received.
 type setstatCall struct {
@@ -258,7 +264,16 @@ func (s *testServer) handleConn(conn net.Conn) {
 		return
 	}
 	defer sshConn.Close()
-	go ssh.DiscardRequests(reqs)
+	go func() {
+		for req := range reqs {
+			if s.keepalives != nil && req.Type == "keepalive@openssh.com" {
+				atomic.AddInt64(s.keepalives, 1)
+			}
+			if req.WantReply {
+				req.Reply(false, nil)
+			}
+		}
+	}()
 
 	for newChannel := range chans {
 		if newChannel.ChannelType() != "session" {
