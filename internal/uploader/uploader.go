@@ -41,6 +41,24 @@ type Stats struct {
 	DirsCreated   int
 	BytesUploaded int64
 	Duration      time.Duration
+
+	// Targets breaks the totals above down per upload pair. It is only
+	// populated when the config has more than one pair: a single-target run
+	// has nothing to break down, so it stays nil and callers can use that to
+	// decide whether a per-target table is worth showing.
+	Targets []TargetStats
+}
+
+// TargetStats summarizes what a run did (or would do) for a single upload
+// pair, so a multi-target deploy can be broken down in the job summary.
+type TargetStats struct {
+	Local         string
+	Remote        string
+	Strategy      config.Strategy
+	FilesUploaded int
+	FilesDeleted  int
+	FilesSkipped  int
+	BytesUploaded int64
 }
 
 // fileItem is a single planned file transfer.
@@ -97,7 +115,24 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		if err := ctx.Err(); err != nil {
 			return stats, err
 		}
-		if err := executePlan(ctx, cfg, sftpClient, p, stats, log); err != nil {
+		before := *stats
+		err := executePlan(ctx, cfg, sftpClient, p, stats, log)
+		if len(plans) > 1 {
+			// Recorded from the before/after delta (not threaded through
+			// executePlan) so a target's partial progress on failure is
+			// still captured, matching the totals' own partial-progress
+			// behavior.
+			stats.Targets = append(stats.Targets, TargetStats{
+				Local:         p.pair.Local,
+				Remote:        p.pair.Remote,
+				Strategy:      p.strategy,
+				FilesUploaded: stats.FilesUploaded - before.FilesUploaded,
+				FilesDeleted:  stats.FilesDeleted - before.FilesDeleted,
+				FilesSkipped:  stats.FilesSkipped - before.FilesSkipped,
+				BytesUploaded: stats.BytesUploaded - before.BytesUploaded,
+			})
+		}
+		if err != nil {
 			return stats, err
 		}
 	}

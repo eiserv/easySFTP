@@ -118,6 +118,80 @@ func TestUploadDirectoryWithIgnore(t *testing.T) {
 	}
 }
 
+func TestMultiTargetStatsBreakdown(t *testing.T) {
+	srv := startTestServer(t)
+
+	siteLocal := t.TempDir()
+	writeTree(t, siteLocal, map[string]string{
+		"index.html": "<h1>hi</h1>",
+		"style.css":  "body{}",
+	})
+	docsLocal := t.TempDir()
+	writeTree(t, docsLocal, map[string]string{
+		"readme.md": "# docs",
+	})
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{
+		{Local: siteLocal, Remote: "/www/site", Strategy: config.StrategyOverlay},
+		{Local: docsLocal, Remote: "/www/docs", Strategy: config.StrategyOverlay},
+	}
+
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(stats.Targets) != 2 {
+		t.Fatalf("expected 2 target entries, got %d: %+v", len(stats.Targets), stats.Targets)
+	}
+
+	site, docs := stats.Targets[0], stats.Targets[1]
+	if site.Local != siteLocal || site.Remote != "/www/site" || site.Strategy != config.StrategyOverlay {
+		t.Errorf("unexpected site target stats: %+v", site)
+	}
+	if site.FilesUploaded != 2 {
+		t.Errorf("expected 2 files uploaded for site, got %d", site.FilesUploaded)
+	}
+	if docs.Local != docsLocal || docs.Remote != "/www/docs" {
+		t.Errorf("unexpected docs target stats: %+v", docs)
+	}
+	if docs.FilesUploaded != 1 {
+		t.Errorf("expected 1 file uploaded for docs, got %d", docs.FilesUploaded)
+	}
+
+	// Per-target totals must sum to the run-wide totals.
+	var sumUploaded int
+	var sumBytes int64
+	for _, ts := range stats.Targets {
+		sumUploaded += ts.FilesUploaded
+		sumBytes += ts.BytesUploaded
+	}
+	if sumUploaded != stats.FilesUploaded {
+		t.Errorf("target FilesUploaded sum %d != total %d", sumUploaded, stats.FilesUploaded)
+	}
+	if sumBytes != stats.BytesUploaded {
+		t.Errorf("target BytesUploaded sum %d != total %d", sumBytes, stats.BytesUploaded)
+	}
+}
+
+func TestSingleTargetStatsHaveNoBreakdown(t *testing.T) {
+	srv := startTestServer(t)
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"index.html": "hi"})
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Targets != nil {
+		t.Errorf("expected no per-target breakdown for a single target, got %+v", stats.Targets)
+	}
+}
+
 func TestUploadDirectoryFailsWhenRemoteDirIsFile(t *testing.T) {
 	srv := startTestServer(t)
 	client := srv.verifyClient(t)

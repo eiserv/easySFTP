@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 
 	"github.com/eiserv/easySFTP/internal/config"
@@ -113,7 +114,34 @@ func reportStats(stats *uploader.Stats, mode string, runErr error) {
 	gha.SetOutput("bytes-uploaded", fmt.Sprintf("%d", stats.BytesUploaded))
 	gha.SetOutput("duration-ms", fmt.Sprintf("%d", stats.Duration.Milliseconds()))
 
-	gha.AppendSummary(fmt.Sprintf(
+	summary := fmt.Sprintf(
 		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %d |\n| Duration | %s |\n",
-		status, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.BytesUploaded, stats.Duration.Round(1e6)))
+		status, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.BytesUploaded, stats.Duration.Round(1e6))
+	summary += targetBreakdown(stats.Targets)
+	gha.AppendSummary(summary)
+}
+
+// targetBreakdown renders a per-target table for multi-target deploys, or ""
+// when there is only one target (its row would just repeat the totals above).
+func targetBreakdown(targets []uploader.TargetStats) string {
+	if len(targets) < 2 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n#### Per-target breakdown\n\n| Target | Strategy | Uploaded | Deleted | Skipped | Bytes |\n|---|---|---|---|---|---|\n")
+
+	var totalUploaded, totalDeleted, totalSkipped int
+	var totalBytes int64
+	for _, t := range targets {
+		fmt.Fprintf(&b, "| `%s` => `%s` | %s | %d | %d | %d | %d |\n",
+			t.Local, t.Remote, t.Strategy, t.FilesUploaded, t.FilesDeleted, t.FilesSkipped, t.BytesUploaded)
+		totalUploaded += t.FilesUploaded
+		totalDeleted += t.FilesDeleted
+		totalSkipped += t.FilesSkipped
+		totalBytes += t.BytesUploaded
+	}
+	fmt.Fprintf(&b, "| **Total** | | **%d** | **%d** | **%d** | **%d** |\n",
+		totalUploaded, totalDeleted, totalSkipped, totalBytes)
+	return b.String()
 }

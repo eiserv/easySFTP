@@ -139,6 +139,58 @@ func TestReportStatsOnFailure(t *testing.T) {
 	}
 }
 
+func TestReportStatsMultiTargetBreakdown(t *testing.T) {
+	summaryPath := filepath.Join(t.TempDir(), "summary")
+	t.Setenv("GITHUB_OUTPUT", filepath.Join(t.TempDir(), "output"))
+	t.Setenv("GITHUB_STEP_SUMMARY", summaryPath)
+
+	stats := &uploader.Stats{
+		FilesUploaded: 252,
+		FilesDeleted:  217,
+		FilesSkipped:  1988,
+		BytesUploaded: 17_825_792,
+		Duration:      2*time.Minute + 13*time.Second,
+		Targets: []uploader.TargetStats{
+			{Local: "./dist/", Remote: "/var/www/html/", Strategy: "sync", FilesUploaded: 12, FilesDeleted: 3, FilesSkipped: 1988, BytesUploaded: 4_297_523},
+			{Local: "./docs/", Remote: "/var/www/docs/", Strategy: "clean", FilesUploaded: 240, FilesDeleted: 214, FilesSkipped: 0, BytesUploaded: 13_528_269},
+		},
+	}
+	reportStats(stats, "uploaded", nil)
+
+	summary, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"#### Per-target breakdown",
+		"| Target | Strategy | Uploaded | Deleted | Skipped | Bytes |",
+		"| `./dist/` => `/var/www/html/` | sync | 12 | 3 | 1988 | 4297523 |",
+		"| `./docs/` => `/var/www/docs/` | clean | 240 | 214 | 0 | 13528269 |",
+		"| **Total** | | **252** | **217** | **1988** | **17825792** |",
+	} {
+		if !strings.Contains(string(summary), want) {
+			t.Errorf("summary does not contain %q:\n%s", want, summary)
+		}
+	}
+}
+
+func TestReportStatsSingleTargetHasNoBreakdown(t *testing.T) {
+	summaryPath := filepath.Join(t.TempDir(), "summary")
+	t.Setenv("GITHUB_OUTPUT", filepath.Join(t.TempDir(), "output"))
+	t.Setenv("GITHUB_STEP_SUMMARY", summaryPath)
+
+	stats := &uploader.Stats{FilesUploaded: 3, BytesUploaded: 2048, Duration: time.Second}
+	reportStats(stats, "uploaded", nil)
+
+	summary, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(summary), "Per-target breakdown") {
+		t.Errorf("expected no per-target breakdown for a single target:\n%s", summary)
+	}
+}
+
 // parseGithubOutput parses the file-based GITHUB_OUTPUT "name<<delimiter"
 // heredoc format into a map, the same way the GitHub Actions runner does.
 func parseGithubOutput(t *testing.T, raw string) map[string]string {
