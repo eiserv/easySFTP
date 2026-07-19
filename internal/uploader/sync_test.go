@@ -409,6 +409,152 @@ func mustOpen(t *testing.T, client *sftp.Client, path string) *sftp.File {
 	return f
 }
 
+// readRemoteManifest fetches and decodes the manifest the server currently
+// holds for /www.
+func readRemoteManifest(t *testing.T, srv *testServer) manifest {
+	t.Helper()
+	data, err := io.ReadAll(mustOpen(t, srv.verifyClient(t), "/www/"+manifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v", err)
+	}
+	return m
+}
+
+// A sync that fails partway through its uploads must persist a recovery
+// manifest recording the files that did upload, so the next run resumes
+// instead of re-uploading them.
+func TestSyncPartialUploadFailureWritesRecoveryManifest(t *testing.T) {
+	fault := &faultyPathCmd{method: "PosixRename", path: "/www/b.txt"}
+	srv := startTestServer(t, withFaultyPath(fault))
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "1", "b.txt": "1"})
+
+	cfg := syncConfig(srv, local)
+	// One worker makes the order deterministic: a.txt completes, b.txt fails.
+	cfg.Concurrency = 1
+
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+
+	writeTree(t, local, map[string]string{"a.txt": "2", "b.txt": "2"})
+	fault.enabled.Store(true)
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err == nil || !strings.Contains(err.Error(), "b.txt") {
+		t.Fatalf("expected the b.txt upload to fail, got %v", err)
+	}
+	if stats.FilesUploaded != 1 {
+		t.Fatalf("partial run uploads: got %d, want 1 (a.txt)", stats.FilesUploaded)
+	}
+
+	hashNew, err := hashFile(filepath.Join(local, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := readRemoteManifest(t, srv)
+	if got := m.Files["a.txt"].Hash; got != hashNew {
+		t.Errorf("recovery manifest a.txt hash = %q, want the new upload's %q", got, hashNew)
+	}
+	if got := m.Files["b.txt"].Hash; got == "" || got == m.Files["a.txt"].Hash {
+		t.Errorf("recovery manifest b.txt entry should keep its old hash, got %q", got)
+	}
+
+	// The fault clears; the retry must resume: only b.txt is re-uploaded.
+	fault.enabled.Store(false)
+	stats, err = Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FilesUploaded != 1 || stats.FilesSkipped != 1 {
+		t.Fatalf("resume run: up=%d skip=%d, want 1/1 (only b.txt re-uploaded)", stats.FilesUploaded, stats.FilesSkipped)
+	}
+	if got := readRemote(t, srv, "/www/b.txt"); got != "2" {
+		t.Errorf("b.txt not updated on resume: %q", got)
+	}
+}
+
+// A sync that fails partway through its deletions must persist a recovery
+// manifest without the files that were actually removed, so the next run does
+// not count phantom deletions.
+func TestSyncPartialDeleteFailureWritesRecoveryManifest(t *testing.T) {
+	fault := &faultyPathCmd{method: "Remove", path: "/www/c.txt"}
+	srv := startTestServer(t, withFaultyPath(fault))
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "a", "b.txt": "b", "c.txt": "c"})
+
+	cfg := syncConfig(srv, local)
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+
+	// b.txt and c.txt disappear locally; deletions run in sorted order, so
+	// b.txt is removed first, then the c.txt removal fails.
+	for _, name := range []string{"b.txt", "c.txt"} {
+		if err := os.Remove(filepath.Join(local, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fault.enabled.Store(true)
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err == nil || !strings.Contains(err.Error(), "c.txt") {
+		t.Fatalf("expected the c.txt deletion to fail, got %v", err)
+	}
+	if stats.FilesDeleted != 1 {
+		t.Fatalf("partial run deletions: got %d, want 1 (b.txt)", stats.FilesDeleted)
+	}
+
+	m := readRemoteManifest(t, srv)
+	if _, ok := m.Files["b.txt"]; ok {
+		t.Error("recovery manifest still lists deleted b.txt")
+	}
+	if _, ok := m.Files["c.txt"]; !ok {
+		t.Error("recovery manifest lost c.txt, which is still on the server")
+	}
+
+	fault.enabled.Store(false)
+	stats, err = Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FilesDeleted != 1 {
+		t.Errorf("resume run deletions: got %d, want 1 (only c.txt)", stats.FilesDeleted)
+	}
+	if remoteExists(t, srv, "/www/c.txt") {
+		t.Error("c.txt still on the server after the resume run")
+	}
+}
+
+// When even the recovery manifest cannot be written (here: every rename
+// fails), the run must fail with the original upload error and only warn
+// about the manifest.
+func TestSyncRecoveryManifestWriteFailureIsNonFatal(t *testing.T) {
+	srv := startTestServer(t, withFailRename())
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "1"})
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	_, err := Run(context.Background(), syncConfig(srv, local), log)
+	if err == nil || !strings.Contains(err.Error(), "a.txt") {
+		t.Fatalf("expected the upload failure to surface, got %v", err)
+	}
+	found := false
+	for _, w := range log.warnings {
+		if strings.Contains(w, "partial progress") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning about the unwritable recovery manifest, got %v", log.warnings)
+	}
+}
+
 func TestSyncDryRunChangesNothing(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()

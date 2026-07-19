@@ -344,7 +344,8 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 	}
 
 	skipUnchanged := cfg.SkipUnchanged && p.strategy == config.StrategyOverlay
-	return uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, stats, verb, watch, skipUnchanged, log)
+	_, err := uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, stats, verb, watch, skipUnchanged, log)
+	return err
 }
 
 // uploadFiles creates the needed remote directories and uploads files in
@@ -352,19 +353,26 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 // skipUnchanged set, a file whose remote counterpart already exists with the
 // same size is skipped instead of uploaded; the stat happens inside the
 // parallel workers so its latency is amortized by the concurrency.
-func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files []fileItem, dirs []string, stats *Stats, verb string, watch *stallWatchdog, skipUnchanged bool, log Logger) error {
+//
+// It returns which files completed, indexed like files, so that on a partial
+// failure the caller knows what actually made it to the server (the sync
+// strategy uses this to persist a recovery manifest).
+func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files []fileItem, dirs []string, stats *Stats, verb string, watch *stallWatchdog, skipUnchanged bool, log Logger) ([]bool, error) {
+	// Declared before the first failure point: callers index the returned
+	// slice by file, so it must be sized even when nothing was uploaded.
+	completed := make([]bool, len(files))
+	skipped := make([]bool, len(files))
+
 	if !cfg.DryRun {
 		client, _ := sess.current()
 		if err := createRemoteDirs(client, dirs, cfg.DirMode, log); err != nil {
-			return err
+			return completed, err
 		}
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(cfg.Concurrency)
 	results := make([]int64, len(files))
-	completed := make([]bool, len(files))
-	skipped := make([]bool, len(files))
 	// modeWarned is only armed when file-mode is an explicit override: a
 	// mirrored local mode (the default) stays silent on failure, as before.
 	var modeWarned *atomic.Bool
@@ -418,7 +426,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 			stats.BytesUploaded += n
 		}
 	}
-	return runErr
+	return completed, runErr
 }
 
 // createRemoteDirs creates every remote directory the plan needs with as few
