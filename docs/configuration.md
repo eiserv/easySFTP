@@ -91,6 +91,13 @@ as failed. Use `if: ${{ always() }}` when a later reporting or rollback step
 must consume these partial results. See [examples](examples.md#using-the-outputs)
 for how to consume outputs in later steps.
 
+When `uploads` (or a `config-file`) defines more than one target, the job
+summary also breaks the totals down per target — local path, remote path,
+strategy, and that target's own uploaded/deleted/skipped/bytes counts — so a
+number that looks off in the totals can be traced to the target that produced
+it. The `files-*`/`bytes-uploaded` outputs stay run-wide totals; there is no
+per-target output.
+
 ## The `uploads` mapping
 
 One mapping per line, `local => remote`. Lines starting with `#` are ignored.
