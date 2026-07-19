@@ -303,8 +303,8 @@ func TestDryRun(t *testing.T) {
 	if stats.FilesUploaded != 2 {
 		t.Errorf("expected 2 planned uploads, got %d", stats.FilesUploaded)
 	}
-	if stats.BytesUploaded != 0 {
-		t.Errorf("dry-run must not transfer bytes, got %d", stats.BytesUploaded)
+	if stats.BytesUploaded != 2 {
+		t.Errorf("expected 2 planned bytes, got %d", stats.BytesUploaded)
 	}
 	if remoteExists(t, srv, "/www") {
 		t.Error("dry-run must not create remote directories")

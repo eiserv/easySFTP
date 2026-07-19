@@ -348,6 +348,9 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 			}
 			log.Infof("%supload %s => %s (%s)", verb, f.localPath, f.remotePath, humanSize(f.size))
 			if cfg.DryRun {
+				// Report the planned byte count so bytes-uploaded matches the
+				// "planned counts" contract of the other dry-run outputs.
+				results[i] = f.size
 				completed[i] = true
 				return nil
 			}
