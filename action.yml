@@ -129,7 +129,7 @@ inputs:
     required: false
     default: "2"
   timeout:
-    description: Connection timeout in seconds.
+    description: Connection timeout in seconds. 0 disables the timeout entirely.
     required: false
     default: "30"
   dir-mode:

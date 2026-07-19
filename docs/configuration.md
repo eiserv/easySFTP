@@ -21,7 +21,7 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 | `private-key` | ¹ | - | SSH private key (OpenSSH/PEM format). **Use a secret.** |
 | `passphrase` | | - | Passphrase of the private key, if encrypted. |
 | `host-key-fingerprint` | | - | Expected SHA256 host key fingerprint(s), one per line (`SHA256:...`). **Strongly recommended**, see [Security](security.md). |
-| `timeout` | | `30` | Connection timeout in seconds. |
+| `timeout` | | `30` | Connection timeout in seconds. `0` disables the timeout entirely. |
 
 ¹ At least one of `password` / `private-key` is required. If both are set, the key is tried first.
 

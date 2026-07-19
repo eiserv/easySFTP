@@ -213,6 +213,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("input 'sftp-request-concurrency' must be at least 1, got %d", c.SftpRequestConcurrency)
 	case c.Retries < 0:
 		return fmt.Errorf("input 'retries' must not be negative, got %d", c.Retries)
+	case c.Timeout < 0:
+		return fmt.Errorf("input 'timeout' must not be negative (use 0 to disable the timeout), got %d", int(c.Timeout/time.Second))
 	case c.Guards.MaxDeletes < 0:
 		return fmt.Errorf("guards.max_deletes must not be negative, got %d", c.Guards.MaxDeletes)
 	}

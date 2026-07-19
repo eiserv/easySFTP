@@ -84,6 +84,7 @@ func TestLoadValidation(t *testing.T) {
 		{"bad sftp-request-concurrency", map[string]string{"EASYSFTP_SFTP_REQUEST_CONCURRENCY": "not-a-number"}, "invalid sftp-request-concurrency"},
 		{"zero sftp-request-concurrency", map[string]string{"EASYSFTP_SFTP_REQUEST_CONCURRENCY": "0"}, "'sftp-request-concurrency' must be at least 1"},
 		{"negative max-deletes", map[string]string{"EASYSFTP_MAX_DELETES": "-1"}, "guards.max_deletes must not be negative"},
+		{"negative timeout", map[string]string{"EASYSFTP_TIMEOUT": "-5"}, "'timeout' must not be negative"},
 		{"bad dir-mode", map[string]string{"EASYSFTP_DIR_MODE": "not-octal"}, "invalid dir-mode"},
 		{"dir-mode out of range", map[string]string{"EASYSFTP_DIR_MODE": "1755"}, "invalid dir-mode"},
 		{"bad file-mode", map[string]string{"EASYSFTP_FILE_MODE": "999"}, "invalid file-mode"},
@@ -99,6 +100,19 @@ func TestLoadValidation(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestLoadZeroTimeoutDisablesTimeout(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("EASYSFTP_TIMEOUT", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Timeout != 0 {
+		t.Errorf("expected timeout 0 (disabled), got %s", cfg.Timeout)
 	}
 }
 
