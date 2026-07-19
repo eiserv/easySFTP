@@ -97,10 +97,10 @@ jobs:
 
       - name: Create test content
         run: |
-          mkdir -p site/assets
-          echo "<h1>easySFTP</h1>" > site/index.html
-          echo "body{}" > site/assets/style.css
-          echo "do not upload" > site/debug.log
+          mkdir -p selftest-site/assets
+          echo "<h1>easySFTP</h1>" > selftest-site/index.html
+          echo "body{}" > selftest-site/assets/style.css
+          echo "do not upload" > selftest-site/debug.log
 
       - name: Dry run
         uses: ./
@@ -111,7 +111,7 @@ jobs:
           username: demo
           password: demopass
           host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
-          uploads: ./site/ => /upload/
+          uploads: ./selftest-site/ => /upload/
           ignore: "*.log"
           dry-run: true
 
@@ -132,7 +132,7 @@ jobs:
           username: demo
           password: demopass
           host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
-          uploads: ./site/ => /upload/
+          uploads: ./selftest-site/ => /upload/
           ignore: "*.log"
 
       - name: Verify upload
@@ -159,7 +159,7 @@ jobs:
           username: demo
           password: demopass
           host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
-          uploads: ./site/ => /upload/
+          uploads: ./selftest-site/ => /upload/
           ignore: "*.log"
           strategy: clean
 
@@ -183,7 +183,7 @@ jobs:
           username: demo
           password: demopass
           host-key-fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-          uploads: ./site/ => /upload/
+          uploads: ./selftest-site/ => /upload/
 
       - name: Assert wrong host key failed
         run: |
