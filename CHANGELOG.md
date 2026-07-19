@@ -5,6 +5,45 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0](https://github.com/eiserv/easySFTP/compare/v1.2.2...v2.0.0) (2026-07-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* the 'delete' input was removed — use 'strategy: clean'.
+
+### Features
+
+* add dir-mode/file-mode inputs for remote permission control ([d542f2f](https://github.com/eiserv/easySFTP/commit/d542f2f535cdc3ee177ad22d65ea4e6d78de1f05))
+* add dir-mode/file-mode inputs for remote permission control ([ab3239d](https://github.com/eiserv/easySFTP/commit/ab3239d62a623cc95353589292203b193c9c17dc)), closes [#48](https://github.com/eiserv/easySFTP/issues/48)
+* add max-deletes input for the delete safety guard ([6ffd531](https://github.com/eiserv/easySFTP/commit/6ffd5315d9d3095a0754a09238536dc3e5326a52))
+* add max-deletes input for the delete safety guard ([46ab007](https://github.com/eiserv/easySFTP/commit/46ab007f6178edd14ff0073cd6e87093a5309b9e)), closes [#49](https://github.com/eiserv/easySFTP/issues/49)
+* add per-target breakdown to the job summary for multi-target deploys ([3e41a47](https://github.com/eiserv/easySFTP/commit/3e41a47526aafacc97f0f1b97c8f296535d010a2))
+* add per-target breakdown to the job summary for multi-target deploys ([ed78340](https://github.com/eiserv/easySFTP/commit/ed78340d4f5c1cedb85763ebb6c109bbb0295586)), closes [#18](https://github.com/eiserv/easySFTP/issues/18)
+* make per-file SFTP request concurrency configurable, lower default to 16 ([992e980](https://github.com/eiserv/easySFTP/commit/992e980634ababf64f2f3888f048e9fb9fe5cbee)), closes [#29](https://github.com/eiserv/easySFTP/issues/29)
+* make SFTP per-file request concurrency configurable, lower default to 16 ([b6b2c35](https://github.com/eiserv/easySFTP/commit/b6b2c35a99a9a13445455251a434501675955d29))
+* remove the 'delete' input in favor of 'strategy: clean' ([52eef32](https://github.com/eiserv/easySFTP/commit/52eef323a79e773df19c7851a1fd3998d07c6860)), closes [#50](https://github.com/eiserv/easySFTP/issues/50)
+* send SSH keepalives to survive idle-timeout firewalls ([5c5f48f](https://github.com/eiserv/easySFTP/commit/5c5f48fbfb10fb07de9e9cd41f9e900d653ea887))
+* send SSH keepalives to survive idle-timeout firewalls ([5232471](https://github.com/eiserv/easySFTP/commit/523247153fab369713804b11cb4ca817084b6ad9)), closes [#13](https://github.com/eiserv/easySFTP/issues/13)
+* **sync:** add opt-in sync-fast-path to skip re-hashing unchanged files ([458b065](https://github.com/eiserv/easySFTP/commit/458b06557dc04d1c864acbd89761ad15bb829890))
+* **sync:** add opt-in sync-fast-path to skip re-hashing unchanged files ([3c66e40](https://github.com/eiserv/easySFTP/commit/3c66e40d75802489a0255a4c6226976a6ea38c23))
+* warn once per target when non-regular files are skipped ([b4e6c0c](https://github.com/eiserv/easySFTP/commit/b4e6c0c368ff4141b6df1d25de34ca5614484a17))
+* warn once per target when non-regular files are skipped ([664a1a0](https://github.com/eiserv/easySFTP/commit/664a1a08160144f8e0b6cfc56af302e3b9f23a1b)), closes [#15](https://github.com/eiserv/easySFTP/issues/15)
+
+
+### Bug Fixes
+
+* **gha:** use file-based heredoc syntax for $GITHUB_OUTPUT ([625ecd5](https://github.com/eiserv/easySFTP/commit/625ecd59ea9d637c9e64d5d94108670a6d77e605))
+* **gha:** use file-based heredoc syntax for $GITHUB_OUTPUT instead of workflow-command escaping ([d706c8a](https://github.com/eiserv/easySFTP/commit/d706c8ae300637ed45233924616f01c4d1a3b8e1)), closes [#46](https://github.com/eiserv/easySFTP/issues/46)
+* make upload temp filenames collision-proof ([6e81dac](https://github.com/eiserv/easySFTP/commit/6e81dac9fc4252e1940964f3a58505c9ffe9d0bb))
+* make upload temp filenames collision-proof ([e7ce65f](https://github.com/eiserv/easySFTP/commit/e7ce65fe21f5d689209e670bd7005ea7a9674ce4)), closes [#42](https://github.com/eiserv/easySFTP/issues/42)
+
+
+### Documentation
+
+* added CLAUDE.md ([0aa2ddf](https://github.com/eiserv/easySFTP/commit/0aa2ddf9a2739a52eaf7749c4d77130ca83277cf))
+* fix grammar in README sync strategy description ([6bf7456](https://github.com/eiserv/easySFTP/commit/6bf7456ae461e48073d4df181410e26b77282d06))
+
 ## [1.2.2](https://github.com/eiserv/easySFTP/compare/v1.2.1...v1.2.2) (2026-07-15)
 
 
