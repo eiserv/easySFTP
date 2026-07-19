@@ -79,6 +79,24 @@ func (r *setstatRecorder) Filecmd(req *sftp.Request) error {
 	return r.inner.Filecmd(req)
 }
 
+func (r *setstatRecorder) PosixRename(req *sftp.Request) error {
+	return posixRenamePassthrough(r.inner, req)
+}
+
+// posixRenamePassthrough forwards posix-rename to the wrapped handler. Every
+// FileCmder wrapper in this file needs a PosixRename method calling this:
+// pkg/sftp only serves posix-rename when the outermost FileCmder implements
+// PosixRenameFileCmder, and otherwise silently downgrades it to plain
+// "Rename", which unlike posix-rename fails when the target exists. Without
+// the passthrough, wrapping the server makes every overwriting rename (e.g. a
+// manifest rewrite) fail with "file already exists".
+func posixRenamePassthrough(inner sftp.FileCmder, req *sftp.Request) error {
+	if pr, ok := inner.(sftp.PosixRenameFileCmder); ok {
+		return pr.PosixRename(req)
+	}
+	return inner.Filecmd(req)
+}
+
 // withSetstatRecorder records chmod requests. It must be given before any
 // fault-injecting option so the recorder observes the request regardless of
 // whether a later wrapper then fails it.
@@ -115,6 +133,10 @@ func (c *opCounter) Filecmd(r *sftp.Request) error {
 		atomic.AddInt64(&c.mkdir, 1)
 	}
 	return c.cmd.Filecmd(r)
+}
+
+func (c *opCounter) PosixRename(r *sftp.Request) error {
+	return posixRenamePassthrough(c.cmd, r)
 }
 
 func (c *opCounter) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
@@ -227,6 +249,10 @@ func (f *faultySetstat) Filecmd(r *sftp.Request) error {
 		return errors.New("injected setstat failure")
 	}
 	return f.inner.Filecmd(r)
+}
+
+func (f *faultySetstat) PosixRename(r *sftp.Request) error {
+	return posixRenamePassthrough(f.inner, r)
 }
 
 // dropConn closes the connection once it has read limit bytes, simulating a

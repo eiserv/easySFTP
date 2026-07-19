@@ -96,7 +96,16 @@ func executeSync(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 		}
 	}
 
-	if err := uploadFiles(ctx, cfg, client, upload, p.remoteDirs, stats, verb, log); err != nil {
+	// Directories are derived from the files actually being uploaded, so an
+	// unchanged (or barely changed) sync pays no directory round-trips for
+	// the untouched parts of the tree. With dir-mode set, the full plan's
+	// directory list is kept instead: dir-mode is documented as applying to
+	// every remote directory the run creates or touches.
+	dirs := dirsForFiles(upload)
+	if cfg.DirMode != nil {
+		dirs = p.remoteDirs
+	}
+	if err := uploadFiles(ctx, cfg, client, upload, dirs, stats, verb, log); err != nil {
 		return err
 	}
 

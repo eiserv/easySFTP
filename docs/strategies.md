@@ -46,6 +46,11 @@ Notes:
 - Directories left empty by deletions are pruned automatically.
 - Local files are hashed in parallel through a worker pool bounded by
   `concurrency`, so planning a large tree uses the available runner CPU.
+- Remote directories are only created (or confirmed) for files actually being
+  uploaded, so a sync with nothing to do costs just the manifest read and
+  rewrite, no per-directory round-trips. Exception: with `dir-mode` set, every
+  directory of the plan is still chmod'd, per its documented "creates or
+  touches" semantics.
 
 ### `sync-fast-path`: skip re-hashing unchanged files
 
