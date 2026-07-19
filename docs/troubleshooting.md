@@ -115,6 +115,15 @@ Symlinks, sockets and other non-regular files are skipped by design. SFTP
 uploads regular file content. If your build output contains symlinks (e.g.
 pnpm's `node_modules`), upload a bundled/dereferenced build instead.
 
+When a target has any non-regular files, the log shows one aggregated
+warning per target (not one per file), e.g.:
+
+```
+::warning::skipped 37 non-regular file(s) (symlinks, sockets, …) under ./dist/: SFTP uploads regular files only
+```
+
+No warning is logged when there is nothing to skip.
+
 ## Strategy questions
 
 ### `sync` did not delete a file I removed locally

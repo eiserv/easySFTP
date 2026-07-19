@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -505,6 +506,48 @@ func TestDefaultModeMirrorsLocalBitsSilentlyOnFailure(t *testing.T) {
 		if strings.Contains(w, "SETSTAT") {
 			t.Errorf("expected no chmod warning when mirroring local mode (no explicit override), got %v", log.warnings)
 		}
+	}
+}
+
+func TestSymlinkSkipWarnsOncePerTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires elevated privileges on Windows")
+	}
+	srv := startTestServer(t)
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "1", "b.txt": "2"})
+	if err := os.Symlink(filepath.Join(local, "a.txt"), filepath.Join(local, "link1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(local, "b.txt"), filepath.Join(local, "link2")); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	stats, err := Run(context.Background(), cfg, log)
+	if err != nil {
+		t.Fatalf("symlinks must be skipped, not fail the run: %v", err)
+	}
+	if stats.FilesUploaded != 2 {
+		t.Errorf("expected the 2 regular files to upload, got %d", stats.FilesUploaded)
+	}
+
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	n := 0
+	for _, w := range log.warnings {
+		if strings.Contains(w, "non-regular") {
+			n++
+			if !strings.Contains(w, "2") {
+				t.Errorf("expected the warning to mention the count of 2, got %q", w)
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("expected exactly 1 non-regular-file warning, got %d: %v", n, log.warnings)
 	}
 }
 
