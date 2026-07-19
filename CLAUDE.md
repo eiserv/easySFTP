@@ -38,6 +38,11 @@ Look at how existing inputs are wired before adding a new one:
    `config-file` — see the check at the top of `config.Load()` — because a
    YAML config file replaces them entirely, and `configfile.go` /
    `schema/easysftp.schema.json` define the per-target equivalents.
+   **Never give these inputs a `default:` in `action.yml`**: the runner
+   exports declared defaults unconditionally, so the mutual-exclusion check
+   sees them as "user-set" and rejects every `config-file` run — that's how
+   #62 shipped in v2.0.0. `TestLoadConfigFileWithActionDefaults`
+   (`internal/config/config_test.go`) guards against reintroducing this.
 2. **Run-wide behavior** (connection, transfer mechanics): `retries`,
    `concurrency`, `sftp-request-concurrency`, `timeout`, `dry-run`,
    `sync-fast-path`, `dir-mode`, `file-mode`. These always come from action

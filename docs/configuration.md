@@ -190,8 +190,8 @@ targets:
 | `targets[].ignore` | | - | Per-target excludes, additive to the global list. |
 
 Unknown keys are rejected with an error (they are never silently ignored), and
-`config-file` cannot be combined with the `uploads`, `strategy`, `ignore` or
-`ignore-from` inputs.
+`config-file` cannot be combined with the `uploads`, `strategy`, `ignore`,
+`ignore-from` or `max-deletes` inputs.
 
 ### Editor support
 

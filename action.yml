@@ -77,11 +77,12 @@ inputs:
   max-deletes:
     description: >-
       Refuse the run if the "sync" or "clean" strategy would delete more than
-      this many remote files. 0 (the default) means unlimited. Only valid
+      this many remote files. Unset or 0 means unlimited. Only valid
       without config-file — with a config file, set "guards.max_deletes"
-      there instead.
+      there instead. Deliberately has no declared default: a default value
+      would always be exported and wrongly trip the config-file
+      mutual-exclusion check.
     required: false
-    default: "0"
   delete:
     description: >-
       Removed in v2 — use "strategy: clean" instead. Still declared so that a

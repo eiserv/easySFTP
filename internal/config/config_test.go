@@ -3,8 +3,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseUploads(t *testing.T) {
@@ -149,6 +152,79 @@ func TestLoadMaxDeletesRejectedWithConfigFile(t *testing.T) {
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "do not also set") {
 		t.Fatalf("expected rejection error, got %v", err)
+	}
+}
+
+// TestLoadConfigFileWithActionDefaults simulates a real composite-action run
+// that only sets connection settings and config-file: every EASYSFTP_* env
+// var wired in action.yml's "Upload via SFTP" step is exported with its
+// declared input default (empty when there is none), exactly as the runner
+// does. Regression test for the max-deletes default "0" tripping the
+// config-file mutual-exclusion check (#62) — and a guard against any future
+// input default reintroducing the same class of bug.
+func TestLoadConfigFileWithActionDefaults(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "action.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var action struct {
+		Inputs map[string]struct {
+			Default string `yaml:"default"`
+		} `yaml:"inputs"`
+		Runs struct {
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Env  map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"runs"`
+	}
+	if err := yaml.Unmarshal(data, &action); err != nil {
+		t.Fatalf("parse action.yml: %v", err)
+	}
+
+	var envBlock map[string]string
+	for _, step := range action.Runs.Steps {
+		if step.Name == "Upload via SFTP" {
+			envBlock = step.Env
+		}
+	}
+	if envBlock == nil {
+		t.Fatal("action.yml has no 'Upload via SFTP' step")
+	}
+
+	inputRef := regexp.MustCompile(`^\$\{\{ inputs\.([a-z-]+) \}\}$`)
+	for name, expr := range envBlock {
+		if !strings.HasPrefix(name, envPrefix) {
+			continue
+		}
+		m := inputRef.FindStringSubmatch(expr)
+		if m == nil {
+			t.Errorf("env %s = %q does not reference an input", name, expr)
+			continue
+		}
+		input, ok := action.Inputs[m[1]]
+		if !ok {
+			t.Fatalf("env %s references undeclared input %q", name, m[1])
+		}
+		t.Setenv(name, input.Default)
+	}
+
+	// What a user's config-file workflow actually sets.
+	t.Setenv("EASYSFTP_SERVER", "sftp.example.com")
+	t.Setenv("EASYSFTP_USERNAME", "deploy")
+	t.Setenv("EASYSFTP_PASSWORD", "hunter2")
+	configFile := filepath.Join(t.TempDir(), "easysftp.yml")
+	if err := os.WriteFile(configFile, []byte("version: 1\ntargets:\n  - local: ./dist/\n    remote: /www/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EASYSFTP_CONFIG_FILE", configFile)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("config-file run with action.yml input defaults was rejected: %v", err)
+	}
+	if len(cfg.Uploads) != 1 || cfg.Uploads[0].Local != "./dist/" {
+		t.Errorf("unexpected uploads from config file: %+v", cfg.Uploads)
 	}
 }
 
