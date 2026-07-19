@@ -114,7 +114,7 @@ func Load() (*Config, error) {
 	if deleted, err := parseBool(get("DELETE"), false); err != nil {
 		return nil, fmt.Errorf("invalid delete: %w", err)
 	} else if deleted {
-		return nil, fmt.Errorf("the 'delete' input was removed in v2 — use 'strategy: clean' instead")
+		return nil, fmt.Errorf("the 'delete' input was removed in v2; use 'strategy: clean' instead")
 	}
 	if cfg.DryRun, err = parseBool(get("DRY_RUN"), false); err != nil {
 		return nil, fmt.Errorf("invalid dry-run: %w", err)
@@ -148,7 +148,7 @@ func Load() (*Config, error) {
 		if strings.TrimSpace(uploadsInput) != "" || strategyInput != "" ||
 			strings.TrimSpace(ignoreInput) != "" || ignoreFrom != "" || maxDeletesInput != "" {
 			return nil, fmt.Errorf("when 'config-file' is set, put targets/strategy/ignore/guards " +
-				"in the file — do not also set the uploads, strategy, ignore, ignore-from or max-deletes inputs")
+				"in the file; do not also set the uploads, strategy, ignore, ignore-from or max-deletes inputs")
 		}
 		if err := loadConfigFile(cfg, configFile); err != nil {
 			return nil, err

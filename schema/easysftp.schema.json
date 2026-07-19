@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/eiserv/easySFTP/main/schema/easysftp.schema.json",
   "title": "easySFTP configuration",
-  "description": "Deployment configuration for the easySFTP GitHub Action. Connection settings (server, credentials, host key) are NOT part of this file — keep those in action inputs / secrets.",
+  "description": "Deployment configuration for the easySFTP GitHub Action. Connection settings (server, credentials, host key) are NOT part of this file; keep those in action inputs / secrets.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "targets"],

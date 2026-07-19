@@ -408,7 +408,7 @@ func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, 
 // leafDirs reduces a directory set to just the deepest members: those that are
 // not the parent of another directory in the set. The plan already lists every
 // ancestor of every file, so calling MkdirAll on the leaves alone still creates
-// the whole tree — but with far fewer calls on deep hierarchies, where each
+// the whole tree, just with far fewer calls on deep hierarchies, where each
 // leaf's parents would otherwise be created and checked one level at a time.
 func leafDirs(dirs []string) []string {
 	hasChild := make(map[string]struct{}, len(dirs))
@@ -456,11 +456,11 @@ func effectiveStrategy(pair config.UploadPair) config.Strategy {
 }
 
 // checkRemoteRoot refuses a destructive strategy whose target resolves to the
-// filesystem root or an unspecific path — the one guard that is always on.
+// filesystem root or an unspecific path: the one guard that is always on.
 func checkRemoteRoot(remote string) error {
 	switch normalizeRemote(remote) {
 	case "/", ".", "", "~":
-		return fmt.Errorf("refusing a destructive strategy on remote root %q — target a specific subdirectory instead", remote)
+		return fmt.Errorf("refusing a destructive strategy on remote root %q; target a specific subdirectory instead", remote)
 	}
 	return nil
 }
@@ -594,7 +594,7 @@ func renameReplace(client *sftp.Client, tmp, final string) error {
 	if !errors.As(err, &se) || se.FxCode() != sftp.ErrSSHFxOpUnsupported {
 		return err
 	}
-	// note: non-atomic fallback — a brief window where final is missing.
+	// note: non-atomic fallback, a brief window where final is missing.
 	// Only reached on servers lacking posix-rename; unavoidable there.
 	_ = client.Remove(final)
 	return client.Rename(tmp, final)
@@ -733,7 +733,7 @@ func authMethods(cfg *config.Config) ([]ssh.AuthMethod, error) {
 
 func hostKeyCallback(cfg *config.Config, log Logger) (ssh.HostKeyCallback, error) {
 	if len(cfg.HostKeyFingerprints) == 0 {
-		log.Warningf("no host-key-fingerprint configured — the server's identity will NOT be verified. " +
+		log.Warningf("no host-key-fingerprint configured; the server's identity will NOT be verified. " +
 			"Run 'ssh-keyscan <server> | ssh-keygen -lf -' and set the host-key-fingerprint input to pin it.")
 		return ssh.InsecureIgnoreHostKey(), nil
 	}

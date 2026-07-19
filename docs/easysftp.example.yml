@@ -4,7 +4,7 @@
 #   config-file: .github/easysftp.yml
 #
 # Connection settings (server, username, password/private-key, host key) stay
-# in the action inputs / GitHub secrets — never put credentials in this file.
+# in the action inputs / GitHub secrets; never put credentials in this file.
 
 version: 1
 

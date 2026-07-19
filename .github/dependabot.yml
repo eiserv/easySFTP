@@ -6,7 +6,7 @@ updates:
     schedule:
       interval: weekly
     commit-message:
-      # Produces "build(deps): ..." — Conventional and hidden from the changelog.
+      # Produces "build(deps): ..."; Conventional and hidden from the changelog.
       prefix: build
     groups:
       go-modules:
@@ -18,7 +18,7 @@ updates:
     schedule:
       interval: weekly
     commit-message:
-      # Produces "ci(deps): ..." — Conventional and hidden from the changelog.
+      # Produces "ci(deps): ..."; Conventional and hidden from the changelog.
       prefix: ci
     groups:
       github-actions:

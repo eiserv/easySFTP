@@ -82,7 +82,7 @@ func executeSync(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 	}
 	sort.Strings(toDelete)
 
-	// note: manifest is trusted — a file changed on the server out of band
+	// note: manifest is trusted; a file changed on the server out of band
 	// is not re-detected until its local content changes. Run clean to reset.
 	log.Infof("%ssync: %d to upload, %d to delete, %d unchanged",
 		verb, len(upload), len(toDelete), len(p.files)-len(upload))
@@ -140,7 +140,7 @@ func readManifest(client *sftp.Client, dir string, log Logger) manifest {
 
 	data, err := io.ReadAll(f)
 	if err != nil {
-		log.Warningf("could not read sync manifest in %s (%v) — treating as first sync", dir, err)
+		log.Warningf("could not read sync manifest in %s (%v); treating as first sync", dir, err)
 		return empty
 	}
 
@@ -161,7 +161,7 @@ func readManifest(client *sftp.Client, dir string, log Logger) manifest {
 		return manifest{Version: v1.Version, Files: files}
 	}
 
-	log.Warningf("sync manifest in %s is unreadable — treating as first sync", dir)
+	log.Warningf("sync manifest in %s is unreadable; treating as first sync", dir)
 	return empty
 }
 

@@ -198,7 +198,7 @@ func TestHashPlanFilesPropagatesError(t *testing.T) {
 }
 
 // When a file's size and mtime still match its manifest entry, hashPlanFiles
-// must reuse the stored hash instead of reading the file — proven here by
+// must reuse the stored hash instead of reading the file; proven here by
 // giving it a wrong-but-matching cached hash and checking it wins.
 func TestHashPlanFilesFastPathReusesCachedHash(t *testing.T) {
 	dir := t.TempDir()
@@ -258,10 +258,10 @@ func TestHashPlanFilesFastPathMissOnMismatch(t *testing.T) {
 }
 
 // A manifest written by an older easySFTP version (v1: hash only, no
-// size/mtime) must still be read correctly — an upgrade re-hashes once, then
+// size/mtime) must still be read correctly; an upgrade re-hashes once, then
 // starts writing v2 manifests with the fast-path fields populated.
 // With sync-fast-path opted in, an unchanged file (same size, same mtime) is
-// skipped without a real re-hash — behavior stays identical to the default,
+// skipped without a real re-hash; behavior stays identical to the default,
 // only the local I/O it takes to get there changes. A changed file with a
 // distinct size and a clearly later mtime is still detected and re-uploaded
 // (size or mtime differing is all the fast path needs).
@@ -299,9 +299,9 @@ func TestSyncFastPathSkipsUnchangedFile(t *testing.T) {
 
 // Documents the known limitation: with sync-fast-path on, a same-size edit
 // that lands within the same mtime second as the file it replaces is
-// invisible to the size+mtime check and is missed — exactly the tradeoff
-// action.yml and docs/strategies.md describe. This is not a "should" test;
-// it pins the documented behavior so a future change to the comparison
+// invisible to the size+mtime check and is missed, which is exactly the
+// tradeoff action.yml and docs/strategies.md describe. This is not a "should"
+// test; it pins the documented behavior so a future change to the comparison
 // doesn't silently alter it either way.
 func TestSyncFastPathMissesSameSecondSameSizeEdit(t *testing.T) {
 	srv := startTestServer(t)
@@ -322,7 +322,7 @@ func TestSyncFastPathMissesSameSecondSameSizeEdit(t *testing.T) {
 	mtime := fi.ModTime()
 
 	// Same size ("1" -> "2"), mtime forced back to exactly what the manifest
-	// already recorded — simulating two same-size edits landing in the same
+	// already recorded, simulating two same-size edits landing in the same
 	// mtime second, which second-granularity filesystem clocks make common.
 	writeTree(t, local, map[string]string{"a.txt": "2"})
 	if err := os.Chtimes(filepath.Join(local, "a.txt"), mtime, mtime); err != nil {

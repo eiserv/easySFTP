@@ -50,7 +50,7 @@ Notes:
 ### `sync-fast-path`: skip re-hashing unchanged files
 
 By default, `sync` re-reads and re-hashes **every** local file on every run to
-decide what changed — that's what makes its "unchanged" comparison exact. For
+decide what changed; that's what makes its "unchanged" comparison exact. For
 a large tree where almost nothing changes, that's still a lot of local I/O.
 
 Setting `sync-fast-path: true` adds a cheaper check first: if a file's size
@@ -59,8 +59,8 @@ time, its stored hash is reused and the file is never re-read. This is the
 same trade rsync's "quick check" makes.
 
 **The trade-off, precisely:** a file whose content changed *without* its size
-or modification time changing is invisible to this check and will be missed
-— for example two edits that happen to produce the same file size within the
+or modification time changing is invisible to this check and will be missed;
+for example, two edits that happen to produce the same file size within the
 same mtime second (mtimes have one-second resolution on most filesystems).
 Without `sync-fast-path`, `sync` never misses a content change, because it
 always compares actual content hashes; this is what you give up in exchange
@@ -68,7 +68,7 @@ for skipping local reads.
 
 **When it actually helps:** local modification times need to be meaningful
 across runs for the check to ever hit. A fresh `actions/checkout` gives every
-file a brand-new modification time on every run — `sync-fast-path` has
+file a brand-new modification time on every run; `sync-fast-path` has
 nothing to skip there and degrades gracefully to full hashing. It pays off
 when the local tree is a restored build cache (`actions/cache`, a persisted
 runner, `git restore-timestamps`, …) whose unchanged files keep their old
