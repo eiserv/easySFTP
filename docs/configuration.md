@@ -81,7 +81,7 @@ release.
 | `files-uploaded` | Number of uploaded files (planned files in dry-run mode). |
 | `files-deleted` | Number of remote files removed by the `clean`/`sync` strategy. |
 | `files-skipped` | Number of unchanged files skipped by the `sync` strategy. |
-| `bytes-uploaded` | Total bytes transferred. |
+| `bytes-uploaded` | Total bytes transferred (planned bytes in dry-run mode). |
 | `duration-ms` | Total runtime in milliseconds. |
 
 A summary table is also written to the job summary of every run. Outputs and
