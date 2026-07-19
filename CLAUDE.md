@@ -4,6 +4,10 @@ Working notes for automated/agentic sessions on this repo. Human-facing docs
 live under `docs/`; this file is about *how to work on the codebase*, not
 what it does.
 
+Style note: avoid em-dashes in anything written here (code comments, error
+messages, docs, PR and issue text). Use a comma, semicolon, colon, or
+parentheses instead. The generated `CHANGELOG.md` is exempt. See issue #79.
+
 ## What this project is (and isn't)
 
 easySFTP is a GitHub Action for SFTP deploys: connect, plan, upload, optional
