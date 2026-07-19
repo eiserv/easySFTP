@@ -62,7 +62,7 @@ inputs:
   strategy:
     description: >-
       Reconciliation strategy for every target: "overlay" (upload only, never
-      delete — the default), "sync" (upload changed files and delete files no
+      delete; the default), "sync" (upload changed files and delete files no
       longer present locally, tracked via a manifest) or "clean" (wipe the
       remote target directory, then upload).
     required: false
@@ -78,14 +78,14 @@ inputs:
     description: >-
       Refuse the run if the "sync" or "clean" strategy would delete more than
       this many remote files. Unset or 0 means unlimited. Only valid
-      without config-file — with a config file, set "guards.max_deletes"
+      without config-file; with a config file, set "guards.max_deletes"
       there instead. Deliberately has no declared default: a default value
       would always be exported and wrongly trip the config-file
       mutual-exclusion check.
     required: false
   delete:
     description: >-
-      Removed in v2 — use "strategy: clean" instead. Still declared so that a
+      Removed in v2; use "strategy: clean" instead. Still declared so that a
       workflow passing it fails loudly rather than silently degrading to the
       "overlay" default. Will be deleted in v3.
     required: false
@@ -117,7 +117,7 @@ inputs:
       modification time still match its last-synced manifest entry, reusing
       the stored hash instead. This is faster on large trees but, like
       rsync's quick check, can miss a same-size edit made within the same
-      second as the previous one — see docs/strategies.md. Off by default,
+      second as the previous one; see docs/strategies.md. Off by default,
       since content-hash comparison is what "sync" advertises. Only helps
       when local modification times are meaningful across runs (e.g. a
       restored build cache); a fresh "actions/checkout" gives every file a

@@ -38,7 +38,7 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 
 ² Required unless `config-file` is set.
 
-> **Removed in v2:** the `delete` input is gone — use `strategy: clean`.
+> **Removed in v2:** the `delete` input is gone; use `strategy: clean`.
 > Passing `delete: true` now fails the run with a migration hint instead of
 > silently falling back to `overlay`. The declaration disappears in v3.
 
@@ -49,7 +49,7 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 | `build-mode` | | `prebuilt` | `prebuilt` downloads the platform-specific release binary and verifies its SHA-256 digest. `source` installs Go and compiles the selected action checkout. |
 | `dry-run` | | `false` | Connect and log what would happen, change nothing. |
 | `concurrency` | | `4` | Number of files uploaded in parallel. Also bounds the worker pool that hashes local files for the `sync` strategy. |
-| `sftp-request-concurrency` | | `16` | Advanced. Maximum in-flight SFTP requests *per file* — pipelining within one file's transfer, independent of `concurrency` (which controls how many files transfer at once). The two multiply: with the defaults, a single large file can have up to 16 requests in flight, and up to `concurrency` files transfer at a time. Lower it for a small or resource-constrained server; raise it for more throughput per file on a fast link to a capable server. |
+| `sftp-request-concurrency` | | `16` | Advanced. Maximum in-flight SFTP requests *per file*: pipelining within one file's transfer, independent of `concurrency` (which controls how many files transfer at once). The two multiply: with the defaults, a single large file can have up to 16 requests in flight, and up to `concurrency` files transfer at a time. Lower it for a small or resource-constrained server; raise it for more throughput per file on a fast link to a capable server. |
 | `sync-fast-path` | | `false` | For the `sync` strategy, reuse a file's manifest hash instead of re-reading it when size and modification time still match. See [the sync-fast-path trade-off](strategies.md#sync-fast-path-skip-re-hashing-unchanged-files). |
 | `retries` | | `2` | Retries per file on transient upload errors (exponential backoff). |
 | `dir-mode` | | - | Octal permission (e.g. `755`) applied to every remote directory the run creates or touches, instead of whatever the server's umask produces. |
@@ -63,7 +63,7 @@ these are useful to force freshly created directories/files to a mode the web
 server can actually read (see [troubleshooting.md](troubleshooting.md)).
 
 Like `retries` or `concurrency`, these are run-wide behavior settings, not
-per-target deployment shape — they apply the same way with or without
+per-target deployment shape; they apply the same way with or without
 `config-file` and have no per-target override.
 
 Prebuilt binaries support Linux, macOS, and Windows on both x64 and arm64
@@ -92,8 +92,8 @@ must consume these partial results. See [examples](examples.md#using-the-outputs
 for how to consume outputs in later steps.
 
 When `uploads` (or a `config-file`) defines more than one target, the job
-summary also breaks the totals down per target — local path, remote path,
-strategy, and that target's own uploaded/deleted/skipped/bytes counts — so a
+summary also breaks the totals down per target (local path, remote path,
+strategy, and that target's own uploaded/deleted/skipped/bytes counts), so a
 number that looks off in the totals can be traced to the target that produced
 it. The `files-*`/`bytes-uploaded` outputs stay run-wide totals; there is no
 per-target output.

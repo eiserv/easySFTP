@@ -39,7 +39,7 @@ connected, easySFTP sends an SSH keepalive every 30 seconds for the rest of
 the run, so idle-looking connections survive NAT gateways/firewalls that
 drop them, and the server's own `ClientAliveInterval` probes get answered.
 This is automatic and not configurable. If transfers still die mid-run, the
-connection itself is being reset (not just idled out) — check for a very
+connection itself is being reset (not just idled out); check for a very
 short server-side session/idle limit, or a flaky network path.
 
 ### `connecting to <host>:22: ssh: handshake failed: ... unable to authenticate`
@@ -89,7 +89,7 @@ uploaded files mirror their local permission bits. On shared hosting where the
 web server runs as a different user than your SFTP account, that default can
 produce directories the web server can't read. Set `dir-mode` (and, if needed,
 `file-mode`) to force a known-good permission, e.g. `dir-mode: "755"` and
-`file-mode: "644"`. Both are best-effort — see [configuration.md](configuration.md#behavior).
+`file-mode: "644"`. Both are best-effort; see [configuration.md](configuration.md#behavior).
 
 ### `replacing "<path>": ...` or leftover `.easysftp-tmp` files
 
@@ -159,7 +159,7 @@ the limit in the config file.
 `config-file` replaces the `uploads`, `strategy`, `ignore` and `ignore-from`
 inputs. Remove them from the step. Connection inputs stay.
 
-### `the 'delete' input was removed in v2 — use 'strategy: clean' instead`
+### `the 'delete' input was removed in v2; use 'strategy: clean' instead`
 
 Replace `delete: true` with `strategy: clean` in your step. The inputs are
 equivalent; `delete` only remains declared so that this error fires instead of

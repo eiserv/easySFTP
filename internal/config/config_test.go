@@ -174,7 +174,7 @@ func TestLoadMaxDeletesRejectedWithConfigFile(t *testing.T) {
 // var wired in action.yml's "Upload via SFTP" step is exported with its
 // declared input default (empty when there is none), exactly as the runner
 // does. Regression test for the max-deletes default "0" tripping the
-// config-file mutual-exclusion check (#62) — and a guard against any future
+// config-file mutual-exclusion check (#62), and a guard against any future
 // input default reintroducing the same class of bug.
 func TestLoadConfigFileWithActionDefaults(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "action.yml"))
