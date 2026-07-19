@@ -38,7 +38,7 @@ type Logger interface {
 type Stats struct {
 	FilesUploaded int
 	FilesDeleted  int
-	FilesSkipped  int // unchanged files skipped by the sync strategy
+	FilesSkipped  int // unchanged files skipped (sync, or overlay with skip-unchanged)
 	BytesUploaded int64
 	Duration      time.Duration
 
@@ -295,6 +295,10 @@ func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	log.Group(fmt.Sprintf("%s => %s [%s] (%d local files)", p.pair.Local, p.pair.Remote, p.strategy, len(p.files)))
 	defer log.EndGroup()
 
+	if cfg.SkipUnchanged && p.strategy != config.StrategyOverlay {
+		log.Warningf("skip-unchanged only applies to the overlay strategy; ignoring it for this %s target", p.strategy)
+	}
+
 	if p.strategy == config.StrategySync {
 		return executeSync(ctx, cfg, sess, p, stats, watch, log)
 	}
@@ -339,12 +343,16 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		}
 	}
 
-	return uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, stats, verb, watch, log)
+	skipUnchanged := cfg.SkipUnchanged && p.strategy == config.StrategyOverlay
+	return uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, stats, verb, watch, skipUnchanged, log)
 }
 
 // uploadFiles creates the needed remote directories and uploads files in
-// parallel (or, in dry-run mode, only logs what it would do).
-func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files []fileItem, dirs []string, stats *Stats, verb string, watch *stallWatchdog, log Logger) error {
+// parallel (or, in dry-run mode, only logs what it would do). With
+// skipUnchanged set, a file whose remote counterpart already exists with the
+// same size is skipped instead of uploaded; the stat happens inside the
+// parallel workers so its latency is amortized by the concurrency.
+func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files []fileItem, dirs []string, stats *Stats, verb string, watch *stallWatchdog, skipUnchanged bool, log Logger) error {
 	if !cfg.DryRun {
 		client, _ := sess.current()
 		if err := createRemoteDirs(client, dirs, cfg.DirMode, log); err != nil {
@@ -356,6 +364,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 	g.SetLimit(cfg.Concurrency)
 	results := make([]int64, len(files))
 	completed := make([]bool, len(files))
+	skipped := make([]bool, len(files))
 	// modeWarned is only armed when file-mode is an explicit override: a
 	// mirrored local mode (the default) stays silent on failure, as before.
 	var modeWarned *atomic.Bool
@@ -367,6 +376,16 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 		g.Go(func() error {
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			// The stat is read-only, so it also runs in dry-run mode: the
+			// preview then reports the same skips the real run would.
+			if skipUnchanged {
+				client, _ := sess.current()
+				if fi, err := client.Stat(f.remotePath); err == nil && fi.Mode().IsRegular() && fi.Size() == f.size {
+					log.Infof("%sskip %s (remote file has the same size)", verb, f.remotePath)
+					skipped[i] = true
+					return nil
+				}
 			}
 			log.Infof("%supload %s => %s (%s)", verb, f.localPath, f.remotePath, humanSize(f.size))
 			if cfg.DryRun {
@@ -391,7 +410,10 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 	}
 	runErr := g.Wait()
 	for i, n := range results {
-		if completed[i] {
+		switch {
+		case skipped[i]:
+			stats.FilesSkipped++
+		case completed[i]:
 			stats.FilesUploaded++
 			stats.BytesUploaded += n
 		}

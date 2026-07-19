@@ -23,6 +23,27 @@ two planned transfers never share a temp name) and renamed over the target
 only once the transfer fully succeeded. A broken connection never leaves a
 half-written file where the live one was.
 
+### `skip-unchanged`: skip same-size files
+
+By default, `overlay` re-uploads **every** file on every deploy. Setting
+`skip-unchanged: true` stats each remote file first and skips the upload when
+the remote file already exists with the same size, which turns a re-deploy of
+a mostly-unchanged tree from "transfer everything" into "one cheap stat per
+unchanged file". Skipped files count into the `files-skipped` output and are
+left completely untouched (no permission change either).
+
+**The trade-off, precisely:** the comparison is size-only. An edit that keeps
+the file size identical is invisible to it and will *not* be uploaded. Remote
+modification times are not compared; without controlling them at upload time
+they mean nothing. If you need exact change detection, use the `sync`
+strategy, whose manifest compares content hashes; `skip-unchanged` is for
+targets where you want cheap incremental behavior *without* easySFTP writing
+any state (like the sync manifest) to the server.
+
+`skip-unchanged` only applies to `overlay` targets. `sync` already skips
+unchanged files exactly, and `clean` wipes the target first, so both ignore
+the input (with a warning).
+
 ## `sync`
 
 Uploads new and changed files, and deletes remote files that a previous sync

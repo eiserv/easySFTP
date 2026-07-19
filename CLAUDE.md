@@ -49,8 +49,8 @@ Look at how existing inputs are wired before adding a new one:
    (`internal/config/config_test.go`) guards against reintroducing this.
 2. **Run-wide behavior** (connection, transfer mechanics): `retries`,
    `concurrency`, `sftp-request-concurrency`, `timeout`, `stall-timeout`,
-   `dry-run`, `sync-fast-path`, `dir-mode`, `file-mode`. These always come
-   from action
+   `dry-run`, `sync-fast-path`, `skip-unchanged`, `dir-mode`, `file-mode`.
+   These always come from action
    inputs, regardless of `config-file`, and have **no** per-target override
    and **no** YAML config-file equivalent. Don't add one unless a concrete
    use case needs per-target granularity; it's easy to add later, hard to

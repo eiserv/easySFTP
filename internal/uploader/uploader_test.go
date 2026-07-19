@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -694,5 +695,115 @@ func TestSendKeepalivesPingsUntilCanceled(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("sendKeepalives did not stop after context cancellation")
+	}
+}
+
+// writeRemoteFiles pre-creates files on the server, so tests can shape the
+// remote side an overlay run will encounter.
+func writeRemoteFiles(t *testing.T, srv *testServer, files map[string]string) {
+	t.Helper()
+	client := srv.verifyClient(t)
+	for name, content := range files {
+		if err := client.MkdirAll(path.Dir(name)); err != nil {
+			t.Fatal(err)
+		}
+		f, err := client.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+}
+
+// With skip-unchanged, overlay skips a file whose remote counterpart has the
+// same size, uploads size mismatches and missing files. The same-size skip
+// deliberately ignores content: that is the documented size-only trade-off.
+func TestOverlaySkipUnchanged(t *testing.T) {
+	srv := startTestServer(t)
+	writeRemoteFiles(t, srv, map[string]string{
+		"/www/same.txt": "AAA",
+		"/www/diff.txt": "AAAA",
+	})
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{
+		"same.txt": "BBB", // same size as remote: skipped
+		"diff.txt": "BB",  // different size: uploaded
+		"new.txt":  "n",   // missing remotely: uploaded
+	})
+
+	cfg := baseConfig(srv)
+	cfg.SkipUnchanged = true
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FilesUploaded != 2 || stats.FilesSkipped != 1 {
+		t.Fatalf("up=%d skip=%d, want 2/1", stats.FilesUploaded, stats.FilesSkipped)
+	}
+	if got := readRemote(t, srv, "/www/same.txt"); got != "AAA" {
+		t.Errorf("same-size file was touched: %q", got)
+	}
+	if got := readRemote(t, srv, "/www/diff.txt"); got != "BB" {
+		t.Errorf("size-changed file not uploaded: %q", got)
+	}
+	if got := readRemote(t, srv, "/www/new.txt"); got != "n" {
+		t.Errorf("new file not uploaded: %q", got)
+	}
+}
+
+// The skip stat is read-only, so dry-run performs it too and previews the
+// same skips the real run would, without changing anything.
+func TestOverlaySkipUnchangedDryRun(t *testing.T) {
+	srv := startTestServer(t)
+	writeRemoteFiles(t, srv, map[string]string{"/www/same.txt": "AAA"})
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"same.txt": "BBB", "new.txt": "n"})
+
+	cfg := baseConfig(srv)
+	cfg.SkipUnchanged = true
+	cfg.DryRun = true
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FilesUploaded != 1 || stats.FilesSkipped != 1 {
+		t.Fatalf("dry-run up=%d skip=%d, want 1/1", stats.FilesUploaded, stats.FilesSkipped)
+	}
+	if remoteExists(t, srv, "/www/new.txt") {
+		t.Error("dry-run must not upload anything")
+	}
+}
+
+// skip-unchanged only applies to overlay; other strategies warn and ignore it.
+func TestSkipUnchangedWarnsOnNonOverlay(t *testing.T) {
+	srv := startTestServer(t)
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "1"})
+
+	cfg := baseConfig(srv)
+	cfg.SkipUnchanged = true
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www", Strategy: config.StrategySync}}
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	if _, err := Run(context.Background(), cfg, log); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range log.warnings {
+		if strings.Contains(w, "skip-unchanged") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning that skip-unchanged is ignored for sync, got %v", log.warnings)
 	}
 }

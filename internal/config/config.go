@@ -86,6 +86,11 @@ type Config struct {
 	// no progress for this long, instead of hanging until the job-level
 	// timeout. 0 (the default) disables the check.
 	StallTimeout time.Duration
+
+	// SkipUnchanged makes the overlay strategy skip a file whose remote
+	// counterpart already exists with the same size (one stat per file).
+	// Deliberately coarse; sync's content hashes are the exact alternative.
+	SkipUnchanged bool
 }
 
 const envPrefix = "EASYSFTP_"
@@ -131,6 +136,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.SyncFastPath, err = parseBool(get("SYNC_FAST_PATH"), false); err != nil {
 		return nil, fmt.Errorf("invalid sync-fast-path: %w", err)
+	}
+	if cfg.SkipUnchanged, err = parseBool(get("SKIP_UNCHANGED"), false); err != nil {
+		return nil, fmt.Errorf("invalid skip-unchanged: %w", err)
 	}
 	if cfg.DirMode, err = parseMode(get("DIR_MODE"), "dir-mode"); err != nil {
 		return nil, err
