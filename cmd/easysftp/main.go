@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/eiserv/easySFTP/internal/config"
 	"github.com/eiserv/easySFTP/internal/gha"
@@ -59,7 +60,7 @@ func run() error {
 	}
 	if runErr == nil {
 		gha.Infof("done: %s %d file(s), %d byte(s), deleted %d file(s), skipped %d unchanged, took %s",
-			mode, stats.FilesUploaded, stats.BytesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.Duration.Round(1e6))
+			mode, stats.FilesUploaded, stats.BytesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.Duration.Round(time.Millisecond))
 	}
 
 	reportStats(stats, mode, runErr)
@@ -116,7 +117,7 @@ func reportStats(stats *uploader.Stats, mode string, runErr error) {
 
 	summary := fmt.Sprintf(
 		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %d |\n| Duration | %s |\n",
-		status, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.BytesUploaded, stats.Duration.Round(1e6))
+		status, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.BytesUploaded, stats.Duration.Round(time.Millisecond))
 	summary += targetBreakdown(stats.Targets)
 	gha.AppendSummary(summary)
 }
