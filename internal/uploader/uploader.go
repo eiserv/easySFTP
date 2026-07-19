@@ -20,6 +20,7 @@ import (
 	"github.com/pkg/sftp"
 	ignore "github.com/sabhiram/go-gitignore"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/eiserv/easySFTP/internal/config"
@@ -741,17 +742,28 @@ func authMethods(cfg *config.Config) ([]ssh.AuthMethod, error) {
 }
 
 func hostKeyCallback(cfg *config.Config, log Logger) (ssh.HostKeyCallback, error) {
-	if len(cfg.HostKeyFingerprints) == 0 {
-		log.Warningf("no host-key-fingerprint configured; the server's identity will NOT be verified. " +
-			"Run 'ssh-keyscan <server> | ssh-keygen -lf -' and set the host-key-fingerprint input to pin it.")
+	want := cfg.HostKeyFingerprints
+	if len(want) == 0 && cfg.KnownHosts == "" {
+		log.Warningf("no host-key-fingerprint or known-hosts configured; the server's identity will NOT be verified. " +
+			"Run 'ssh-keyscan <server>' and set the known-hosts input (or convert with 'ssh-keygen -lf -' " +
+			"and set host-key-fingerprint) to pin it.")
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
-	want := cfg.HostKeyFingerprints
 	for _, fp := range want {
 		if !strings.HasPrefix(fp, "SHA256:") {
 			return nil, fmt.Errorf("host-key-fingerprint must be a SHA256 fingerprint like 'SHA256:...', got %q", fp)
 		}
 	}
+	var khCallback ssh.HostKeyCallback
+	if cfg.KnownHosts != "" {
+		var err error
+		if khCallback, err = knownHostsCallback(cfg.KnownHosts); err != nil {
+			return nil, err
+		}
+	}
+	// A key matching either input is accepted, mirroring how multiple
+	// fingerprints already OR together: users can pin every key their server
+	// presents, in whichever format they have at hand.
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		got := ssh.FingerprintSHA256(key)
 		for _, fp := range want {
@@ -759,8 +771,39 @@ func hostKeyCallback(cfg *config.Config, log Logger) (ssh.HostKeyCallback, error
 				return nil
 			}
 		}
-		return fmt.Errorf("host key mismatch for %s: got %s, want one of: %s", hostname, got, strings.Join(want, ", "))
+		if khCallback != nil && khCallback(hostname, remote, key) == nil {
+			return nil
+		}
+		accepted := append([]string{}, want...)
+		if khCallback != nil {
+			accepted = append(accepted, "the known-hosts entries")
+		}
+		return fmt.Errorf("host key mismatch for %s: got %s, want one of: %s", hostname, got, strings.Join(accepted, ", "))
 	}, nil
+}
+
+// knownHostsCallback builds a host key verifier from raw OpenSSH known_hosts
+// lines (e.g. ssh-keyscan output). x/crypto's knownhosts parser only reads
+// files, so the lines are staged in a temp file that is removed again right
+// after parsing.
+func knownHostsCallback(data string) (ssh.HostKeyCallback, error) {
+	f, err := os.CreateTemp("", "easysftp-known-hosts-*")
+	if err != nil {
+		return nil, fmt.Errorf("staging known-hosts: %w", err)
+	}
+	defer os.Remove(f.Name())
+	_, werr := f.WriteString(data + "\n")
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return nil, fmt.Errorf("staging known-hosts: %w", werr)
+	}
+	cb, err := knownhosts.New(f.Name())
+	if err != nil {
+		return nil, fmt.Errorf("parsing known-hosts: %w", err)
+	}
+	return cb, nil
 }
 
 // normalizeRemote converts a remote path to a clean slash path.

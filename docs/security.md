@@ -5,9 +5,30 @@ How to run easySFTP safely. See also the project's
 
 ## Pin the host key (strongly recommended)
 
-Without `host-key-fingerprint`, easySFTP prints a warning and accepts **any**
-host key. Convenient for a first test, but vulnerable to man-in-the-middle
-attacks. Pin your server's keys once:
+Without `host-key-fingerprint` or `known-hosts`, easySFTP prints a warning
+and accepts **any** host key. Convenient for a first test, but vulnerable to
+man-in-the-middle attacks. Pin your server's keys once, in whichever format
+you already have:
+
+**Option A: `known-hosts`** takes raw OpenSSH `known_hosts` lines, exactly
+what `ssh-keyscan` prints (or the server's lines from your own
+`~/.ssh/known_hosts`), no conversion step:
+
+```console
+$ ssh-keyscan sftp.example.com
+sftp.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
+sftp.example.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNT...
+sftp.example.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQ...
+```
+
+```yaml
+known-hosts: ${{ secrets.SFTP_KNOWN_HOSTS }}
+```
+
+Hashed entries (`|1|...`) and `[host]:port` entries for non-standard ports
+(what `ssh-keyscan -p 2222` prints) work too.
+
+**Option B: `host-key-fingerprint`** takes SHA256 fingerprints, one per line:
 
 ```console
 $ ssh-keyscan sftp.example.com | ssh-keygen -lf -
@@ -16,17 +37,15 @@ $ ssh-keyscan sftp.example.com | ssh-keygen -lf -
 3072 SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s sftp.example.com (RSA)
 ```
 
-Store the `SHA256:...` values as a secret (one per line) and pass them as
-`host-key-fingerprint`. The connection is accepted if the server presents a
-key matching **any** of them, so you can simply pin all of your server's keys:
-
 ```yaml
 host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINTS }}
 ```
 
-If the server's keys ever change unexpectedly, the deploy fails instead of
-talking to an impostor. When you migrate servers, update the secret with the
-new fingerprints.
+Either way, the connection is accepted if the server presents a key matching
+**any** pinned entry (across both inputs, if you set both), so you can simply
+pin all of your server's keys. If the server's keys ever change unexpectedly,
+the deploy fails instead of talking to an impostor. When you migrate servers,
+update the secret with the new keys.
 
 ## Credentials
 

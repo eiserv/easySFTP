@@ -58,6 +58,10 @@ type Config struct {
 	PrivateKey          string
 	Passphrase          string
 	HostKeyFingerprints []string
+	// KnownHosts holds raw OpenSSH known_hosts lines (e.g. ssh-keyscan
+	// output), an alternative to SHA256 fingerprints. When both are set, a
+	// key matching either is accepted.
+	KnownHosts string
 
 	Uploads     []UploadPair
 	IgnoreLines []string
@@ -94,6 +98,7 @@ func Load() (*Config, error) {
 		PrivateKey:          os.Getenv(envPrefix + "PRIVATE_KEY"),
 		Passphrase:          os.Getenv(envPrefix + "PASSPHRASE"),
 		HostKeyFingerprints: splitLines(os.Getenv(envPrefix + "HOST_KEY_FINGERPRINT")),
+		KnownHosts:          strings.TrimSpace(os.Getenv(envPrefix + "KNOWN_HOSTS")),
 	}
 
 	var err error

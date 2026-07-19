@@ -61,7 +61,7 @@ func TestActionMetadata(t *testing.T) {
 
 	wantInputs := []string{
 		"build-mode", "server", "port", "username", "password", "private-key",
-		"passphrase", "host-key-fingerprint", "uploads", "config-file", "strategy",
+		"passphrase", "host-key-fingerprint", "known-hosts", "uploads", "config-file", "strategy",
 		"ignore", "ignore-from", "max-deletes", "delete", "dry-run", "concurrency",
 		"sftp-request-concurrency", "sync-fast-path", "retries", "timeout",
 		"dir-mode", "file-mode",

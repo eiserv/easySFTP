@@ -2,11 +2,15 @@ package uploader
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +18,7 @@ import (
 
 	"github.com/eiserv/easySFTP/internal/config"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // writeTree creates files under root; keys are slash-separated relative paths.
@@ -372,6 +377,93 @@ func TestHostKeyFingerprint(t *testing.T) {
 		_, err := Run(context.Background(), cfg, testLogger{t})
 		if err == nil || !strings.Contains(err.Error(), "SHA256") {
 			t.Fatalf("expected SHA256 format error, got %v", err)
+		}
+	})
+}
+
+func TestKnownHosts(t *testing.T) {
+	srv := startTestServer(t)
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "known"})
+
+	addr := net.JoinHostPort(srv.Host, strconv.Itoa(srv.Port))
+	// What "ssh-keyscan -p <port> <host>" would print for this server.
+	keyscanLine := knownhosts.Line([]string{addr}, srv.HostPubKey)
+
+	run := func(t *testing.T, cfg *config.Config) error {
+		t.Helper()
+		cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/known"}}
+		_, err := Run(context.Background(), cfg, testLogger{t})
+		return err
+	}
+
+	t.Run("matching keyscan line succeeds", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		cfg.KnownHosts = keyscanLine
+		if err := run(t, cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("hashed entry succeeds", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		hashed := knownhosts.HashHostname(knownhosts.Normalize(addr))
+		cfg.KnownHosts = hashed + " " + strings.TrimSpace(string(ssh.MarshalAuthorizedKey(srv.HostPubKey)))
+		if err := run(t, cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("entry for another key fails", func(t *testing.T) {
+		_, otherPriv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherSigner, err := ssh.NewSignerFromKey(otherPriv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := baseConfig(srv)
+		cfg.KnownHosts = knownhosts.Line([]string{addr}, otherSigner.PublicKey())
+		err = run(t, cfg)
+		if err == nil || !strings.Contains(err.Error(), "host key mismatch") {
+			t.Fatalf("expected host key mismatch error, got %v", err)
+		}
+	})
+
+	t.Run("entry for another host fails", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		cfg.KnownHosts = knownhosts.Line([]string{"other.example.com:22"}, srv.HostPubKey)
+		err := run(t, cfg)
+		if err == nil || !strings.Contains(err.Error(), "host key mismatch") {
+			t.Fatalf("expected host key mismatch error, got %v", err)
+		}
+	})
+
+	t.Run("wrong fingerprint plus matching known-hosts succeeds", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		cfg.HostKeyFingerprints = []string{"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+		cfg.KnownHosts = keyscanLine
+		if err := run(t, cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("matching fingerprint plus non-matching known-hosts succeeds", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		cfg.HostKeyFingerprints = []string{srv.HostKeySHA256}
+		cfg.KnownHosts = knownhosts.Line([]string{"other.example.com:22"}, srv.HostPubKey)
+		if err := run(t, cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("garbage known-hosts fails to parse", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		cfg.KnownHosts = "not a known_hosts line"
+		err := run(t, cfg)
+		if err == nil || !strings.Contains(err.Error(), "known-hosts") {
+			t.Fatalf("expected a known-hosts parse error, got %v", err)
 		}
 	})
 }
