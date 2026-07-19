@@ -84,7 +84,7 @@ no-longer-maintained [Dylan700/sftp-upload-action][dylan]:
 
 ```yaml
 - name: Deploy via SFTP
-  uses: eiserv/easySFTP@v1
+  uses: eiserv/easySFTP@v2
   with:
     server: sftp.example.com
     username: ${{ secrets.SFTP_USERNAME }}
@@ -94,6 +94,9 @@ no-longer-maintained [Dylan700/sftp-upload-action][dylan]:
 
 That's it. Everything else is optional. More recipes (key auth, multi-target
 deploys, PR previews, `.sftpignore`) live in [docs/examples.md](docs/examples.md).
+
+Upgrading from v1? The only breaking change is that `delete: true` became
+`strategy: clean`; everything else works unchanged.
 
 ## Inputs & outputs
 
@@ -190,14 +193,14 @@ Vulnerability reports: [SECURITY.md](SECURITY.md)
 easySFTP follows [Semantic Versioning](https://semver.org):
 
 ```yaml
-uses: eiserv/easySFTP@v1        # latest 1.x, recommended, gets fixes & features
-uses: eiserv/easySFTP@v1.2.3    # exact, immutable pin
+uses: eiserv/easySFTP@v2        # latest 2.x, recommended, gets fixes & features
+uses: eiserv/easySFTP@v2.0.0    # exact, immutable pin
 ```
 
-`v1`, `v1.2` and `v1.2.3` use the exact version recorded in
+`v2`, `v2.0` and `v2.0.0` use the exact version recorded in
 `.easysftp-version` and download the corresponding asset only from this
 repository's GitHub Release. The asset's SHA-256 digest is checked against
-`checksums.txt` before it is executed. `v1`/`v1.2` are rolling tags; exact tags
+`checksums.txt` before it is executed. `v2`/`v2.0` are rolling tags; exact tags
 never move.
 
 An exact release-commit SHA is accepted after it is matched against the exact

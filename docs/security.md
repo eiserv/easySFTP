@@ -59,7 +59,7 @@ new fingerprints.
   `eiserv/easySFTP`'s exact GitHub Release, and verifies SHA-256 before
   execution. Release downloads may follow GitHub's HTTPS redirect to its own
   release-asset CDN; no third-party download source is configured.
-- Pin the action to a major tag for convenience (`eiserv/easySFTP@v1`) or to
+- Pin the action to a major tag for convenience (`eiserv/easySFTP@v2`) or to
   the full commit SHA of an exact release. Prebuilt mode verifies that a SHA is
   the commit behind the version file's release tag. For any development SHA,
   explicitly build that checkout from source so a stale release binary can

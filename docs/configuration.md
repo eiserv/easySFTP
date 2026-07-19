@@ -148,7 +148,7 @@ file. Connection settings (server, credentials, host key) always stay in the
 action inputs. **Never put credentials in this file**.
 
 ```yaml
-- uses: eiserv/easySFTP@v1
+- uses: eiserv/easySFTP@v2
   with:
     server: sftp.example.com
     username: ${{ secrets.SFTP_USERNAME }}
