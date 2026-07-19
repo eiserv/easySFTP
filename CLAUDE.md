@@ -73,9 +73,10 @@ Look at how existing inputs are wired before adding a new one:
   - Directory chmod against this fake server always errors (see above);
     that's a fake-server limitation, not a bug in the code under test.
 - Similar fault-injection wrappers exist for rename (`faultyRename`,
-  `withFailRename()`) and connection drops (`withDropAfter`). Follow that
-  pattern (wrap the relevant `Handlers` field, add a `serverOption`) for new
-  fault-injection needs instead of building a new fake server.
+  `withFailRename()`) and connection drops (`withDropAfter`,
+  `withDropFirstConnAfter`). Follow that pattern (wrap the relevant
+  `Handlers` field, add a `serverOption`) for new fault-injection needs
+  instead of building a new fake server.
 - Every `FileCmder` wrapper in `testserver_test.go` must implement
   `PosixRename` (delegate via `posixRenamePassthrough`): pkg/sftp serves
   posix-rename only when the outermost `FileCmder` implements
@@ -83,6 +84,14 @@ Look at how existing inputs are wired before adding a new one:
   fails when the target exists. A wrapper without the method makes every
   overwriting rename (manifest rewrites, re-uploads of existing files) fail
   with "file already exists", far from the wrapper's apparent concern.
+- The in-memory `memFile` implements pkg/sftp's `TransferError` interface:
+  when a connection dies mid-write, the request server stores the transfer
+  error *into the shared file object*, and every later write through that
+  same in-memory file (from any connection) returns the stale error, e.g.
+  `sftp: "error reading packet body: ..."`. Real servers do not behave like
+  this. The production retry path sidesteps it by removing the leftover temp
+  file before a re-attempt, which also matters on real servers (stale
+  handles/locks); keep that in mind before "simplifying" it away.
 - Run `go test -race ./...` before committing; uploads are parallelized
   (`errgroup` + `cfg.Concurrency`), so races are the most likely regression
   class in `internal/uploader`. `-race` needs cgo: on a machine without a C

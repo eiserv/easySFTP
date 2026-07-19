@@ -30,9 +30,11 @@ type testServer struct {
 	listener      net.Listener
 
 	// Fault injection (set via options before the accept loop starts).
-	failRename  bool  // make every rename fail with a non-transient error
-	failSetstat bool  // make every chmod (Setstat) fail
-	dropAfter   int64 // if >0, kill each connection after it reads this many bytes
+	failRename    bool  // make every rename fail with a non-transient error
+	failSetstat   bool  // make every chmod (Setstat) fail
+	dropAfter     int64 // if >0, kill each connection after it reads this many bytes
+	dropFirstOnly bool  // with dropAfter: apply the drop to the first accepted connection only
+	dropped       int32 // whether the first connection was already wrapped
 
 	keepalives *int64 // if set, counts "keepalive@openssh.com" global requests received
 }
@@ -47,6 +49,16 @@ func withFailRename() serverOption { return func(s *testServer) { s.failRename =
 // withDropAfter closes each connection once it has read n bytes from the
 // client, simulating a mid-transfer connection drop.
 func withDropAfter(n int64) serverOption { return func(s *testServer) { s.dropAfter = n } }
+
+// withDropFirstConnAfter kills only the first accepted connection after n
+// bytes; later connections (reconnects) run clean. Simulates a one-off
+// mid-run drop (NAT reset, server restart) that a redial recovers from.
+func withDropFirstConnAfter(n int64) serverOption {
+	return func(s *testServer) {
+		s.dropAfter = n
+		s.dropFirstOnly = true
+	}
+}
 
 // withFailSetstat makes the server reject every chmod (Setstat) request,
 // simulating a server that refuses SETSTAT.
@@ -279,9 +291,13 @@ func (s *testServer) acceptLoop() {
 		if err != nil {
 			return
 		}
-		if s.dropAfter > 0 {
+		wrapped := false
+		if s.dropAfter > 0 &&
+			(!s.dropFirstOnly || atomic.CompareAndSwapInt32(&s.dropped, 0, 1)) {
 			conn = &dropConn{Conn: conn, limit: s.dropAfter}
+			wrapped = true
 		}
+		fmt.Printf("DEBUG accept conn from %v wrapped=%v\n", conn.RemoteAddr(), wrapped)
 		go s.handleConn(conn)
 	}
 }
@@ -320,7 +336,8 @@ func (s *testServer) handleConn(conn net.Conn) {
 				req.Reply(ok, nil)
 				if ok {
 					server := sftp.NewRequestServer(channel, s.handlers)
-					server.Serve()
+					serr := server.Serve()
+					fmt.Printf("DEBUG server.Serve on %v returned: %v\n", conn.RemoteAddr(), serr)
 					server.Close()
 					return
 				}
