@@ -47,7 +47,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("EASYSFTP_PASSWORD", "hunter2")
 	t.Setenv("EASYSFTP_UPLOADS", "./dist/ => /www/")
 	for _, name := range []string{"PORT", "PRIVATE_KEY", "PASSPHRASE", "HOST_KEY_FINGERPRINT", "KNOWN_HOSTS",
-		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "SFTP_REQUEST_CONCURRENCY", "RETRIES", "TIMEOUT",
+		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "SFTP_REQUEST_CONCURRENCY", "RETRIES", "TIMEOUT", "STALL_TIMEOUT",
 		"SYNC_FAST_PATH", "CONFIG_FILE", "STRATEGY", "MAX_DELETES", "DIR_MODE", "FILE_MODE"} {
 		t.Setenv("EASYSFTP_"+name, "")
 	}
@@ -85,6 +85,8 @@ func TestLoadValidation(t *testing.T) {
 		{"zero sftp-request-concurrency", map[string]string{"EASYSFTP_SFTP_REQUEST_CONCURRENCY": "0"}, "'sftp-request-concurrency' must be at least 1"},
 		{"negative max-deletes", map[string]string{"EASYSFTP_MAX_DELETES": "-1"}, "guards.max_deletes must not be negative"},
 		{"negative timeout", map[string]string{"EASYSFTP_TIMEOUT": "-5"}, "'timeout' must not be negative"},
+		{"bad stall-timeout", map[string]string{"EASYSFTP_STALL_TIMEOUT": "soon"}, "invalid stall-timeout"},
+		{"negative stall-timeout", map[string]string{"EASYSFTP_STALL_TIMEOUT": "-5"}, "'stall-timeout' must not be negative"},
 		{"bad dir-mode", map[string]string{"EASYSFTP_DIR_MODE": "not-octal"}, "invalid dir-mode"},
 		{"dir-mode out of range", map[string]string{"EASYSFTP_DIR_MODE": "1755"}, "invalid dir-mode"},
 		{"bad file-mode", map[string]string{"EASYSFTP_FILE_MODE": "999"}, "invalid file-mode"},
