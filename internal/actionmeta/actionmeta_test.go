@@ -3,6 +3,8 @@ package actionmeta_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -23,9 +25,10 @@ type actionInput struct {
 }
 
 type actionStep struct {
-	Name string `yaml:"name"`
-	If   string `yaml:"if"`
-	Uses string `yaml:"uses"`
+	Name string            `yaml:"name"`
+	If   string            `yaml:"if"`
+	Uses string            `yaml:"uses"`
+	Env  map[string]string `yaml:"env"`
 }
 
 func TestActionMetadata(t *testing.T) {
@@ -59,11 +62,38 @@ func TestActionMetadata(t *testing.T) {
 	wantInputs := []string{
 		"build-mode", "server", "port", "username", "password", "private-key",
 		"passphrase", "host-key-fingerprint", "uploads", "config-file", "strategy",
-		"ignore", "ignore-from", "max-deletes", "delete", "dry-run", "concurrency", "retries", "timeout",
+		"ignore", "ignore-from", "max-deletes", "delete", "dry-run", "concurrency",
+		"sftp-request-concurrency", "sync-fast-path", "retries", "timeout",
+		"dir-mode", "file-mode",
 	}
 	for _, name := range wantInputs {
 		if _, ok := action.Inputs[name]; !ok {
 			t.Errorf("input %q is missing", name)
+		}
+	}
+
+	// Structural drift check: every EASYSFTP_* env var wired in the upload
+	// step must map to a declared input and to an entry in wantInputs, so a
+	// future input can't be forgotten in either place again.
+	var uploadStep *actionStep
+	for i, step := range action.Runs.Steps {
+		if step.Name == "Upload via SFTP" {
+			uploadStep = &action.Runs.Steps[i]
+		}
+	}
+	if uploadStep == nil {
+		t.Fatal("step \"Upload via SFTP\" is missing")
+	}
+	for envName := range uploadStep.Env {
+		if !strings.HasPrefix(envName, "EASYSFTP_") {
+			continue
+		}
+		inputName := strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(envName, "EASYSFTP_")), "_", "-")
+		if _, ok := action.Inputs[inputName]; !ok {
+			t.Errorf("env %s is wired but input %q is not declared", envName, inputName)
+		}
+		if !slices.Contains(wantInputs, inputName) {
+			t.Errorf("env %s is wired but input %q is missing from wantInputs", envName, inputName)
 		}
 	}
 	for _, name := range []string{"files-uploaded", "files-deleted", "files-skipped", "bytes-uploaded", "duration-ms"} {
