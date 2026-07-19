@@ -56,10 +56,11 @@ type fileItem struct {
 
 // plan is the complete set of transfers for one upload pair.
 type plan struct {
-	pair       config.UploadPair
-	strategy   config.Strategy
-	files      []fileItem
-	remoteDirs []string // directories to create, sorted parents-first
+	pair              config.UploadPair
+	strategy          config.Strategy
+	files             []fileItem
+	remoteDirs        []string // directories to create, sorted parents-first
+	skippedNonRegular int      // symlinks, sockets, etc. skipped during the walk
 }
 
 // Run executes the configured upload and returns transfer statistics.
@@ -78,6 +79,10 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		p, err := buildPlan(pair, st, matcher)
 		if err != nil {
 			return stats, err
+		}
+		if p.skippedNonRegular > 0 {
+			log.Warningf("skipped %d non-regular file(s) (symlinks, sockets, …) under %s: SFTP uploads regular files only",
+				p.skippedNonRegular, pair.Local)
 		}
 		plans = append(plans, p)
 	}
@@ -169,6 +174,7 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 		}
 		if !fi.Mode().IsRegular() {
 			// Symlinks, sockets etc. are skipped; SFTP uploads regular files.
+			p.skippedNonRegular++
 			return nil
 		}
 		item := fileItem{
