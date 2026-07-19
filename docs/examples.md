@@ -31,7 +31,7 @@ jobs:
       - run: npm ci && npm run build
 
       - name: Deploy via SFTP
-        uses: eiserv/easySFTP@v1
+        uses: eiserv/easySFTP@v2
         with:
           server: sftp.example.com
           username: ${{ secrets.SFTP_USERNAME }}
@@ -48,7 +48,7 @@ only files easySFTP itself uploaded ([manifest-based](strategies.md#sync), so
 user uploads and server-generated files survive):
 
 ```yaml
-- uses: eiserv/easySFTP@v1
+- uses: eiserv/easySFTP@v2
   with:
     server: sftp.example.com
     username: ${{ secrets.SFTP_USERNAME }}
@@ -63,7 +63,7 @@ user uploads and server-generated files survive):
 Different directories, different strategies, one connection:
 
 ```yaml
-- uses: eiserv/easySFTP@v1
+- uses: eiserv/easySFTP@v2
   with:
     server: sftp.example.com
     username: ${{ secrets.SFTP_USERNAME }}
@@ -98,7 +98,7 @@ Full field reference: [configuration.md](configuration.md#the-yaml-config-file).
 Preferred over passwords, see the [security guide](security.md#credentials):
 
 ```yaml
-- uses: eiserv/easySFTP@v1
+- uses: eiserv/easySFTP@v2
   with:
     server: sftp.example.com
     username: ${{ secrets.SFTP_USERNAME }}
@@ -136,7 +136,7 @@ jobs:
       - run: npm ci && npm run build
 
       - name: What would deploy?
-        uses: eiserv/easySFTP@v1
+        uses: eiserv/easySFTP@v2
         with:
           server: sftp.example.com
           username: ${{ secrets.SFTP_USERNAME }}
@@ -154,7 +154,7 @@ Give the step an `id` and read the outputs in later steps:
 ```yaml
 - name: Deploy via SFTP
   id: deploy
-  uses: eiserv/easySFTP@v1
+  uses: eiserv/easySFTP@v2
   with:
     # ...
 
@@ -171,7 +171,7 @@ Give the step an `id` and read the outputs in later steps:
 Keep the exclude list out of the workflow file:
 
 ```yaml
-- uses: eiserv/easySFTP@v1
+- uses: eiserv/easySFTP@v2
   with:
     # ...
     uploads: ./dist/ => /var/www/html/
@@ -197,7 +197,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: eiserv/easySFTP@v1
+      - uses: eiserv/easySFTP@v2
         with:
           server: sftp.example.com
           username: ${{ secrets.SFTP_USERNAME }}

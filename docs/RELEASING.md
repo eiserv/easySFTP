@@ -47,6 +47,11 @@ version tags or releases by hand.
    the exact release commit. A failed build, test, or upload leaves rolling
    tags unchanged. The exact `vX.Y.Z` tag is never moved.
 
+8. After a **major** release, update the pinned tag in every doc snippet: the
+   `uses: eiserv/easySFTP@vX` examples in `README.md`, `docs/examples.md`,
+   `docs/configuration.md`, and `docs/security.md`, plus the README
+   "Versioning" section. They do not update themselves (see issue #63).
+
 ## Stable asset names
 
 ```text
