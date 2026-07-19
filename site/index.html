@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>easySFTP — SFTP deploys for GitHub Actions</title>
+<meta name="description" content="Fast, secure and simple SFTP uploads for GitHub Actions. Three lines of workflow YAML to deploy, with host key pinning, atomic uploads and sync strategies.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-family='monospace' font-size='13' fill='%230e6b5c'>=&gt;</text></svg>">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="./">easysftp<span class="cursor">_</span></a>
+    <nav class="nav-links" aria-label="Site">
+      <a href="docs.html">docs</a>
+      <a href="docs.html#contributing">contributing</a>
+      <a href="https://github.com/eiserv/easySFTP">github &#8599;</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <p class="eyebrow"><span class="key">uses:</span> eiserv/easySFTP@v2</p>
+        <h1>./dist/ <span class="arrow">=&gt;</span> /var/www/html/</h1>
+        <p class="lede">Fast, secure and simple SFTP uploads for GitHub Actions.
+        Deploy your build output to any SFTP server, from a three-line workflow
+        step up to fully configured multi-target deployments.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="docs.html">Read the docs</a>
+          <a class="btn" href="https://github.com/eiserv/easySFTP">View on GitHub</a>
+        </div>
+      </div>
+      <div class="term">
+        <div class="term-head">
+          <span>deploy.yml</span>
+          <button class="copy-btn" type="button" data-copy="quickstart">copy</button>
+        </div>
+<pre id="quickstart"><code><span class="k">- name:</span> Deploy via SFTP
+  <span class="k">uses:</span> <span class="s">eiserv/easySFTP@v2</span>
+  <span class="k">with:</span>
+    <span class="k">server:</span> sftp.example.com
+    <span class="k">username:</span> ${{ secrets.SFTP_USERNAME }}
+    <span class="k">password:</span> ${{ secrets.SFTP_PASSWORD }}
+    <span class="k">uploads:</span> ./dist/ <span class="a">=&gt;</span> /var/www/html/</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <h2 class="section-key">features</h2>
+      <ul class="features">
+        <li>
+          <h3>fast</h3>
+          <p>Release tags run a prebuilt, checksum-verified Go binary; files
+          transfer in parallel with concurrent SFTP write requests per file.
+          No Docker, no runtime to install.</p>
+        </li>
+        <li>
+          <h3>secure</h3>
+          <p>Pin the server's host key so a man-in-the-middle fails the deploy.
+          Atomic per-file uploads never leave half-written files, and
+          credentials are only ever read from environment variables.</p>
+        </li>
+        <li>
+          <h3>simple, but configurable</h3>
+          <p>Sensible defaults for the simple case. Gitignore-style excludes,
+          sync and clean strategies, delete guards, dry runs, retries and
+          structured outputs for the complex ones.</p>
+        </li>
+        <li>
+          <h3>cross-platform</h3>
+          <p>Native amd64 and arm64 binaries for Linux, macOS and Windows
+          runners. The same workflow step works everywhere.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <h2 class="section-key">strategies</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>strategy</th><th>uploads</th><th>deletes</th><th>use for</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>overlay</code></td>
+              <td>all files</td>
+              <td>nothing</td>
+              <td>adding and updating files, leaving everything else in place</td>
+            </tr>
+            <tr>
+              <td><code>sync</code></td>
+              <td>new &amp; changed files</td>
+              <td>files a previous sync uploaded that are now gone locally</td>
+              <td>keeping a directory an exact mirror of your build, safely</td>
+            </tr>
+            <tr>
+              <td><code>clean</code></td>
+              <td>all files</td>
+              <td>everything in the remote target first</td>
+              <td>a guaranteed-fresh deploy</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="aside"><code>sync</code> is manifest-based: it only ever deletes
+      files it uploaded itself and skips unchanged files by content hash.
+      Destructive strategies are protected by
+      <a href="docs.html#strategies/delete-guards">delete guards</a>, and
+      anything can be previewed with <code>dry-run: true</code>.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <h2 class="section-key">docs</h2>
+      <ul class="doc-list">
+        <li><a href="docs.html#configuration">
+          <span class="doc-name">configuration</span>
+          <span class="doc-desc">every input, output, mapping and ignore rule, plus the YAML config file</span>
+        </a></li>
+        <li><a href="docs.html#strategies">
+          <span class="doc-name">strategies</span>
+          <span class="doc-desc">overlay, sync and clean in depth; manifest semantics and delete guards</span>
+        </a></li>
+        <li><a href="docs.html#examples">
+          <span class="doc-name">examples</span>
+          <span class="doc-desc">copy-paste recipes: key auth, multi-target deploys, PR previews, .sftpignore</span>
+        </a></li>
+        <li><a href="docs.html#security">
+          <span class="doc-name">security</span>
+          <span class="doc-desc">host key pinning, credentials, least privilege, supply chain</span>
+        </a></li>
+        <li><a href="docs.html#troubleshooting">
+          <span class="doc-name">troubleshooting</span>
+          <span class="doc-desc">common errors and how to fix them</span>
+        </a></li>
+        <li><a href="docs.html#migrating-v1-to-v2">
+          <span class="doc-name">migrating to v2</span>
+          <span class="doc-desc">one breaking change; here is how to handle it</span>
+        </a></li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <span>MIT license</span>
+    <a href="https://github.com/eiserv/easySFTP">github</a>
+    <a href="https://github.com/eiserv/easySFTP/blob/main/CHANGELOG.md">changelog</a>
+    <span class="spacer"></span>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll("[data-copy]").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var src = document.getElementById(btn.dataset.copy);
+    navigator.clipboard.writeText(src.textContent).then(function () {
+      btn.textContent = "copied";
+      setTimeout(function () { btn.textContent = "copy"; }, 1500);
+    });
+  });
+});
+</script>
+
+</body>
+</html>
