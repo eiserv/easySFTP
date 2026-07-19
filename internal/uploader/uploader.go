@@ -38,7 +38,6 @@ type Stats struct {
 	FilesUploaded int
 	FilesDeleted  int
 	FilesSkipped  int // unchanged files skipped by the sync strategy
-	DirsCreated   int
 	BytesUploaded int64
 	Duration      time.Duration
 
@@ -326,7 +325,7 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, client *sftp
 // parallel (or, in dry-run mode, only logs what it would do).
 func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, files []fileItem, dirs []string, stats *Stats, verb string, log Logger) error {
 	if !cfg.DryRun {
-		if err := createRemoteDirs(client, dirs, cfg.DirMode, stats, log); err != nil {
+		if err := createRemoteDirs(client, dirs, cfg.DirMode, log); err != nil {
 			return err
 		}
 	}
@@ -381,7 +380,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 // treats an already-existing directory as success, so ancestors are never
 // stat'd or created one level at a time. Only when a creation fails does it
 // look closer, to report a path that already exists as a file clearly.
-func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, stats *Stats, log Logger) error {
+func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, log Logger) error {
 	for _, dir := range leafDirs(dirs) {
 		if err := client.MkdirAll(dir); err != nil {
 			if bad := nonDirConflict(client, dir); bad != "" {
@@ -389,7 +388,6 @@ func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, 
 			}
 			return fmt.Errorf("creating remote directory %q: %w", dir, err)
 		}
-		stats.DirsCreated++
 	}
 
 	if dirMode != nil {
