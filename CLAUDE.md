@@ -74,7 +74,9 @@ Look at how existing inputs are wired before adding a new one:
   fault-injection needs instead of building a new fake server.
 - Run `go test -race ./...` before committing; uploads are parallelized
   (`errgroup` + `cfg.Concurrency`), so races are the most likely regression
-  class in `internal/uploader`.
+  class in `internal/uploader`. `-race` needs cgo: on a machine without a C
+  toolchain it fails with "-race requires cgo". In that case run plain
+  `go test ./...`, say so in the PR, and rely on CI for the race pass.
 
 ## Release process
 
@@ -95,9 +97,9 @@ description or in an issue.
   a possible optimization, something you're not confident enough to fix
   right now — file it as a new GitHub issue rather than letting it evaporate
   with the session. Label it `needs-check` if it genuinely needs a human or
-  a future session's closer look before acting (this label did not exist
-  before; GitHub auto-creates labels the first time they're applied via the
-  API, no separate setup needed).
+  a future session's closer look before acting. The label exists in the repo
+  now; note that `gh issue create --label` does *not* auto-create missing
+  labels (it errors), so a new label needs `gh label create` first.
 - Before working an issue, sanity-check it's still current (code may have
   moved on since it was filed). If it's stale/already fixed/no longer
   applicable, close it (with a reason) instead of implementing something
