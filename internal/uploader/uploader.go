@@ -105,23 +105,22 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		plans = append(plans, p)
 	}
 
-	sshClient, sftpClient, err := connect(cfg, log)
+	sess, err := newSession(cfg, log)
 	if err != nil {
 		return stats, err
 	}
-	defer sshClient.Close()
-	defer sftpClient.Close()
+	defer sess.close()
 
 	keepaliveCtx, stopKeepalives := context.WithCancel(ctx)
 	defer stopKeepalives()
-	go sendKeepalives(keepaliveCtx, sshClient, keepaliveInterval)
+	go sendKeepalives(keepaliveCtx, sess.currentSSH, keepaliveInterval)
 
 	for _, p := range plans {
 		if err := ctx.Err(); err != nil {
 			return stats, err
 		}
 		before := *stats
-		err := executePlan(ctx, cfg, sftpClient, p, stats, log)
+		err := executePlan(ctx, cfg, sess, p, stats, log)
 		if len(plans) > 1 {
 			// Recorded from the before/after delta (not threaded through
 			// executePlan) so a target's partial progress on failure is
@@ -283,20 +282,23 @@ func hashPlanFiles(ctx context.Context, files []fileItem, concurrency int, cache
 }
 
 // executePlan performs (or previews) one plan according to its strategy.
-func executePlan(ctx context.Context, cfg *config.Config, client *sftp.Client, p plan, stats *Stats, log Logger) error {
+func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, log Logger) error {
 	log.Group(fmt.Sprintf("%s => %s [%s] (%d local files)", p.pair.Local, p.pair.Remote, p.strategy, len(p.files)))
 	defer log.EndGroup()
 
 	if p.strategy == config.StrategySync {
-		return executeSync(ctx, cfg, client, p, stats, log)
+		return executeSync(ctx, cfg, sess, p, stats, log)
 	}
-	return executeOverlayOrClean(ctx, cfg, client, p, stats, log)
+	return executeOverlayOrClean(ctx, cfg, sess, p, stats, log)
 }
 
 // executeOverlayOrClean uploads the plan, first wiping the remote target when
 // the strategy is clean.
-func executeOverlayOrClean(ctx context.Context, cfg *config.Config, client *sftp.Client, p plan, stats *Stats, log Logger) error {
+func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, log Logger) error {
 	verb := planVerb(cfg)
+	// Non-upload operations (the clean sweep below) use a client snapshot;
+	// only the per-file upload path is reconnect-aware.
+	client, _ := sess.current()
 
 	if p.strategy == config.StrategyClean {
 		base := normalizeRemote(p.pair.Remote)
@@ -328,13 +330,14 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, client *sftp
 		}
 	}
 
-	return uploadFiles(ctx, cfg, client, p.files, p.remoteDirs, stats, verb, log)
+	return uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, stats, verb, log)
 }
 
 // uploadFiles creates the needed remote directories and uploads files in
 // parallel (or, in dry-run mode, only logs what it would do).
-func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, files []fileItem, dirs []string, stats *Stats, verb string, log Logger) error {
+func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files []fileItem, dirs []string, stats *Stats, verb string, log Logger) error {
 	if !cfg.DryRun {
+		client, _ := sess.current()
 		if err := createRemoteDirs(client, dirs, cfg.DirMode, log); err != nil {
 			return err
 		}
@@ -368,7 +371,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, client *sftp.Client, f
 			if cfg.FileMode != nil {
 				mode = *cfg.FileMode
 			}
-			n, err := uploadFileWithRetry(ctx, f, i, mode, client, cfg.Retries, log, modeWarned)
+			n, err := uploadFileWithRetry(ctx, f, i, mode, sess, cfg.Retries, log, modeWarned)
 			if err != nil {
 				return err
 			}
@@ -519,12 +522,14 @@ const tmpSuffix = ".easysftp-tmp"
 // uploadFileWithRetry uploads one file, retrying transient failures with
 // exponential backoff. It stops early when the context is cancelled or the
 // error is permanent (see isRetryable), so a doomed transfer fails fast.
+// When a failure looks connection-class, the session is asked to reconnect
+// first, so the retry runs against a live client instead of the dead one.
 //
 // index is the file's position in the plan and is folded into the temp
 // path (see uploadFile) so two planned transfers never race over the same
 // temporary name, even if one target's path happens to literally be
 // another's plus tmpSuffix.
-func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.FileMode, client *sftp.Client, retries int, log Logger, modeWarned *atomic.Bool) (int64, error) {
+func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.FileMode, sess *session, retries int, log Logger, modeWarned *atomic.Bool) (int64, error) {
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
@@ -534,6 +539,13 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.Fil
 				return 0, err
 			}
 		}
+		client, gen := sess.current()
+		if attempt > 0 {
+			// A previous attempt may have left its temp file behind (a dead
+			// connection cannot run the normal cleanup). Clear it so the
+			// fresh attempt starts from a clean slate; harmless when absent.
+			_ = client.Remove(fmt.Sprintf("%s%s.%d", f.remotePath, tmpSuffix, index))
+		}
 		n, err := uploadFile(ctx, f, index, mode, client, log, modeWarned)
 		if err == nil {
 			return n, nil
@@ -541,6 +553,11 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.Fil
 		lastErr = err
 		if !isRetryable(err) {
 			break
+		}
+		if isConnError(err) && attempt < retries {
+			if _, rerr := sess.reconnect(ctx, gen); rerr != nil {
+				return 0, fmt.Errorf("uploading %q to %q: %w (%v)", f.localPath, f.remotePath, lastErr, rerr)
+			}
 		}
 	}
 	return 0, fmt.Errorf("uploading %q to %q: %w", f.localPath, f.remotePath, lastErr)
@@ -668,9 +685,10 @@ const keepaliveInterval = 30 * time.Second
 // canceled. This keeps long or idle-looking transfers alive across NAT
 // gateways and firewalls that drop idle TCP connections, and answers sshd's
 // own ClientAliveInterval probes so the server doesn't disconnect us first.
-// interval is a parameter (rather than always reading the keepaliveInterval
-// constant) so tests can drive it with a short tick instead of waiting 30s.
-func sendKeepalives(ctx context.Context, client *ssh.Client, interval time.Duration) {
+// client is a getter (not a fixed *ssh.Client) so one loop follows the
+// session across reconnects; interval is a parameter so tests can drive it
+// with a short tick instead of waiting 30s.
+func sendKeepalives(ctx context.Context, client func() *ssh.Client, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -678,7 +696,7 @@ func sendKeepalives(ctx context.Context, client *ssh.Client, interval time.Durat
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			_, _, _ = client.SendRequest("keepalive@openssh.com", true, nil)
+			_, _, _ = client().SendRequest("keepalive@openssh.com", true, nil)
 		}
 	}
 }

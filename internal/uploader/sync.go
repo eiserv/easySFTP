@@ -47,9 +47,12 @@ type manifest struct {
 // manifest: it uploads new/changed files, deletes files that the previous sync
 // wrote but are now gone locally, prunes empty directories and rewrites the
 // manifest. Unchanged files are skipped.
-func executeSync(ctx context.Context, cfg *config.Config, client *sftp.Client, p plan, stats *Stats, log Logger) error {
+func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, log Logger) error {
 	verb := planVerb(cfg)
 	base := normalizeRemote(p.pair.Remote)
+	// Manifest handling and deletions use a client snapshot; only the
+	// per-file upload path is reconnect-aware.
+	client, _ := sess.current()
 
 	old := readManifest(client, base, log)
 
@@ -105,9 +108,13 @@ func executeSync(ctx context.Context, cfg *config.Config, client *sftp.Client, p
 	if cfg.DirMode != nil {
 		dirs = p.remoteDirs
 	}
-	if err := uploadFiles(ctx, cfg, client, upload, dirs, stats, verb, log); err != nil {
+	if err := uploadFiles(ctx, cfg, sess, upload, dirs, stats, verb, log); err != nil {
 		return err
 	}
+
+	// A reconnect during the uploads leaves the snapshot above dead; refresh
+	// it so deletions and the manifest write use the live client.
+	client, _ = sess.current()
 
 	for _, full := range toDelete {
 		log.Infof("%sdelete %s", verb, full)

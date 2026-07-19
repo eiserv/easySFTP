@@ -134,7 +134,11 @@ inputs:
     required: false
     default: "false"
   retries:
-    description: How often a failed file upload is retried (with backoff).
+    description: >-
+      How often a failed file upload is retried (with backoff). Also bounds
+      how often a connection that drops mid-run is redialed; the per-file
+      retry then runs against the fresh connection instead of the dead one.
+      0 disables both.
     required: false
     default: "2"
   timeout:

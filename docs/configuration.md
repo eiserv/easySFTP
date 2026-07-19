@@ -52,7 +52,7 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 | `concurrency` | | `4` | Number of files uploaded in parallel. Also bounds the worker pool that hashes local files for the `sync` strategy. |
 | `sftp-request-concurrency` | | `16` | Advanced. Maximum in-flight SFTP requests *per file*: pipelining within one file's transfer, independent of `concurrency` (which controls how many files transfer at once). The two multiply: with the defaults, a single large file can have up to 16 requests in flight, and up to `concurrency` files transfer at a time. Lower it for a small or resource-constrained server; raise it for more throughput per file on a fast link to a capable server. |
 | `sync-fast-path` | | `false` | For the `sync` strategy, reuse a file's manifest hash instead of re-reading it when size and modification time still match. See [the sync-fast-path trade-off](strategies.md#sync-fast-path-skip-re-hashing-unchanged-files). |
-| `retries` | | `2` | Retries per file on transient upload errors (exponential backoff). |
+| `retries` | | `2` | Retries per file on transient upload errors (exponential backoff). Also bounds how often a connection that drops mid-run is redialed: when an upload fails because the connection died, easySFTP reconnects (up to `retries` times per run) and the per-file retry then runs against the fresh connection. Completed files stay completed. `0` disables both. |
 | `dir-mode` | | - | Octal permission (e.g. `755`) applied to every remote directory the run creates or touches, instead of whatever the server's umask produces. |
 | `file-mode` | | - | Octal permission (e.g. `644`) applied to every uploaded file, instead of mirroring the local file's permission bits. |
 
