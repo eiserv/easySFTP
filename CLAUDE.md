@@ -76,6 +76,13 @@ Look at how existing inputs are wired before adding a new one:
   `withFailRename()`) and connection drops (`withDropAfter`). Follow that
   pattern (wrap the relevant `Handlers` field, add a `serverOption`) for new
   fault-injection needs instead of building a new fake server.
+- Every `FileCmder` wrapper in `testserver_test.go` must implement
+  `PosixRename` (delegate via `posixRenamePassthrough`): pkg/sftp serves
+  posix-rename only when the outermost `FileCmder` implements
+  `PosixRenameFileCmder` and otherwise downgrades it to plain `Rename`, which
+  fails when the target exists. A wrapper without the method makes every
+  overwriting rename (manifest rewrites, re-uploads of existing files) fail
+  with "file already exists", far from the wrapper's apparent concern.
 - Run `go test -race ./...` before committing; uploads are parallelized
   (`errgroup` + `cfg.Concurrency`), so races are the most likely regression
   class in `internal/uploader`. `-race` needs cgo: on a machine without a C

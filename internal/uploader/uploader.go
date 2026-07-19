@@ -186,7 +186,6 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 		return p, nil
 	}
 
-	dirSet := map[string]struct{}{}
 	err = filepath.WalkDir(pair.Local, func(fpath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -220,21 +219,31 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 			mode:       fi.Mode(),
 		}
 		p.files = append(p.files, item)
-		for _, dir := range parentDirs(item.remotePath) {
-			dirSet[dir] = struct{}{}
-		}
 		return nil
 	})
 	if err != nil {
 		return p, fmt.Errorf("walking local path %q: %w", pair.Local, err)
 	}
 
-	for dir := range dirSet {
-		p.remoteDirs = append(p.remoteDirs, dir)
-	}
-	// Parents sort before their children, so creation order is safe.
-	sort.Strings(p.remoteDirs)
+	p.remoteDirs = dirsForFiles(p.files)
 	return p, nil
+}
+
+// dirsForFiles returns the set of ancestor directories of the given files,
+// sorted so parents come before their children (creation order is safe).
+func dirsForFiles(files []fileItem) []string {
+	dirSet := map[string]struct{}{}
+	for _, f := range files {
+		for _, dir := range parentDirs(f.remotePath) {
+			dirSet[dir] = struct{}{}
+		}
+	}
+	dirs := make([]string, 0, len(dirSet))
+	for dir := range dirSet {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	return dirs
 }
 
 // hashPlanFiles fills in each file's sha256 content hash, hashing through a
