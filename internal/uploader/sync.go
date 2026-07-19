@@ -108,7 +108,9 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	if cfg.DirMode != nil {
 		dirs = p.remoteDirs
 	}
-	if err := uploadFiles(ctx, cfg, sess, upload, dirs, stats, verb, watch, log); err != nil {
+	// skip-unchanged is always off here: sync already decided what changed
+	// from the manifest hashes, which is strictly more precise.
+	if err := uploadFiles(ctx, cfg, sess, upload, dirs, stats, verb, watch, false, log); err != nil {
 		return err
 	}
 

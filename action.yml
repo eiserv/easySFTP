@@ -133,6 +133,16 @@ inputs:
       new modification time on every run, so this has no effect there.
     required: false
     default: "false"
+  skip-unchanged:
+    description: >-
+      If "true", the overlay strategy skips uploading a file when the remote
+      file already exists with the same size (one stat per file, performed
+      inside the parallel workers). Cheap but deliberately coarse: an edit
+      that keeps the file size identical is missed; use the sync strategy for
+      exact content-hash comparison. Ignored (with a warning) by the sync and
+      clean strategies.
+    required: false
+    default: "false"
   retries:
     description: >-
       How often a failed file upload is retried (with backoff). Also bounds
@@ -180,7 +190,9 @@ outputs:
     description: Number of remote files deleted by the clean/sync strategy.
     value: ${{ steps.easysftp.outputs.files-deleted }}
   files-skipped:
-    description: Number of unchanged files skipped by the sync strategy.
+    description: >-
+      Number of unchanged files skipped (by the sync strategy, or by overlay
+      with skip-unchanged).
     value: ${{ steps.easysftp.outputs.files-skipped }}
   bytes-uploaded:
     description: Total number of bytes transferred.
@@ -245,6 +257,7 @@ runs:
         EASYSFTP_CONCURRENCY: ${{ inputs.concurrency }}
         EASYSFTP_SFTP_REQUEST_CONCURRENCY: ${{ inputs.sftp-request-concurrency }}
         EASYSFTP_SYNC_FAST_PATH: ${{ inputs.sync-fast-path }}
+        EASYSFTP_SKIP_UNCHANGED: ${{ inputs.skip-unchanged }}
         EASYSFTP_RETRIES: ${{ inputs.retries }}
         EASYSFTP_TIMEOUT: ${{ inputs.timeout }}
         EASYSFTP_STALL_TIMEOUT: ${{ inputs.stall-timeout }}
