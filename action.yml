@@ -46,6 +46,15 @@ inputs:
       not verified. Obtain the fingerprints with:
       ssh-keyscan <server> | ssh-keygen -lf -
     required: false
+  known-hosts:
+    description: >-
+      Expected host key(s) in OpenSSH known_hosts format, e.g. the verbatim
+      output of "ssh-keyscan <server>", or the server's lines from your own
+      ~/.ssh/known_hosts. An alternative to host-key-fingerprint (no
+      ssh-keygen conversion step); if both are set, a key matching either is
+      accepted. Hashed entries and "[host]:port" entries for non-standard
+      ports are supported.
+    required: false
   uploads:
     description: >-
       One "local => remote" mapping per line, e.g. "./dist/ => /var/www/html/".
@@ -208,6 +217,7 @@ runs:
         EASYSFTP_PRIVATE_KEY: ${{ inputs.private-key }}
         EASYSFTP_PASSPHRASE: ${{ inputs.passphrase }}
         EASYSFTP_HOST_KEY_FINGERPRINT: ${{ inputs.host-key-fingerprint }}
+        EASYSFTP_KNOWN_HOSTS: ${{ inputs.known-hosts }}
         EASYSFTP_UPLOADS: ${{ inputs.uploads }}
         EASYSFTP_CONFIG_FILE: ${{ inputs.config-file }}
         EASYSFTP_STRATEGY: ${{ inputs.strategy }}

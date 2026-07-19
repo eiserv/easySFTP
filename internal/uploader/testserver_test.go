@@ -23,6 +23,7 @@ type testServer struct {
 	Host          string
 	Port          int
 	HostKeySHA256 string
+	HostPubKey    ssh.PublicKey
 	ClientKeyPEM  string
 	handlers      sftp.Handlers
 	sshConfig     *ssh.ServerConfig
@@ -180,6 +181,7 @@ func startTestServer(t *testing.T, opts ...serverOption) *testServer {
 	srv := &testServer{
 		Addr:          listener.Addr().String(),
 		HostKeySHA256: ssh.FingerprintSHA256(hostSigner.PublicKey()),
+		HostPubKey:    hostSigner.PublicKey(),
 		ClientKeyPEM:  string(pem.EncodeToMemory(clientPEM)),
 		handlers:      sftp.InMemHandler(),
 		sshConfig:     sshConfig,

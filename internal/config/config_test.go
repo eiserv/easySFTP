@@ -46,7 +46,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("EASYSFTP_USERNAME", "deploy")
 	t.Setenv("EASYSFTP_PASSWORD", "hunter2")
 	t.Setenv("EASYSFTP_UPLOADS", "./dist/ => /www/")
-	for _, name := range []string{"PORT", "PRIVATE_KEY", "PASSPHRASE", "HOST_KEY_FINGERPRINT",
+	for _, name := range []string{"PORT", "PRIVATE_KEY", "PASSPHRASE", "HOST_KEY_FINGERPRINT", "KNOWN_HOSTS",
 		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "SFTP_REQUEST_CONCURRENCY", "RETRIES", "TIMEOUT",
 		"SYNC_FAST_PATH", "CONFIG_FILE", "STRATEGY", "MAX_DELETES", "DIR_MODE", "FILE_MODE"} {
 		t.Setenv("EASYSFTP_"+name, "")
