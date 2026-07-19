@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -35,6 +36,7 @@ type testServer struct {
 	dropAfter     int64 // if >0, kill each connection after it reads this many bytes
 	dropFirstOnly bool  // with dropAfter: apply the drop to the first accepted connection only
 	dropped       int32 // whether the first connection was already wrapped
+	stallAfter    int64 // if >0, stop reading (but stay connected) after this many bytes
 
 	keepalives *int64 // if set, counts "keepalive@openssh.com" global requests received
 }
@@ -59,6 +61,11 @@ func withDropFirstConnAfter(n int64) serverOption {
 		s.dropFirstOnly = true
 	}
 }
+
+// withStallAfter makes each connection stop reading (while staying open) once
+// it has read n bytes from the client, simulating a server that is alive but
+// makes no progress: the SSH transport stays up, but transfers starve.
+func withStallAfter(n int64) serverOption { return func(s *testServer) { s.stallAfter = n } }
 
 // withFailSetstat makes the server reject every chmod (Setstat) request,
 // simulating a server that refuses SETSTAT.
@@ -285,19 +292,50 @@ func (c *dropConn) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// stallConn stops reading (but keeps the connection open) once it has read
+// limit bytes, simulating a server that is alive but stops making progress.
+// A blocked read is released when the connection closes, or after a generous
+// safety timeout so an abandoned server goroutine cannot outlive the test
+// binary for long.
+type stallConn struct {
+	net.Conn
+	limit int64
+	read  int64
+	stall chan struct{}
+	once  sync.Once
+}
+
+func (c *stallConn) Read(p []byte) (int, error) {
+	if atomic.LoadInt64(&c.read) > c.limit {
+		select {
+		case <-c.stall:
+		case <-time.After(30 * time.Second):
+		}
+		return 0, net.ErrClosed
+	}
+	n, err := c.Conn.Read(p)
+	atomic.AddInt64(&c.read, int64(n))
+	return n, err
+}
+
+func (c *stallConn) Close() error {
+	c.once.Do(func() { close(c.stall) })
+	return c.Conn.Close()
+}
+
 func (s *testServer) acceptLoop() {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			return
 		}
-		wrapped := false
 		if s.dropAfter > 0 &&
 			(!s.dropFirstOnly || atomic.CompareAndSwapInt32(&s.dropped, 0, 1)) {
 			conn = &dropConn{Conn: conn, limit: s.dropAfter}
-			wrapped = true
 		}
-		fmt.Printf("DEBUG accept conn from %v wrapped=%v\n", conn.RemoteAddr(), wrapped)
+		if s.stallAfter > 0 {
+			conn = &stallConn{Conn: conn, limit: s.stallAfter, stall: make(chan struct{})}
+		}
 		go s.handleConn(conn)
 	}
 }

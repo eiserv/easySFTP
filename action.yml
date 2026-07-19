@@ -145,6 +145,18 @@ inputs:
     description: Connection timeout in seconds. 0 disables the timeout entirely.
     required: false
     default: "30"
+  stall-timeout:
+    description: >-
+      Abort the run when active file transfers make no progress for this many
+      seconds. 0 (the default) disables the check. Catches servers that
+      accept the connection and then hang mid-transfer (hung storage backend,
+      half-open connection that still answers keepalives), which would
+      otherwise block the job until the job-level timeout, 6 hours by
+      default. On a stall the connection is closed and the run fails with a
+      clear error. Pick a value comfortably above the longest pause a healthy
+      transfer to your server may hit; 60 to 300 is a reasonable range.
+    required: false
+    default: "0"
   dir-mode:
     description: >-
       Octal permission (e.g. "755") applied to every remote directory the run
@@ -235,5 +247,6 @@ runs:
         EASYSFTP_SYNC_FAST_PATH: ${{ inputs.sync-fast-path }}
         EASYSFTP_RETRIES: ${{ inputs.retries }}
         EASYSFTP_TIMEOUT: ${{ inputs.timeout }}
+        EASYSFTP_STALL_TIMEOUT: ${{ inputs.stall-timeout }}
         EASYSFTP_DIR_MODE: ${{ inputs.dir-mode }}
         EASYSFTP_FILE_MODE: ${{ inputs.file-mode }}

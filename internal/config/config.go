@@ -81,6 +81,11 @@ type Config struct {
 	Retries                int
 	Timeout                time.Duration
 	SyncFastPath           bool
+
+	// StallTimeout, if positive, aborts the run when active transfers make
+	// no progress for this long, instead of hanging until the job-level
+	// timeout. 0 (the default) disables the check.
+	StallTimeout time.Duration
 }
 
 const envPrefix = "EASYSFTP_"
@@ -139,6 +144,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid timeout: %w", err)
 	}
 	cfg.Timeout = time.Duration(timeoutSec) * time.Second
+
+	stallSec, err := parseInt(get("STALL_TIMEOUT"), 0)
+	if err != nil {
+		return nil, fmt.Errorf("invalid stall-timeout: %w", err)
+	}
+	cfg.StallTimeout = time.Duration(stallSec) * time.Second
 
 	// The deployment (targets, strategy, ignore, guards) comes either from a
 	// YAML config file or from the plain action inputs, never a mix of both.
@@ -220,6 +231,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("input 'retries' must not be negative, got %d", c.Retries)
 	case c.Timeout < 0:
 		return fmt.Errorf("input 'timeout' must not be negative (use 0 to disable the timeout), got %d", int(c.Timeout/time.Second))
+	case c.StallTimeout < 0:
+		return fmt.Errorf("input 'stall-timeout' must not be negative (use 0 to disable the check), got %d", int(c.StallTimeout/time.Second))
 	case c.Guards.MaxDeletes < 0:
 		return fmt.Errorf("guards.max_deletes must not be negative, got %d", c.Guards.MaxDeletes)
 	}

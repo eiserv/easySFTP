@@ -115,12 +115,18 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	defer stopKeepalives()
 	go sendKeepalives(keepaliveCtx, sess.currentSSH, keepaliveInterval)
 
+	var watch *stallWatchdog
+	if cfg.StallTimeout > 0 {
+		watch = startStallWatchdog(cfg.StallTimeout, func() { sess.currentSSH().Close() }, log)
+		defer watch.stop()
+	}
+
 	for _, p := range plans {
 		if err := ctx.Err(); err != nil {
 			return stats, err
 		}
 		before := *stats
-		err := executePlan(ctx, cfg, sess, p, stats, log)
+		err := executePlan(ctx, cfg, sess, p, stats, watch, log)
 		if len(plans) > 1 {
 			// Recorded from the before/after delta (not threaded through
 			// executePlan) so a target's partial progress on failure is
@@ -137,6 +143,9 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 			})
 		}
 		if err != nil {
+			if watch != nil && watch.fired.Load() {
+				return stats, fmt.Errorf("transfer stalled: no progress for %s, connection closed (stall-timeout): %w", cfg.StallTimeout, err)
+			}
 			return stats, err
 		}
 	}
@@ -282,19 +291,19 @@ func hashPlanFiles(ctx context.Context, files []fileItem, concurrency int, cache
 }
 
 // executePlan performs (or previews) one plan according to its strategy.
-func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, log Logger) error {
+func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, watch *stallWatchdog, log Logger) error {
 	log.Group(fmt.Sprintf("%s => %s [%s] (%d local files)", p.pair.Local, p.pair.Remote, p.strategy, len(p.files)))
 	defer log.EndGroup()
 
 	if p.strategy == config.StrategySync {
-		return executeSync(ctx, cfg, sess, p, stats, log)
+		return executeSync(ctx, cfg, sess, p, stats, watch, log)
 	}
-	return executeOverlayOrClean(ctx, cfg, sess, p, stats, log)
+	return executeOverlayOrClean(ctx, cfg, sess, p, stats, watch, log)
 }
 
 // executeOverlayOrClean uploads the plan, first wiping the remote target when
 // the strategy is clean.
-func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, log Logger) error {
+func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, watch *stallWatchdog, log Logger) error {
 	verb := planVerb(cfg)
 	// Non-upload operations (the clean sweep below) use a client snapshot;
 	// only the per-file upload path is reconnect-aware.
@@ -330,12 +339,12 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		}
 	}
 
-	return uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, stats, verb, log)
+	return uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, stats, verb, watch, log)
 }
 
 // uploadFiles creates the needed remote directories and uploads files in
 // parallel (or, in dry-run mode, only logs what it would do).
-func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files []fileItem, dirs []string, stats *Stats, verb string, log Logger) error {
+func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files []fileItem, dirs []string, stats *Stats, verb string, watch *stallWatchdog, log Logger) error {
 	if !cfg.DryRun {
 		client, _ := sess.current()
 		if err := createRemoteDirs(client, dirs, cfg.DirMode, log); err != nil {
@@ -371,7 +380,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 			if cfg.FileMode != nil {
 				mode = *cfg.FileMode
 			}
-			n, err := uploadFileWithRetry(ctx, f, i, mode, sess, cfg.Retries, log, modeWarned)
+			n, err := uploadFileWithRetry(ctx, f, i, mode, sess, cfg.Retries, watch, log, modeWarned)
 			if err != nil {
 				return err
 			}
@@ -529,7 +538,7 @@ const tmpSuffix = ".easysftp-tmp"
 // path (see uploadFile) so two planned transfers never race over the same
 // temporary name, even if one target's path happens to literally be
 // another's plus tmpSuffix.
-func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.FileMode, sess *session, retries int, log Logger, modeWarned *atomic.Bool) (int64, error) {
+func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.FileMode, sess *session, retries int, watch *stallWatchdog, log Logger, modeWarned *atomic.Bool) (int64, error) {
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
@@ -546,12 +555,19 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.Fil
 			// fresh attempt starts from a clean slate; harmless when absent.
 			_ = client.Remove(fmt.Sprintf("%s%s.%d", f.remotePath, tmpSuffix, index))
 		}
-		n, err := uploadFile(ctx, f, index, mode, client, log, modeWarned)
+		n, err := uploadFile(ctx, f, index, mode, client, watch, log, modeWarned)
 		if err == nil {
 			return n, nil
 		}
 		lastErr = err
 		if !isRetryable(err) {
+			break
+		}
+		// The watchdog closed the connection because the server stopped
+		// making progress. That reads as a connection drop, but redialing
+		// would just stall again with the watchdog already spent, so fail
+		// fast instead: this is exactly what stall-timeout is for.
+		if watch != nil && watch.fired.Load() {
 			break
 		}
 		if isConnError(err) && attempt < retries {
@@ -567,7 +583,14 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.Fil
 // temporary sibling and, only once that fully succeeds, renames it over the
 // target. Any failure removes the temporary file so a broken or partial upload
 // never replaces the live file and no debris is left behind.
-func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, client *sftp.Client, log Logger, modeWarned *atomic.Bool) (int64, error) {
+func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, client *sftp.Client, watch *stallWatchdog, log Logger, modeWarned *atomic.Bool) (int64, error) {
+	// Active per attempt (not around the whole retry loop) so retry backoff
+	// sleeps do not count as transfer silence.
+	if watch != nil {
+		watch.begin()
+		defer watch.end()
+	}
+
 	src, err := os.Open(f.localPath)
 	if err != nil {
 		return 0, err
@@ -585,7 +608,11 @@ func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, cl
 
 	// ctxReader aborts the copy promptly when the deployment is cancelled,
 	// instead of streaming a whole large file first.
-	n, err := io.Copy(dst, &ctxReader{ctx: ctx, r: src})
+	var reader io.Reader = &ctxReader{ctx: ctx, r: src}
+	if watch != nil {
+		reader = watch.reader(reader)
+	}
+	n, err := io.Copy(dst, reader)
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}

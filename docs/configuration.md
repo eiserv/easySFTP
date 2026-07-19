@@ -22,7 +22,8 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 | `passphrase` | | - | Passphrase of the private key, if encrypted. |
 | `host-key-fingerprint` | | - | Expected SHA256 host key fingerprint(s), one per line (`SHA256:...`). **Strongly recommended**, see [Security](security.md). |
 | `known-hosts` | | - | Expected host key(s) in OpenSSH `known_hosts` format (verbatim `ssh-keyscan` output). Alternative to `host-key-fingerprint`; a key matching either is accepted. Hashed entries and `[host]:port` lines are supported. See [Security](security.md). |
-| `timeout` | | `30` | Connection timeout in seconds. `0` disables the timeout entirely. |
+| `timeout` | | `30` | Connection timeout in seconds. `0` disables the timeout entirely. Covers the dial and SSH handshake only; for hangs after that, see `stall-timeout`. |
+| `stall-timeout` | | `0` (off) | Abort the run when active file transfers make no progress for this many seconds. Catches servers that accept the connection and then hang mid-transfer, which would otherwise block the job until the job-level timeout (6 hours by default). On a stall the connection is closed and the run fails with a clear error. Pick a value comfortably above the longest pause a healthy transfer to your server may hit; 60 to 300 is a reasonable range. |
 
 ¹ At least one of `password` / `private-key` is required. If both are set, the key is tried first.
 
