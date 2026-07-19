@@ -276,6 +276,49 @@ func (f *faultySetstat) PosixRename(r *sftp.Request) error {
 	return posixRenamePassthrough(f.inner, r)
 }
 
+// faultyPathCmd fails one SFTP method on one exact path while enabled,
+// delegating everything else to the real in-memory handler. Tests toggle
+// enabled between runs to simulate a fault that later clears.
+type faultyPathCmd struct {
+	inner   sftp.FileCmder
+	method  string // e.g. "PosixRename", "Remove"
+	path    string // the request Target for renames, the Filepath otherwise
+	enabled atomic.Bool
+}
+
+// withFaultyPath installs f as the FileCmd handler (wrapping the real one).
+func withFaultyPath(f *faultyPathCmd) serverOption {
+	return func(s *testServer) {
+		f.inner = s.handlers.FileCmd
+		s.handlers.FileCmd = f
+	}
+}
+
+func (f *faultyPathCmd) match(method, path string) bool {
+	return f.enabled.Load() && method == f.method && path == f.path
+}
+
+func (f *faultyPathCmd) Filecmd(r *sftp.Request) error {
+	p := r.Filepath
+	if r.Method == "Rename" || r.Method == "PosixRename" {
+		p = r.Target
+	}
+	if f.match(r.Method, p) {
+		return fmt.Errorf("injected %s failure on %s", f.method, f.path)
+	}
+	return f.inner.Filecmd(r)
+}
+
+// PosixRename must be forwarded explicitly: pkg/sftp only serves posix-rename
+// when the outermost FileCmder implements PosixRenameFileCmder, and otherwise
+// downgrades it to plain Rename, which fails whenever the target exists.
+func (f *faultyPathCmd) PosixRename(r *sftp.Request) error {
+	if f.match("PosixRename", r.Target) {
+		return fmt.Errorf("injected %s failure on %s", f.method, f.path)
+	}
+	return posixRenamePassthrough(f.inner, r)
+}
+
 // dropConn closes the connection once it has read limit bytes, simulating a
 // network drop partway through a transfer.
 type dropConn struct {

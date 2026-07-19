@@ -77,10 +77,10 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		}
 	}
 
-	var toDelete []string
+	var toDelete []string // paths relative to base, ascending
 	for rel := range old.Files {
 		if _, ok := local[rel]; !ok {
-			toDelete = append(toDelete, path.Join(base, rel))
+			toDelete = append(toDelete, rel)
 		}
 	}
 	sort.Strings(toDelete)
@@ -110,22 +110,30 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	}
 	// skip-unchanged is always off here: sync already decided what changed
 	// from the manifest hashes, which is strictly more precise.
-	if err := uploadFiles(ctx, cfg, sess, upload, dirs, stats, verb, watch, false, log); err != nil {
+	completed, err := uploadFiles(ctx, cfg, sess, upload, dirs, stats, verb, watch, false, log)
+
+	// A reconnect during the uploads leaves the snapshot above dead; refresh
+	// it before anything else touches the server, so the recovery manifest
+	// below (and the deletions after it) use the live client.
+	client, _ = sess.current()
+
+	if err != nil {
+		writeRecoveryManifest(cfg, client, base, mergedManifest(old, upload, completed, nil), log)
 		return err
 	}
 
-	// A reconnect during the uploads leaves the snapshot above dead; refresh
-	// it so deletions and the manifest write use the live client.
-	client, _ = sess.current()
-
-	for _, full := range toDelete {
+	var deleted []string // relative paths actually removed, for the recovery manifest
+	for _, rel := range toDelete {
+		full := path.Join(base, rel)
 		log.Infof("%sdelete %s", verb, full)
 		if !cfg.DryRun {
 			if err := client.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+				writeRecoveryManifest(cfg, client, base, mergedManifest(old, upload, completed, deleted), log)
 				return fmt.Errorf("deleting %q: %w", full, err)
 			}
 		}
 		stats.FilesDeleted++
+		deleted = append(deleted, rel)
 	}
 	stats.FilesSkipped += len(p.files) - len(upload)
 
@@ -133,11 +141,50 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		return nil
 	}
 
-	pruneEmptyDirs(client, base, toDelete)
+	deletedFull := make([]string, len(deleted))
+	for i, rel := range deleted {
+		deletedFull[i] = path.Join(base, rel)
+	}
+	pruneEmptyDirs(client, base, deletedFull)
 	if err := writeManifest(client, base, manifest{Version: manifestVersion, Files: local}); err != nil {
 		return fmt.Errorf("writing sync manifest in %q: %w", base, err)
 	}
 	return nil
+}
+
+// mergedManifest builds the manifest a partially failed run leaves behind:
+// files that did upload get their new entry, files that were actually deleted
+// drop out, and everything else keeps its old entry, so the manifest keeps
+// matching what is really on the server.
+func mergedManifest(old manifest, upload []fileItem, completed []bool, deleted []string) manifest {
+	files := make(map[string]manifestEntry, len(old.Files))
+	for rel, e := range old.Files {
+		files[rel] = e
+	}
+	for i, f := range upload {
+		if completed[i] {
+			files[f.rel] = manifestEntry{Hash: f.hash, Size: f.size, MTime: f.mtime}
+		}
+	}
+	for _, rel := range deleted {
+		delete(files, rel)
+	}
+	return manifest{Version: manifestVersion, Files: files}
+}
+
+// writeRecoveryManifest best-effort persists the merged manifest of a failing
+// run, so a retry resumes from the files that did make it instead of
+// re-uploading them. The run is already failing; a manifest write error here
+// is logged, not returned.
+func writeRecoveryManifest(cfg *config.Config, client *sftp.Client, base string, m manifest, log Logger) {
+	if cfg.DryRun {
+		return
+	}
+	if err := writeManifest(client, base, m); err != nil {
+		log.Warningf("could not record partial progress in the sync manifest in %s (a retry will re-upload this run's completed files): %v", base, err)
+		return
+	}
+	log.Infof("recorded partial progress in the sync manifest in %s: a retry will resume from there", base)
 }
 
 // readManifest loads the remote manifest. A missing manifest means a first

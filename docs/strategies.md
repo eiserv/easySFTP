@@ -65,6 +65,9 @@ Notes:
 - The manifest trusts itself: a file changed *on the server* out of band is not
   re-detected until its local content changes. Run `clean` once to reset.
 - Directories left empty by deletions are pruned automatically.
+- A run that fails partway still records what it actually changed in the
+  manifest (best effort), so a retried deploy resumes where it left off
+  instead of re-uploading files that already made it.
 - Local files are hashed in parallel through a worker pool bounded by
   `concurrency`, so planning a large tree uses the available runner CPU.
 - Remote directories are only created (or confirmed) for files actually being
