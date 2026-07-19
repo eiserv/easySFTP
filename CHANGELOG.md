@@ -5,6 +5,23 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1](https://github.com/eiserv/easySFTP/compare/v2.0.0...v2.0.1) (2026-07-19)
+
+
+### Bug Fixes
+
+* drop the unused and miscounting Stats.DirsCreated field ([#76](https://github.com/eiserv/easySFTP/issues/76)) ([39e8239](https://github.com/eiserv/easySFTP/commit/39e8239d89f8b6810e1780c35cec744345f6ffe4))
+* reject negative timeout, document 0 as no-timeout escape hatch ([#74](https://github.com/eiserv/easySFTP/issues/74)) ([c318fb9](https://github.com/eiserv/easySFTP/commit/c318fb90821a887bbf3f7631287c39a590ee7857))
+* report planned bytes in dry-run instead of always 0 ([#75](https://github.com/eiserv/easySFTP/issues/75)) ([74b00f0](https://github.com/eiserv/easySFTP/commit/74b00f0d8c0426fe3c03359c0d0ab8f2b5cef554))
+* stop rejecting config-file runs over the max-deletes input default ([e7345a4](https://github.com/eiserv/easySFTP/commit/e7345a4925951c617da776b95de943a7875ae874))
+* stop rejecting config-file runs over the max-deletes input default ([781426b](https://github.com/eiserv/easySFTP/commit/781426bcfc8ab9b229e6cead77a26dcc48d74ff4)), closes [#62](https://github.com/eiserv/easySFTP/issues/62)
+
+
+### Documentation
+
+* add missing punctuation in troubleshooting auth section ([#78](https://github.com/eiserv/easySFTP/issues/78)) ([eaead21](https://github.com/eiserv/easySFTP/commit/eaead21a95462cd4512e7cb50ee12f0537956135))
+* recommend [@v2](https://github.com/v2) in README and doc snippets ([#81](https://github.com/eiserv/easySFTP/issues/81)) ([b0919a8](https://github.com/eiserv/easySFTP/commit/b0919a808296a98f1ea1eeefa01f3fc467e98aea))
+
 ## [2.0.0](https://github.com/eiserv/easySFTP/compare/v1.2.2...v2.0.0) (2026-07-19)
 
 
