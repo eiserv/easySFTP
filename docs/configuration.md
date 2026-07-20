@@ -53,7 +53,10 @@ Host key verification applies to **each hop independently**: pinning the
 target but not the jump host (or vice versa) prints the unverified-host-key
 warning for the open hop. The `timeout` input covers each hop's dial. The
 `retries` reconnect logic re-establishes the whole chain (jump host and
-tunnel) when the connection drops mid-run.
+tunnel) when the connection drops mid-run, and the initial-connection retry
+covers either hop: a transient failure reaching the bastion is retried just
+like one reaching the target, while a host key mismatch or an authentication
+failure on either hop fails immediately.
 
 ```yaml
 - uses: eiserv/easySFTP@v2
