@@ -169,10 +169,12 @@ inputs:
     default: "false"
   retries:
     description: >-
-      How often a failed file upload is retried (with backoff). Also bounds
-      how often a connection that drops mid-run is redialed; the per-file
-      retry then runs against the fresh connection instead of the dead one.
-      0 disables both.
+      How often a failed file upload is retried (with backoff). Also covers
+      the initial connection (a transient dial failure is retried with the
+      same backoff; host key mismatches and authentication failures are not)
+      and bounds how often a connection that drops mid-run is redialed; the
+      per-file retry then runs against the fresh connection instead of the
+      dead one. 0 disables all of these.
     required: false
     default: "2"
   timeout:
