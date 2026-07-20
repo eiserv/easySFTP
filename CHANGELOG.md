@@ -5,6 +5,27 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0](https://github.com/eiserv/easySFTP/compare/v2.1.0...v2.2.0) (2026-07-20)
+
+
+### Features
+
+* **connect:** retry the initial connection with backoff ([#94](https://github.com/eiserv/easySFTP/issues/94)) ([7f6e12a](https://github.com/eiserv/easySFTP/commit/7f6e12a4d6b95bd01aa0a6a5895ab9d88cae5dff)), closes [#12](https://github.com/eiserv/easySFTP/issues/12)
+* **connect:** support connecting through a jump host (ProxyJump) ([#99](https://github.com/eiserv/easySFTP/issues/99)) ([06ce063](https://github.com/eiserv/easySFTP/commit/06ce06368623f045e743eb0a907769a5ebb6cdaa))
+* **log:** add a log-level input (quiet/normal/verbose) ([#96](https://github.com/eiserv/easySFTP/issues/96)) ([8972a4c](https://github.com/eiserv/easySFTP/commit/8972a4ce084428f07f60e3b364ccd11623385e15)), closes [#17](https://github.com/eiserv/easySFTP/issues/17)
+* **sync:** document the public manifest and add a manifest-name input ([#97](https://github.com/eiserv/easySFTP/issues/97)) ([e5f880c](https://github.com/eiserv/easySFTP/commit/e5f880ce3a9004219274382e12216e98a12bf498)), closes [#44](https://github.com/eiserv/easySFTP/issues/44)
+* **upload:** optional preserve-times keeps local mtimes on uploaded files ([#95](https://github.com/eiserv/easySFTP/issues/95)) ([3b5c903](https://github.com/eiserv/easySFTP/commit/3b5c903460f24e7e0d520a50904c7ad0559a2b59)), closes [#19](https://github.com/eiserv/easySFTP/issues/19)
+
+
+### Bug Fixes
+
+* deleted "written in go" to get under 125 chars ([21777bb](https://github.com/eiserv/easySFTP/commit/21777bb074950c83c71bb094dec4313542274b84))
+
+
+### Performance
+
+* **plan:** prune ignored directories during the local walk ([#93](https://github.com/eiserv/easySFTP/issues/93)) ([3bb45ac](https://github.com/eiserv/easySFTP/commit/3bb45acaf0643cb09fecc1592519d2488d2fab80)), closes [#9](https://github.com/eiserv/easySFTP/issues/9)
+
 ## [2.1.0](https://github.com/eiserv/easySFTP/compare/v2.0.1...v2.1.0) (2026-07-19)
 
 
