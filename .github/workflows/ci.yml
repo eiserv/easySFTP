@@ -172,6 +172,100 @@ jobs:
           docker exec sftp test -f /home/demo/upload/index.html
           [ "${{ steps.clean-upload.outputs.files-deleted }}" -ge 1 ]
 
+      # config-file end-to-end: unit tests set EASYSFTP_* variables directly
+      # and never see action.yml's declared defaults; only a real composite
+      # run does. This is how #62 (a declared default tripping the config-file
+      # mutual-exclusion check) shipped despite green CI.
+      - name: Create config-file deployment
+        run: |
+          mkdir -p selftest-docs
+          echo "# docs" > selftest-docs/readme.md
+          cat > selftest-config.yml <<'EOF'
+          version: 1
+          ignore:
+            - "*.log"
+          targets:
+            - local: ./selftest-site/
+              remote: /upload/cfg-site/
+            - local: ./selftest-docs/
+              remote: /upload/cfg-docs/
+              strategy: clean
+          EOF
+
+      - name: Deploy via config-file
+        id: cfgfile
+        uses: ./
+        with:
+          build-mode: source
+          server: localhost
+          port: 2222
+          username: demo
+          password: demopass
+          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
+          config-file: selftest-config.yml
+
+      - name: Verify config-file deploy
+        run: |
+          docker exec sftp test -f /home/demo/upload/cfg-site/index.html
+          docker exec sftp test -f /home/demo/upload/cfg-site/assets/style.css
+          docker exec sftp test -f /home/demo/upload/cfg-docs/readme.md
+          if docker exec sftp test -e /home/demo/upload/cfg-site/debug.log; then
+            echo "::error::config-file global ignore was not applied"
+            exit 1
+          fi
+          [ "${{ steps.cfgfile.outputs.files-uploaded }}" = "3" ]
+
+      # sync round-trip against a real OpenSSH server: manifest written,
+      # read back on the next run, deletions tracked, unchanged files skipped.
+      - name: Sync (first run)
+        id: sync1
+        uses: ./
+        with:
+          build-mode: source
+          server: localhost
+          port: 2222
+          username: demo
+          password: demopass
+          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
+          uploads: ./selftest-site/ => /upload/sync/
+          ignore: "*.log"
+          strategy: sync
+
+      - name: Verify first sync wrote the manifest
+        run: |
+          docker exec sftp test -f /home/demo/upload/sync/index.html
+          docker exec sftp test -f /home/demo/upload/sync/assets/style.css
+          docker exec sftp test -f /home/demo/upload/sync/.easysftp-manifest.json
+          [ "${{ steps.sync1.outputs.files-uploaded }}" = "2" ]
+
+      - name: Remove a local file
+        run: rm selftest-site/assets/style.css
+
+      - name: Sync (second run)
+        id: sync2
+        uses: ./
+        with:
+          build-mode: source
+          server: localhost
+          port: 2222
+          username: demo
+          password: demopass
+          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
+          uploads: ./selftest-site/ => /upload/sync/
+          ignore: "*.log"
+          strategy: sync
+
+      - name: Verify second sync deleted the removed file and skipped the rest
+        run: |
+          if docker exec sftp test -e /home/demo/upload/sync/assets/style.css; then
+            echo "::error::locally removed file survived the second sync"
+            exit 1
+          fi
+          docker exec sftp test -f /home/demo/upload/sync/index.html
+          [ "${{ steps.sync2.outputs.files-deleted }}" = "1" ]
+          [ "${{ steps.sync2.outputs.files-skipped }}" -ge 1 ]
+          [ "${{ steps.sync2.outputs.files-uploaded }}" = "0" ]
+
       - name: Verify wrong host key is rejected
         id: badkey
         continue-on-error: true
