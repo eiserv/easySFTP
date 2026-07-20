@@ -59,6 +59,7 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 | `retries` | | `2` | Retries per file on transient upload errors (exponential backoff). Also bounds how often a connection that drops mid-run is redialed: when an upload fails because the connection died, easySFTP reconnects (up to `retries` times per run) and the per-file retry then runs against the fresh connection. Completed files stay completed. `0` disables both. |
 | `dir-mode` | | - | Octal permission (e.g. `755`) applied to every remote directory the run creates or touches, instead of whatever the server's umask produces. |
 | `file-mode` | | - | Octal permission (e.g. `644`) applied to every uploaded file, instead of mirroring the local file's permission bits. |
+| `preserve-times` | | `false` | Keep each uploaded file's local modification time on the server instead of "now". Useful when the server derives `Last-Modified`/ETag headers from mtimes or server-side tooling compares timestamps. Best-effort like the modes: a refusing server produces one warning per run, not a failure. Does not interact with the `sync` strategy's change detection, which compares content hashes, never remote timestamps. Note that a fresh `actions/checkout` stamps every file with the checkout time; combine with e.g. `git-restore-mtime` if the original times matter. |
 
 `dir-mode` and `file-mode` are best-effort: some servers reject the chmod
 (`SETSTAT`) request outright. A failure produces one warning per run, not a
