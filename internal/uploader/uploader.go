@@ -430,6 +430,13 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 	if cfg.FileMode != nil {
 		modeWarned = new(atomic.Bool)
 	}
+	// timesWarned doubles as the preserve-times switch: nil means off. The
+	// user explicitly asked for preserved times, so a refusing server warns
+	// (once per run); staying silent would defeat the point of the input.
+	var timesWarned *atomic.Bool
+	if cfg.PreserveTimes {
+		timesWarned = new(atomic.Bool)
+	}
 
 	for i, f := range files {
 		g.Go(func() error {
@@ -462,7 +469,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 			if cfg.FileMode != nil {
 				mode = *cfg.FileMode
 			}
-			n, err := uploadFileWithRetry(ctx, f, i, mode, sess, cfg.Retries, watch, log, modeWarned)
+			n, err := uploadFileWithRetry(ctx, f, i, mode, sess, cfg.Retries, watch, log, modeWarned, timesWarned)
 			if err != nil {
 				return err
 			}
@@ -623,7 +630,7 @@ const tmpSuffix = ".easysftp-tmp"
 // path (see uploadFile) so two planned transfers never race over the same
 // temporary name, even if one target's path happens to literally be
 // another's plus tmpSuffix.
-func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.FileMode, sess *session, retries int, watch *stallWatchdog, log Logger, modeWarned *atomic.Bool) (int64, error) {
+func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.FileMode, sess *session, retries int, watch *stallWatchdog, log Logger, modeWarned, timesWarned *atomic.Bool) (int64, error) {
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
@@ -640,7 +647,7 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.Fil
 			// fresh attempt starts from a clean slate; harmless when absent.
 			_ = client.Remove(fmt.Sprintf("%s%s.%d", f.remotePath, tmpSuffix, index))
 		}
-		n, err := uploadFile(ctx, f, index, mode, client, watch, log, modeWarned)
+		n, err := uploadFile(ctx, f, index, mode, client, watch, log, modeWarned, timesWarned)
 		if err == nil {
 			return n, nil
 		}
@@ -668,7 +675,7 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.Fil
 // temporary sibling and, only once that fully succeeds, renames it over the
 // target. Any failure removes the temporary file so a broken or partial upload
 // never replaces the live file and no debris is left behind.
-func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, client *sftp.Client, watch *stallWatchdog, log Logger, modeWarned *atomic.Bool) (int64, error) {
+func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, client *sftp.Client, watch *stallWatchdog, log Logger, modeWarned, timesWarned *atomic.Bool) (int64, error) {
 	// Active per attempt (not around the whole retry loop) so retry backoff
 	// sleeps do not count as transfer silence.
 	if watch != nil {
@@ -717,6 +724,16 @@ func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, cl
 	if err := renameReplace(client, tmpPath, f.remotePath); err != nil {
 		cleanupTmp(client, tmpPath, log)
 		return n, fmt.Errorf("replacing %q: %w", f.remotePath, err)
+	}
+
+	// preserve-times (timesWarned non-nil): keep the local modification time
+	// instead of "now". After the rename, so the request targets the final
+	// path; a failure warns once per run and never fails the deploy.
+	if timesWarned != nil {
+		mtime := time.Unix(f.mtime, 0)
+		if cerr := client.Chtimes(f.remotePath, mtime, mtime); cerr != nil && !timesWarned.Swap(true) {
+			log.Warningf("could not preserve the modification time on %s (server may reject SETSTAT); not warning again this run: %v", f.remotePath, cerr)
+		}
 	}
 	return n, nil
 }

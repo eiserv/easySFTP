@@ -129,6 +129,11 @@ type Config struct {
 	// (unguessable) name mitigates the manifest being publicly downloadable
 	// from web-root deployments. Always a bare file name, never a path.
 	ManifestName string
+
+	// PreserveTimes keeps each uploaded file's local modification time on the
+	// server instead of "now". Best-effort: a server that rejects the request
+	// produces one warning per run, not a failure.
+	PreserveTimes bool
 }
 
 // LogPerFile reports whether per-file operation lines (upload/delete/skip)
@@ -209,6 +214,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.ManifestName, err = parseManifestName(get("MANIFEST_NAME")); err != nil {
 		return nil, err
+	}
+	if cfg.PreserveTimes, err = parseBool(get("PRESERVE_TIMES"), false); err != nil {
+		return nil, fmt.Errorf("invalid preserve-times: %w", err)
 	}
 	if cfg.DirMode, err = parseMode(get("DIR_MODE"), "dir-mode"); err != nil {
 		return nil, err

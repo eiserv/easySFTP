@@ -205,6 +205,17 @@ inputs:
       default. Best-effort: a server that rejects the chmod produces one
       warning per run, not a failure.
     required: false
+  preserve-times:
+    description: >-
+      If "true", every uploaded file keeps its local modification time on the
+      server instead of "now". Useful when the server derives Last-Modified
+      or ETag headers from file mtimes, or when server-side tooling compares
+      timestamps. Off by default. A server that rejects the request produces
+      one warning per run, not a failure. Note that a fresh actions/checkout
+      gives every file the checkout time; combine with something that restores
+      real mtimes (e.g. a build, or git-restore-mtime) if that matters.
+    required: false
+    default: "false"
 
 outputs:
   files-uploaded:
@@ -289,3 +300,4 @@ runs:
         EASYSFTP_STALL_TIMEOUT: ${{ inputs.stall-timeout }}
         EASYSFTP_DIR_MODE: ${{ inputs.dir-mode }}
         EASYSFTP_FILE_MODE: ${{ inputs.file-mode }}
+        EASYSFTP_PRESERVE_TIMES: ${{ inputs.preserve-times }}

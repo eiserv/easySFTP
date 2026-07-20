@@ -117,6 +117,46 @@ func posixRenamePassthrough(inner sftp.FileCmder, req *sftp.Request) error {
 	return inner.Filecmd(req)
 }
 
+// chtimesCall records one modification-time (Setstat with Acmodtime) request
+// the server received.
+type chtimesCall struct {
+	path  string
+	mtime int64
+}
+
+// chtimesRecorder delegates to the real in-memory handlers while recording
+// every Setstat request that carries modification times, so tests can assert
+// which remote paths got which mtime requested. The in-memory server ignores
+// the times themselves (see CLAUDE.md), so recording the request is the only
+// way to assert preserve-times behavior.
+type chtimesRecorder struct {
+	inner sftp.FileCmder
+	mu    sync.Mutex
+	calls []chtimesCall
+}
+
+func (r *chtimesRecorder) Filecmd(req *sftp.Request) error {
+	if req.Method == "Setstat" && req.AttrFlags().Acmodtime {
+		r.mu.Lock()
+		r.calls = append(r.calls, chtimesCall{path: req.Filepath, mtime: int64(req.Attributes().Mtime)})
+		r.mu.Unlock()
+	}
+	return r.inner.Filecmd(req)
+}
+
+func (r *chtimesRecorder) PosixRename(req *sftp.Request) error {
+	return posixRenamePassthrough(r.inner, req)
+}
+
+// withChtimesRecorder records modification-time requests. Like
+// withSetstatRecorder, give it before any fault-injecting option.
+func withChtimesRecorder(rec *chtimesRecorder) serverOption {
+	return func(s *testServer) {
+		rec.inner = s.handlers.FileCmd
+		s.handlers.FileCmd = rec
+	}
+}
+
 // withSetstatRecorder records chmod requests. It must be given before any
 // fault-injecting option so the recorder observes the request regardless of
 // whether a later wrapper then fails it.
