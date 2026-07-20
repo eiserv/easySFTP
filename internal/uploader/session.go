@@ -30,13 +30,52 @@ type session struct {
 	reconnects int // spent so far; bounded by cfg.Retries
 }
 
-// newSession dials the server and opens the initial SFTP session.
-func newSession(cfg *config.Config, log Logger) (*session, error) {
-	sshClient, sftpClient, err := connect(cfg, log)
-	if err != nil {
-		return nil, err
+// newSession dials the server and opens the initial SFTP session, retrying
+// transient failures with the same exponential backoff and budget (the retries
+// input) as per-file uploads: a momentary DNS hiccup or a restarting sshd
+// should cost a short wait, not a red pipeline. Permanent failures, most
+// importantly a host key mismatch (a security signal) and an authentication
+// failure (retrying risks fail2ban-style lockouts), fail immediately.
+func newSession(ctx context.Context, cfg *config.Config, log Logger) (*session, error) {
+	var lastErr error
+	for attempt := 0; attempt <= cfg.Retries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<(attempt-1)) * time.Second
+			log.Warningf("could not connect; retrying in %s (attempt %d/%d): %v", backoff, attempt+1, cfg.Retries+1, lastErr)
+			if err := sleepCtx(ctx, backoff); err != nil {
+				return nil, err
+			}
+		}
+		sshClient, sftpClient, err := connect(cfg, log)
+		if err == nil {
+			return &session{cfg: cfg, log: log, sshClient: sshClient, sftpClient: sftpClient}, nil
+		}
+		lastErr = err
+		if !isRetryableConnect(err) {
+			break
+		}
 	}
-	return &session{cfg: cfg, log: log, sshClient: sshClient, sftpClient: sftpClient}, nil
+	return nil, lastErr
+}
+
+// permanentError marks a connect() failure that must never be retried: local
+// configuration problems (unparsable key, bad fingerprint format) and, via the
+// host key callback, a host key mismatch. It survives x/crypto/ssh's handshake
+// wrapping (%w), so isRetryableConnect can detect it with errors.As.
+type permanentError struct{ err error }
+
+func (e permanentError) Error() string { return e.err.Error() }
+func (e permanentError) Unwrap() error { return e.err }
+
+// isRetryableConnect reports whether an initial-connection failure is worth
+// another attempt. Anything tagged permanentError is not; neither is an SSH
+// authentication failure, which x/crypto/ssh only reports as a string error.
+func isRetryableConnect(err error) bool {
+	var pe permanentError
+	if errors.As(err, &pe) {
+		return false
+	}
+	return !strings.Contains(err.Error(), "ssh: unable to authenticate")
 }
 
 // current returns the live SFTP client and its generation. The generation is

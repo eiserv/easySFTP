@@ -37,6 +37,8 @@ type testServer struct {
 	dropFirstOnly bool  // with dropAfter: apply the drop to the first accepted connection only
 	dropped       int32 // whether the first connection was already wrapped
 	stallAfter    int64 // if >0, stop reading (but stay connected) after this many bytes
+	refuseFirst   int32 // if >0, close this many first accepted connections immediately
+	accepted      int32 // total connections accepted, for asserting attempt counts
 
 	keepalives *int64 // if set, counts "keepalive@openssh.com" global requests received
 }
@@ -70,6 +72,11 @@ func withStallAfter(n int64) serverOption { return func(s *testServer) { s.stall
 // withFailSetstat makes the server reject every chmod (Setstat) request,
 // simulating a server that refuses SETSTAT.
 func withFailSetstat() serverOption { return func(s *testServer) { s.failSetstat = true } }
+
+// withRefuseFirstConns closes the first n accepted connections before any SSH
+// handshake, simulating a transient outage (restarting sshd, network blip)
+// that clears after a moment.
+func withRefuseFirstConns(n int32) serverOption { return func(s *testServer) { s.refuseFirst = n } }
 
 // withKeepaliveCounter makes the server tally every "keepalive@openssh.com"
 // global request it receives into c, instead of just discarding it.
@@ -411,6 +418,10 @@ func (s *testServer) acceptLoop() {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			return
+		}
+		if atomic.AddInt32(&s.accepted, 1) <= s.refuseFirst {
+			conn.Close()
+			continue
 		}
 		if s.dropAfter > 0 &&
 			(!s.dropFirstOnly || atomic.CompareAndSwapInt32(&s.dropped, 0, 1)) {

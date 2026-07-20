@@ -111,7 +111,7 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		plans = append(plans, p)
 	}
 
-	sess, err := newSession(cfg, log)
+	sess, err := newSession(ctx, cfg, log)
 	if err != nil {
 		return stats, err
 	}
@@ -832,14 +832,16 @@ func sendKeepalives(ctx context.Context, client func() *ssh.Client, interval tim
 
 // connect dials the server and opens an SFTP session on top of SSH.
 func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, error) {
+	// Auth and host key setup errors are local configuration problems, never
+	// fixed by dialing again; tag them so the connect retry loop fails fast.
 	auth, err := authMethods(cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, permanentError{err}
 	}
 
 	hostKeyCallback, err := hostKeyCallback(cfg, log)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, permanentError{err}
 	}
 
 	sshConfig := &ssh.ClientConfig{
@@ -925,7 +927,9 @@ func hostKeyCallback(cfg *config.Config, log Logger) (ssh.HostKeyCallback, error
 		if khCallback != nil {
 			accepted = append(accepted, "the known-hosts entries")
 		}
-		return fmt.Errorf("host key mismatch for %s: got %s, want one of: %s", hostname, got, strings.Join(accepted, ", "))
+		// permanentError: a mismatch is a security signal (or a config error),
+		// and retrying the connection would present the same key again.
+		return permanentError{fmt.Errorf("host key mismatch for %s: got %s, want one of: %s", hostname, got, strings.Join(accepted, ", "))}
 	}, nil
 }
 
