@@ -94,7 +94,7 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		st := effectiveStrategy(pair)
 		lines := append(append([]string{}, cfg.IgnoreLines...), pair.Ignore...)
 		matcher := ignore.CompileIgnoreLines(lines...)
-		p, err := buildPlan(pair, st, matcher)
+		p, err := buildPlan(pair, st, matcher, !hasNegation(lines))
 		if err != nil {
 			return stats, err
 		}
@@ -153,12 +153,30 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	return stats, nil
 }
 
+// hasNegation reports whether any ignore line is a "!" re-include. Directory
+// pruning is disabled in that case: a pruned directory can never have files
+// below it re-included, so pruning only runs when no pattern could do that.
+func hasNegation(lines []string) bool {
+	for _, l := range lines {
+		if strings.HasPrefix(l, "!") {
+			return true
+		}
+	}
+	return false
+}
+
 // buildPlan walks the local side of an upload pair and computes the remote
 // file and directory layout, honoring the ignore patterns. It does not touch
 // the network, so config/path errors surface before a connection is made.
 // Content hashing for the sync strategy happens later, once connected: see
 // executeSync.
-func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore) (plan, error) {
+//
+// With pruneDirs set, a directory that itself matches the ignore patterns is
+// skipped entirely instead of descended into, so an ignored node_modules/ with
+// hundreds of thousands of entries costs one match instead of a full walk.
+// Callers must clear it when the patterns contain "!" re-includes, which could
+// re-include files below an otherwise ignored directory.
+func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore, pruneDirs bool) (plan, error) {
 	p := plan{pair: pair, strategy: strategy}
 	remoteBase := normalizeRemote(pair.Remote)
 
@@ -199,14 +217,18 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			return nil
-		}
 		rel, err := filepath.Rel(pair.Local, fpath)
 		if err != nil {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			// The trailing slash lets directory-only patterns ("dist/") match.
+			if pruneDirs && rel != "." && matcher.MatchesPath(rel+"/") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if rel == manifestName || matcher.MatchesPath(rel) {
 			return nil
 		}
