@@ -17,10 +17,11 @@ import (
 	"github.com/eiserv/easySFTP/internal/config"
 )
 
-// manifestName is the file the sync strategy keeps in each remote target to
-// record what it previously uploaded. Only files listed here are ever deleted,
-// so files placed on the server by others are left untouched.
-const manifestName = ".easysftp-manifest.json"
+// manifestName is the default file name the sync strategy keeps in each remote
+// target to record what it previously uploaded. Only files listed there are
+// ever deleted, so files placed on the server by others are left untouched.
+// The manifest-name input can override it per run; see Config.SyncManifestName.
+const manifestName = config.DefaultManifestName
 
 // manifestVersion is written to every manifest this version of easySFTP
 // produces. v1 manifests (hash only, no size/mtime) are still read; see
@@ -54,7 +55,7 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	// per-file upload path is reconnect-aware.
 	client, _ := sess.current()
 
-	old := readManifest(client, base, log)
+	old := readManifest(client, base, cfg.SyncManifestName(), log)
 
 	// Hash after reading the manifest (not during buildPlan) so that, with
 	// sync-fast-path opted in, unchanged files whose size and mtime still
@@ -148,7 +149,7 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		deletedFull[i] = path.Join(base, rel)
 	}
 	pruneEmptyDirs(client, base, deletedFull)
-	if err := writeManifest(client, base, manifest{Version: manifestVersion, Files: local}); err != nil {
+	if err := writeManifest(client, base, cfg.SyncManifestName(), manifest{Version: manifestVersion, Files: local}); err != nil {
 		return fmt.Errorf("writing sync manifest in %q: %w", base, err)
 	}
 	return nil
@@ -182,7 +183,7 @@ func writeRecoveryManifest(cfg *config.Config, client *sftp.Client, base string,
 	if cfg.DryRun {
 		return
 	}
-	if err := writeManifest(client, base, m); err != nil {
+	if err := writeManifest(client, base, cfg.SyncManifestName(), m); err != nil {
 		log.Warningf("could not record partial progress in the sync manifest in %s (a retry will re-upload this run's completed files): %v", base, err)
 		return
 	}
@@ -197,9 +198,9 @@ func writeRecoveryManifest(cfg *config.Config, client *sftp.Client, base string,
 // accepted; a v1 entry decodes with MTime 0, which never matches the fast
 // path in hashPlanFiles, so upgrading from a v1 manifest costs one full
 // re-hash and then writes v2 from then on.
-func readManifest(client *sftp.Client, dir string, log Logger) manifest {
+func readManifest(client *sftp.Client, dir, name string, log Logger) manifest {
 	empty := manifest{Version: manifestVersion, Files: map[string]manifestEntry{}}
-	f, err := client.Open(path.Join(dir, manifestName))
+	f, err := client.Open(path.Join(dir, name))
 	if err != nil {
 		return empty
 	}
@@ -232,13 +233,13 @@ func readManifest(client *sftp.Client, dir string, log Logger) manifest {
 	return empty
 }
 
-// writeManifest atomically writes the manifest into dir.
-func writeManifest(client *sftp.Client, dir string, m manifest) error {
+// writeManifest atomically writes the manifest into dir under name.
+func writeManifest(client *sftp.Client, dir, name string, m manifest) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
-	target := path.Join(dir, manifestName)
+	target := path.Join(dir, name)
 	tmp := target + tmpSuffix
 	dst, err := client.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {

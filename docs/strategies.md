@@ -76,6 +76,17 @@ Notes:
   directory of the plan is still chmod'd, per its documented "creates or
   touches" semantics.
 
+> **⚠️ The manifest is publicly downloadable in web-root deployments.** The
+> manifest lives *inside* the deploy target, so when that target is a public
+> web root it is served like any other file
+> (`https://example.com/.easysftp-manifest.json`). It discloses the complete
+> relative file list of the deployment plus each file's SHA-256 content hash;
+> useful reconnaissance for paths not linked anywhere. Most default server
+> configs do **not** block it (Apache's stock `.ht*` rule does not cover it).
+> Mitigations, strongest first: deny it in the web server config (copy-paste
+> snippets in [security.md](security.md#the-sync-manifest-in-web-roots)), or
+> give it an unguessable name with the `manifest-name` input.
+
 ### `sync-fast-path`: skip re-hashing unchanged files
 
 By default, `sync` re-reads and re-hashes **every** local file on every run to

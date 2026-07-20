@@ -123,6 +123,12 @@ type Config struct {
 	// The zero value behaves like LogNormal, so directly constructed configs
 	// keep today's behavior.
 	LogLevel LogLevel
+
+	// ManifestName is the file name the sync strategy uses for its manifest
+	// in each remote target. Defaults to DefaultManifestName; a custom
+	// (unguessable) name mitigates the manifest being publicly downloadable
+	// from web-root deployments. Always a bare file name, never a path.
+	ManifestName string
 }
 
 // LogPerFile reports whether per-file operation lines (upload/delete/skip)
@@ -136,6 +142,19 @@ func (c *Config) LogPerFile() bool {
 // should be logged.
 func (c *Config) Verbose() bool {
 	return c.LogLevel == LogVerbose
+}
+
+// DefaultManifestName is the sync manifest file name used when the
+// manifest-name input is not set.
+const DefaultManifestName = ".easysftp-manifest.json"
+
+// SyncManifestName returns the effective sync manifest file name, falling
+// back to the default for directly constructed configs.
+func (c *Config) SyncManifestName() string {
+	if c.ManifestName == "" {
+		return DefaultManifestName
+	}
+	return c.ManifestName
 }
 
 const envPrefix = "EASYSFTP_"
@@ -186,6 +205,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid skip-unchanged: %w", err)
 	}
 	if cfg.LogLevel, err = resolveLogLevel(get("LOG_LEVEL")); err != nil {
+		return nil, err
+	}
+	if cfg.ManifestName, err = parseManifestName(get("MANIFEST_NAME")); err != nil {
 		return nil, err
 	}
 	if cfg.DirMode, err = parseMode(get("DIR_MODE"), "dir-mode"); err != nil {
@@ -338,6 +360,19 @@ func parseBool(s string, def bool) (bool, error) {
 		return def, nil
 	}
 	return strconv.ParseBool(s)
+}
+
+// parseManifestName validates the sync manifest file name. It must be a bare
+// file name (the manifest always lives directly in each sync target), so path
+// separators and the "."/".." components are rejected.
+func parseManifestName(s string) (string, error) {
+	if s == "" {
+		return DefaultManifestName, nil
+	}
+	if strings.ContainsAny(s, "/\\") || s == "." || s == ".." {
+		return "", fmt.Errorf("input 'manifest-name' must be a bare file name (no path separators), got %q", s)
+	}
+	return s, nil
 }
 
 // parseMode parses an octal permission string like "755" or "0755". An empty

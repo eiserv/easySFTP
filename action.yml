@@ -145,6 +145,18 @@ inputs:
       new modification time on every run, so this has no effect there.
     required: false
     default: "false"
+  manifest-name:
+    description: >-
+      File name of the manifest the "sync" strategy keeps in each remote
+      target (default ".easysftp-manifest.json"). In a web-root deployment
+      the manifest is served like any other file and discloses the full file
+      list plus content hashes; an unguessable name (e.g. a generated suffix
+      stored in a secret) mitigates that, and a web-server deny rule removes
+      it entirely (see docs/security.md). Must be a bare file name, no path.
+      Changing it mid-life starts a fresh manifest: the next sync re-uploads
+      everything, tracks deletions from scratch, and leaves the old manifest
+      file behind on the server; delete it manually.
+    required: false
   skip-unchanged:
     description: >-
       If "true", the overlay strategy skips uploading a file when the remote
@@ -271,6 +283,7 @@ runs:
         EASYSFTP_SFTP_REQUEST_CONCURRENCY: ${{ inputs.sftp-request-concurrency }}
         EASYSFTP_SYNC_FAST_PATH: ${{ inputs.sync-fast-path }}
         EASYSFTP_SKIP_UNCHANGED: ${{ inputs.skip-unchanged }}
+        EASYSFTP_MANIFEST_NAME: ${{ inputs.manifest-name }}
         EASYSFTP_RETRIES: ${{ inputs.retries }}
         EASYSFTP_TIMEOUT: ${{ inputs.timeout }}
         EASYSFTP_STALL_TIMEOUT: ${{ inputs.stall-timeout }}

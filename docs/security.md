@@ -63,6 +63,53 @@ update the secret with the new keys.
   Put the private key into a secret, the public key into the server's
   `authorized_keys`.
 
+## The sync manifest in web roots
+
+The `sync` strategy keeps its manifest (default `.easysftp-manifest.json`)
+inside each deploy target. When the target is a public web root, the manifest
+is served like any other file and discloses the deployment's complete relative
+file list plus a SHA-256 hash of each file's content. That is information
+disclosure, not compromise, but it maps out paths that are not linked anywhere
+(admin bundles, backups, generated files) and lets anyone confirm exact file
+contents by hash. Being a dotfile is not protection: Apache's default `.ht*`
+rules do not cover it, and nginx setups vary.
+
+Pick one (or both):
+
+**Deny it in the web server** (recommended; also covers a manifest left behind
+by earlier deploys). nginx:
+
+```nginx
+location = /.easysftp-manifest.json { deny all; }
+```
+
+Apache (vhost or `.htaccess`):
+
+```apache
+<Files ".easysftp-manifest.json">
+    Require all denied
+</Files>
+```
+
+If you use a custom `manifest-name`, adjust the path/name accordingly.
+
+**Give it an unguessable name** with the `manifest-name` input, e.g. a random
+suffix stored as a repository secret:
+
+```yaml
+- uses: eiserv/easySFTP@v2
+  with:
+    # ...
+    strategy: sync
+    manifest-name: ${{ secrets.EASYSFTP_MANIFEST_NAME }}  # e.g. .manifest-c4f81b52.json
+```
+
+This mitigates casual discovery, but the file is still served if its name
+leaks (or if the server lists directory indexes; disable autoindexing).
+Changing the name mid-life starts a fresh manifest: the next sync re-uploads
+everything, tracks deletions from scratch, and leaves the old manifest file
+behind; delete the old file manually.
+
 ## Least privilege on the server
 
 - Use a dedicated deploy user that can only write to the deployment target,
