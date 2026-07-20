@@ -7,6 +7,7 @@ stored as [encrypted secrets](https://docs.github.com/en/actions/security-guides
 - [Mirror a build with sync](#mirror-a-build-with-sync)
 - [Multiple targets with a config file](#multiple-targets-with-a-config-file)
 - [Key-based authentication](#key-based-authentication)
+- [Deploy through a jump host (bastion)](#deploy-through-a-jump-host-bastion)
 - [Upload a single file (with rename)](#upload-a-single-file-with-rename)
 - [Preview a deploy in pull requests](#preview-a-deploy-in-pull-requests)
 - [Using the outputs](#using-the-outputs)
