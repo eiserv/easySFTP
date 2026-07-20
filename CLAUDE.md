@@ -32,6 +32,11 @@ Guiding principles for changes here:
   the `Upload via SFTP` step, parsing/validation in `internal/config/config.go`,
   a row in `docs/configuration.md`, and (if it's a real behavior change) a
   test. Don't forget `action.yml` input descriptions are user-facing docs too.
+  Two drift-check lists must also be extended, or tests fail: `wantInputs` in
+  `internal/actionmeta/actionmeta_test.go` (the actionmeta test errors on any
+  wired env var missing from it), and the cleared-env list in `setBaseEnv`
+  (`internal/config/config_test.go`), which keeps config tests hermetic when
+  the ambient environment sets `EASYSFTP_*` variables.
 
 ## Two categories of settings
 
