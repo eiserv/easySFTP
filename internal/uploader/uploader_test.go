@@ -827,7 +827,7 @@ func TestIgnoredDirectoryIsPruned(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(local, "node_modules"), 0o755) })
 
 	matcher := ignore.CompileIgnoreLines("node_modules/")
-	p, err := buildPlan(config.UploadPair{Local: local, Remote: "/www"}, config.StrategyOverlay, matcher, true, nil)
+	p, err := buildPlan(config.UploadPair{Local: local, Remote: "/www"}, config.StrategyOverlay, matcher, true, nil, manifestName)
 	if err != nil {
 		t.Fatalf("walk descended into the pruned directory: %v", err)
 	}
@@ -899,7 +899,7 @@ func BenchmarkBuildPlanIgnoredTree(b *testing.B) {
 	}{{"pruned", true}, {"unpruned", false}} {
 		b.Run(bench.name, func(b *testing.B) {
 			for b.Loop() {
-				if _, err := buildPlan(pair, config.StrategyOverlay, matcher, bench.prune, nil); err != nil {
+				if _, err := buildPlan(pair, config.StrategyOverlay, matcher, bench.prune, nil, manifestName); err != nil {
 					b.Fatal(err)
 				}
 			}

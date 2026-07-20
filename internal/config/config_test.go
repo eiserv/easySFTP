@@ -48,7 +48,8 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("EASYSFTP_UPLOADS", "./dist/ => /www/")
 	for _, name := range []string{"PORT", "PRIVATE_KEY", "PASSPHRASE", "HOST_KEY_FINGERPRINT", "KNOWN_HOSTS",
 		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "SFTP_REQUEST_CONCURRENCY", "RETRIES", "TIMEOUT", "STALL_TIMEOUT",
-		"SYNC_FAST_PATH", "SKIP_UNCHANGED", "CONFIG_FILE", "STRATEGY", "MAX_DELETES", "DIR_MODE", "FILE_MODE", "LOG_LEVEL"} {
+		"SYNC_FAST_PATH", "SKIP_UNCHANGED", "CONFIG_FILE", "STRATEGY", "MAX_DELETES", "DIR_MODE", "FILE_MODE",
+		"LOG_LEVEL", "MANIFEST_NAME"} {
 		t.Setenv("EASYSFTP_"+name, "")
 	}
 }
@@ -64,6 +65,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Timeout.Seconds() != 30 {
 		t.Errorf("expected 30s default timeout, got %s", cfg.Timeout)
+	}
+	if cfg.ManifestName != DefaultManifestName {
+		t.Errorf("expected default manifest name %q, got %q", DefaultManifestName, cfg.ManifestName)
 	}
 }
 
@@ -89,6 +93,9 @@ func TestLoadValidation(t *testing.T) {
 		{"bad stall-timeout", map[string]string{"EASYSFTP_STALL_TIMEOUT": "soon"}, "invalid stall-timeout"},
 		{"negative stall-timeout", map[string]string{"EASYSFTP_STALL_TIMEOUT": "-5"}, "'stall-timeout' must not be negative"},
 		{"bad log-level", map[string]string{"EASYSFTP_LOG_LEVEL": "loud"}, "'log-level' must be quiet, normal or verbose"},
+		{"manifest-name with slash", map[string]string{"EASYSFTP_MANIFEST_NAME": "sub/manifest.json"}, "'manifest-name' must be a bare file name"},
+		{"manifest-name with backslash", map[string]string{"EASYSFTP_MANIFEST_NAME": `sub\manifest.json`}, "'manifest-name' must be a bare file name"},
+		{"manifest-name dot-dot", map[string]string{"EASYSFTP_MANIFEST_NAME": ".."}, "'manifest-name' must be a bare file name"},
 		{"bad dir-mode", map[string]string{"EASYSFTP_DIR_MODE": "not-octal"}, "invalid dir-mode"},
 		{"dir-mode out of range", map[string]string{"EASYSFTP_DIR_MODE": "1755"}, "invalid dir-mode"},
 		{"bad file-mode", map[string]string{"EASYSFTP_FILE_MODE": "999"}, "invalid file-mode"},

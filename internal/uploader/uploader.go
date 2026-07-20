@@ -100,7 +100,7 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		if cfg.Verbose() {
 			verbose = log
 		}
-		p, err := buildPlan(pair, st, matcher, !hasNegation(lines), verbose)
+		p, err := buildPlan(pair, st, matcher, !hasNegation(lines), verbose, cfg.SyncManifestName())
 		if err != nil {
 			return stats, err
 		}
@@ -186,7 +186,10 @@ func hasNegation(lines []string) bool {
 // verbose, when non-nil, gets one line per ignore decision (which pattern
 // excluded which file or directory), the level of detail needed to debug
 // ignore patterns.
-func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore, pruneDirs bool, verbose Logger) (plan, error) {
+//
+// manifestName is the effective sync manifest file name; a local file by that
+// name is never uploaded, so a target's own manifest can't be clobbered.
+func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore, pruneDirs bool, verbose Logger, manifestName string) (plan, error) {
 	p := plan{pair: pair, strategy: strategy}
 	remoteBase := normalizeRemote(pair.Remote)
 
