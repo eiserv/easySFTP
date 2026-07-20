@@ -61,7 +61,10 @@ func TestActionMetadata(t *testing.T) {
 
 	wantInputs := []string{
 		"build-mode", "server", "port", "username", "password", "private-key",
-		"passphrase", "host-key-fingerprint", "known-hosts", "uploads", "config-file", "strategy",
+		"passphrase", "host-key-fingerprint", "known-hosts",
+		"proxy-server", "proxy-port", "proxy-username", "proxy-password",
+		"proxy-private-key", "proxy-passphrase", "proxy-host-key-fingerprint",
+		"proxy-known-hosts", "uploads", "config-file", "strategy",
 		"ignore", "ignore-from", "max-deletes", "delete", "dry-run", "concurrency",
 		"sftp-request-concurrency", "sync-fast-path", "skip-unchanged", "retries",
 		"timeout", "stall-timeout", "dir-mode", "file-mode", "log-level", "manifest-name",

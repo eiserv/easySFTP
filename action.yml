@@ -55,6 +55,47 @@ inputs:
       accepted. Hashed entries and "[host]:port" entries for non-standard
       ports are supported.
     required: false
+  proxy-server:
+    description: >-
+      Hostname or IP address of an optional jump host (bastion) through which
+      the SFTP server is reached, like OpenSSH's ProxyJump. When set,
+      easySFTP connects to the jump host first (with its own proxy-*
+      credentials and host key verification) and tunnels the SFTP connection
+      to "server" through it. Leave empty to connect directly.
+    required: false
+  proxy-port:
+    description: SSH port of the jump host.
+    required: false
+  proxy-username:
+    description: Username used for authenticating against the jump host.
+    required: false
+  proxy-password:
+    description: >-
+      Password for the jump host. Provide this or proxy-private-key (or
+      both). Always store this in a GitHub Actions secret.
+    required: false
+  proxy-private-key:
+    description: >-
+      SSH private key (PEM/OpenSSH format) for the jump host. Always store
+      this in a GitHub Actions secret.
+    required: false
+  proxy-passphrase:
+    description: Passphrase for the jump host's private key, if it is encrypted.
+    required: false
+  proxy-host-key-fingerprint:
+    description: >-
+      Expected SHA256 fingerprint(s) of the jump host's host key, one per
+      line (format "SHA256:..."). Host key verification applies to each hop
+      independently; without this input (or proxy-known-hosts) the jump
+      host's identity is not verified, and a warning is printed for this hop.
+    required: false
+  proxy-known-hosts:
+    description: >-
+      Expected host key(s) of the jump host in OpenSSH known_hosts format
+      (e.g. verbatim "ssh-keyscan <jump-host>" output). Alternative to
+      proxy-host-key-fingerprint; if both are set, a key matching either is
+      accepted.
+    required: false
   uploads:
     description: >-
       One "local => remote" mapping per line, e.g. "./dist/ => /var/www/html/".
@@ -283,6 +324,14 @@ runs:
         EASYSFTP_PASSPHRASE: ${{ inputs.passphrase }}
         EASYSFTP_HOST_KEY_FINGERPRINT: ${{ inputs.host-key-fingerprint }}
         EASYSFTP_KNOWN_HOSTS: ${{ inputs.known-hosts }}
+        EASYSFTP_PROXY_SERVER: ${{ inputs.proxy-server }}
+        EASYSFTP_PROXY_PORT: ${{ inputs.proxy-port }}
+        EASYSFTP_PROXY_USERNAME: ${{ inputs.proxy-username }}
+        EASYSFTP_PROXY_PASSWORD: ${{ inputs.proxy-password }}
+        EASYSFTP_PROXY_PRIVATE_KEY: ${{ inputs.proxy-private-key }}
+        EASYSFTP_PROXY_PASSPHRASE: ${{ inputs.proxy-passphrase }}
+        EASYSFTP_PROXY_HOST_KEY_FINGERPRINT: ${{ inputs.proxy-host-key-fingerprint }}
+        EASYSFTP_PROXY_KNOWN_HOSTS: ${{ inputs.proxy-known-hosts }}
         EASYSFTP_UPLOADS: ${{ inputs.uploads }}
         EASYSFTP_CONFIG_FILE: ${{ inputs.config-file }}
         EASYSFTP_STRATEGY: ${{ inputs.strategy }}

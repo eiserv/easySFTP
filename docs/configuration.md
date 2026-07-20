@@ -27,6 +27,49 @@ Everything easySFTP accepts: action inputs, outputs and the YAML config file.
 
 ¹ At least one of `password` / `private-key` is required. If both are set, the key is tried first.
 
+### Jump host (bastion)
+
+If the SFTP server is only reachable through a bastion (OpenSSH's
+`ssh -J jump.example.com target`), set the `proxy-*` inputs. easySFTP then
+connects to the jump host first, with its own credentials and its own host
+key verification, and tunnels the SFTP connection to `server` through it.
+All inputs mirror the primary connection settings:
+
+| Input | Required | Default | Description |
+|---|---|---|---|
+| `proxy-server` | ² | - | Hostname or IP of the jump host. Setting any other `proxy-*` input without this one fails the run. |
+| `proxy-port` | | `22` | SSH port of the jump host. |
+| `proxy-username` | ² | - | Username for the jump host. |
+| `proxy-password` | ³ | - | Password for the jump host. **Use a secret.** |
+| `proxy-private-key` | ³ | - | SSH private key for the jump host. **Use a secret.** |
+| `proxy-passphrase` | | - | Passphrase of the jump host key, if encrypted. |
+| `proxy-host-key-fingerprint` | | - | SHA256 fingerprint(s) of the jump host's key, one per line. **Strongly recommended.** |
+| `proxy-known-hosts` | | - | Jump host key(s) in `known_hosts` format; alternative to the fingerprint input. |
+
+² Required when using a jump host. ³ At least one of `proxy-password` /
+`proxy-private-key` is required when `proxy-server` is set.
+
+Host key verification applies to **each hop independently**: pinning the
+target but not the jump host (or vice versa) prints the unverified-host-key
+warning for the open hop. The `timeout` input covers each hop's dial. The
+`retries` reconnect logic re-establishes the whole chain (jump host and
+tunnel) when the connection drops mid-run.
+
+```yaml
+- uses: eiserv/easySFTP@v2
+  with:
+    server: sftp.internal.example.com
+    username: ${{ secrets.SFTP_USERNAME }}
+    private-key: ${{ secrets.SFTP_PRIVATE_KEY }}
+    host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
+    proxy-server: bastion.example.com
+    proxy-username: ${{ secrets.JUMP_USERNAME }}
+    proxy-private-key: ${{ secrets.JUMP_PRIVATE_KEY }}
+    proxy-host-key-fingerprint: ${{ secrets.JUMP_HOST_KEY_FINGERPRINT }}
+    uploads: |
+      ./dist/ => /var/www/html/
+```
+
 ### What to upload
 
 | Input | Required | Default | Description |

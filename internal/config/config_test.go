@@ -49,7 +49,9 @@ func setBaseEnv(t *testing.T) {
 	for _, name := range []string{"PORT", "PRIVATE_KEY", "PASSPHRASE", "HOST_KEY_FINGERPRINT", "KNOWN_HOSTS",
 		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "SFTP_REQUEST_CONCURRENCY", "RETRIES", "TIMEOUT", "STALL_TIMEOUT",
 		"SYNC_FAST_PATH", "SKIP_UNCHANGED", "CONFIG_FILE", "STRATEGY", "MAX_DELETES", "DIR_MODE", "FILE_MODE",
-		"LOG_LEVEL", "MANIFEST_NAME", "PRESERVE_TIMES"} {
+		"LOG_LEVEL", "MANIFEST_NAME", "PRESERVE_TIMES",
+		"PROXY_SERVER", "PROXY_PORT", "PROXY_USERNAME", "PROXY_PASSWORD", "PROXY_PRIVATE_KEY", "PROXY_PASSPHRASE",
+		"PROXY_HOST_KEY_FINGERPRINT", "PROXY_KNOWN_HOSTS"} {
 		t.Setenv("EASYSFTP_"+name, "")
 	}
 }
@@ -96,6 +98,10 @@ func TestLoadValidation(t *testing.T) {
 		{"manifest-name with slash", map[string]string{"EASYSFTP_MANIFEST_NAME": "sub/manifest.json"}, "'manifest-name' must be a bare file name"},
 		{"manifest-name with backslash", map[string]string{"EASYSFTP_MANIFEST_NAME": `sub\manifest.json`}, "'manifest-name' must be a bare file name"},
 		{"manifest-name dot-dot", map[string]string{"EASYSFTP_MANIFEST_NAME": ".."}, "'manifest-name' must be a bare file name"},
+		{"proxy inputs without proxy-server", map[string]string{"EASYSFTP_PROXY_USERNAME": "jump"}, "'proxy-server' is empty"},
+		{"proxy-server without username", map[string]string{"EASYSFTP_PROXY_SERVER": "jump.example.com", "EASYSFTP_PROXY_PASSWORD": "pw"}, "'proxy-username' is required"},
+		{"proxy-server without auth", map[string]string{"EASYSFTP_PROXY_SERVER": "jump.example.com", "EASYSFTP_PROXY_USERNAME": "jump"}, "'proxy-password' or 'proxy-private-key'"},
+		{"bad proxy-port", map[string]string{"EASYSFTP_PROXY_SERVER": "jump.example.com", "EASYSFTP_PROXY_USERNAME": "jump", "EASYSFTP_PROXY_PASSWORD": "pw", "EASYSFTP_PROXY_PORT": "99999"}, "'proxy-port' must be between"},
 		{"bad dir-mode", map[string]string{"EASYSFTP_DIR_MODE": "not-octal"}, "invalid dir-mode"},
 		{"dir-mode out of range", map[string]string{"EASYSFTP_DIR_MODE": "1755"}, "invalid dir-mode"},
 		{"bad file-mode", map[string]string{"EASYSFTP_FILE_MODE": "999"}, "invalid file-mode"},
@@ -111,6 +117,43 @@ func TestLoadValidation(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestLoadProxy(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("EASYSFTP_PROXY_SERVER", "jump.example.com")
+	t.Setenv("EASYSFTP_PROXY_USERNAME", "jumper")
+	t.Setenv("EASYSFTP_PROXY_PASSWORD", "jump-pw")
+	t.Setenv("EASYSFTP_PROXY_HOST_KEY_FINGERPRINT", "SHA256:abc\nSHA256:def")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Proxy
+	if p == nil {
+		t.Fatal("expected a proxy config")
+	}
+	if p.Server != "jump.example.com" || p.Username != "jumper" || p.Password != "jump-pw" {
+		t.Errorf("unexpected proxy config: %+v", p)
+	}
+	if p.Port != 22 {
+		t.Errorf("expected default proxy port 22, got %d", p.Port)
+	}
+	if len(p.HostKeyFingerprints) != 2 {
+		t.Errorf("expected 2 proxy fingerprints, got %v", p.HostKeyFingerprints)
+	}
+}
+
+func TestLoadNoProxyByDefault(t *testing.T) {
+	setBaseEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Proxy != nil {
+		t.Errorf("expected no proxy config, got %+v", cfg.Proxy)
 	}
 }
 

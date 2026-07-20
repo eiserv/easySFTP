@@ -26,8 +26,9 @@ type session struct {
 	mu         sync.Mutex
 	sshClient  *ssh.Client
 	sftpClient *sftp.Client
-	gen        int // bumped on every successful reconnect
-	reconnects int // spent so far; bounded by cfg.Retries
+	closeJump  func() // closes the jump-host transport; no-op for direct connections
+	gen        int    // bumped on every successful reconnect
+	reconnects int    // spent so far; bounded by cfg.Retries
 }
 
 // newSession dials the server and opens the initial SFTP session, retrying
@@ -35,7 +36,9 @@ type session struct {
 // input) as per-file uploads: a momentary DNS hiccup or a restarting sshd
 // should cost a short wait, not a red pipeline. Permanent failures, most
 // importantly a host key mismatch (a security signal) and an authentication
-// failure (retrying risks fail2ban-style lockouts), fail immediately.
+// failure (retrying risks fail2ban-style lockouts), fail immediately. With a
+// jump host configured, this covers either hop: a transient failure reaching
+// the bastion is retried exactly like one reaching the target.
 func newSession(ctx context.Context, cfg *config.Config, log Logger) (*session, error) {
 	var lastErr error
 	for attempt := 0; attempt <= cfg.Retries; attempt++ {
@@ -46,9 +49,9 @@ func newSession(ctx context.Context, cfg *config.Config, log Logger) (*session, 
 				return nil, err
 			}
 		}
-		sshClient, sftpClient, err := connect(cfg, log)
+		sshClient, sftpClient, closeJump, err := connect(cfg, log)
 		if err == nil {
-			return &session{cfg: cfg, log: log, sshClient: sshClient, sftpClient: sftpClient}, nil
+			return &session{cfg: cfg, log: log, sshClient: sshClient, sftpClient: sftpClient, closeJump: closeJump}, nil
 		}
 		lastErr = err
 		if !isRetryableConnect(err) {
@@ -70,6 +73,7 @@ func (e permanentError) Unwrap() error { return e.err }
 // isRetryableConnect reports whether an initial-connection failure is worth
 // another attempt. Anything tagged permanentError is not; neither is an SSH
 // authentication failure, which x/crypto/ssh only reports as a string error.
+// Both apply per hop, so a bad jump-host key or password fails fast too.
 func isRetryableConnect(err error) bool {
 	var pe permanentError
 	if errors.As(err, &pe) {
@@ -121,11 +125,12 @@ func (s *session) reconnect(ctx context.Context, gen int) (*sftp.Client, error) 
 	}
 	s.sftpClient.Close()
 	s.sshClient.Close()
-	sshClient, sftpClient, err := connect(s.cfg, s.log)
+	s.closeJump()
+	sshClient, sftpClient, closeJump, err := connect(s.cfg, s.log)
 	if err != nil {
 		return nil, fmt.Errorf("reconnecting: %w", err)
 	}
-	s.sshClient, s.sftpClient = sshClient, sftpClient
+	s.sshClient, s.sftpClient, s.closeJump = sshClient, sftpClient, closeJump
 	s.gen++
 	return s.sftpClient, nil
 }
@@ -136,6 +141,7 @@ func (s *session) close() {
 	defer s.mu.Unlock()
 	s.sftpClient.Close()
 	s.sshClient.Close()
+	s.closeJump()
 }
 
 // isConnError reports whether err looks like the connection itself died (as

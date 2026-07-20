@@ -69,6 +69,22 @@ type UploadPair struct {
 	Ignore   []string // target-specific ignore patterns, additive to the global ones
 }
 
+// Proxy holds the connection settings of an optional jump host (bastion)
+// through which the SFTP server is reached, mirroring the primary connection
+// settings. Host key verification applies to this hop independently.
+type Proxy struct {
+	Server              string
+	Port                int
+	Username            string
+	Password            string
+	PrivateKey          string
+	Passphrase          string
+	HostKeyFingerprints []string
+	// KnownHosts holds raw OpenSSH known_hosts lines for the jump host, an
+	// alternative to fingerprints, exactly like the primary input.
+	KnownHosts string
+}
+
 // Guards holds the safety limits applied before any destructive operation.
 type Guards struct {
 	// MaxDeletes refuses a run that would delete more than this many files.
@@ -89,6 +105,9 @@ type Config struct {
 	// output), an alternative to SHA256 fingerprints. When both are set, a
 	// key matching either is accepted.
 	KnownHosts string
+
+	// Proxy, if non-nil, routes the connection through a jump host.
+	Proxy *Proxy
 
 	Uploads     []UploadPair
 	IgnoreLines []string
@@ -183,6 +202,9 @@ func Load() (*Config, error) {
 	var err error
 	if cfg.Port, err = parseInt(get("PORT"), 22); err != nil {
 		return nil, fmt.Errorf("invalid port: %w", err)
+	}
+	if cfg.Proxy, err = loadProxy(get); err != nil {
+		return nil, err
 	}
 	if cfg.Concurrency, err = parseInt(get("CONCURRENCY"), 4); err != nil {
 		return nil, fmt.Errorf("invalid concurrency: %w", err)
@@ -285,6 +307,35 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// loadProxy reads the optional proxy-* (jump host) inputs. Without
+// proxy-server, every other proxy input must be empty, so a typo'd or
+// half-configured bastion setup fails loudly instead of silently connecting
+// directly.
+func loadProxy(get func(string) string) (*Proxy, error) {
+	p := &Proxy{
+		Server:              get("PROXY_SERVER"),
+		Username:            get("PROXY_USERNAME"),
+		Password:            os.Getenv(envPrefix + "PROXY_PASSWORD"),
+		PrivateKey:          os.Getenv(envPrefix + "PROXY_PRIVATE_KEY"),
+		Passphrase:          os.Getenv(envPrefix + "PROXY_PASSPHRASE"),
+		HostKeyFingerprints: splitLines(os.Getenv(envPrefix + "PROXY_HOST_KEY_FINGERPRINT")),
+		KnownHosts:          strings.TrimSpace(os.Getenv(envPrefix + "PROXY_KNOWN_HOSTS")),
+	}
+	if p.Server == "" {
+		if p.Username != "" || p.Password != "" || strings.TrimSpace(p.PrivateKey) != "" ||
+			p.Passphrase != "" || len(p.HostKeyFingerprints) > 0 || p.KnownHosts != "" ||
+			get("PROXY_PORT") != "" {
+			return nil, fmt.Errorf("proxy-* inputs are set but 'proxy-server' is empty; set proxy-server or remove the other proxy inputs")
+		}
+		return nil, nil
+	}
+	var err error
+	if p.Port, err = parseInt(get("PROXY_PORT"), 22); err != nil {
+		return nil, fmt.Errorf("invalid proxy-port: %w", err)
+	}
+	return p, nil
+}
+
 // resolveStrategy maps the strategy input to a concrete strategy.
 func resolveStrategy(input string) (Strategy, error) {
 	if input == "" {
@@ -321,6 +372,16 @@ func (c *Config) validate() error {
 		return fmt.Errorf("input 'stall-timeout' must not be negative (use 0 to disable the check), got %d", int(c.StallTimeout/time.Second))
 	case c.Guards.MaxDeletes < 0:
 		return fmt.Errorf("guards.max_deletes must not be negative, got %d", c.Guards.MaxDeletes)
+	}
+	if p := c.Proxy; p != nil {
+		switch {
+		case p.Username == "":
+			return fmt.Errorf("input 'proxy-username' is required when 'proxy-server' is set")
+		case p.Password == "" && strings.TrimSpace(p.PrivateKey) == "":
+			return fmt.Errorf("either input 'proxy-password' or 'proxy-private-key' is required when 'proxy-server' is set")
+		case p.Port < 1 || p.Port > 65535:
+			return fmt.Errorf("input 'proxy-port' must be between 1 and 65535, got %d", p.Port)
+		}
 	}
 	return nil
 }
