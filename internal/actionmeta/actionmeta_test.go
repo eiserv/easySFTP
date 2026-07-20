@@ -64,7 +64,7 @@ func TestActionMetadata(t *testing.T) {
 		"passphrase", "host-key-fingerprint", "known-hosts", "uploads", "config-file", "strategy",
 		"ignore", "ignore-from", "max-deletes", "delete", "dry-run", "concurrency",
 		"sftp-request-concurrency", "sync-fast-path", "skip-unchanged", "retries",
-		"timeout", "stall-timeout", "dir-mode", "file-mode",
+		"timeout", "stall-timeout", "dir-mode", "file-mode", "log-level",
 	}
 	for _, name := range wantInputs {
 		if _, ok := action.Inputs[name]; !ok {

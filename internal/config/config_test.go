@@ -48,7 +48,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("EASYSFTP_UPLOADS", "./dist/ => /www/")
 	for _, name := range []string{"PORT", "PRIVATE_KEY", "PASSPHRASE", "HOST_KEY_FINGERPRINT", "KNOWN_HOSTS",
 		"IGNORE", "IGNORE_FROM", "DELETE", "DRY_RUN", "CONCURRENCY", "SFTP_REQUEST_CONCURRENCY", "RETRIES", "TIMEOUT", "STALL_TIMEOUT",
-		"SYNC_FAST_PATH", "SKIP_UNCHANGED", "CONFIG_FILE", "STRATEGY", "MAX_DELETES", "DIR_MODE", "FILE_MODE"} {
+		"SYNC_FAST_PATH", "SKIP_UNCHANGED", "CONFIG_FILE", "STRATEGY", "MAX_DELETES", "DIR_MODE", "FILE_MODE", "LOG_LEVEL"} {
 		t.Setenv("EASYSFTP_"+name, "")
 	}
 }
@@ -59,7 +59,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.SftpRequestConcurrency != 16 || cfg.Retries != 2 || cfg.DryRun || cfg.SyncFastPath || cfg.SkipUnchanged {
+	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.SftpRequestConcurrency != 16 || cfg.Retries != 2 || cfg.DryRun || cfg.SyncFastPath || cfg.SkipUnchanged || cfg.LogLevel != LogNormal {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
 	if cfg.Timeout.Seconds() != 30 {
@@ -88,6 +88,7 @@ func TestLoadValidation(t *testing.T) {
 		{"negative timeout", map[string]string{"EASYSFTP_TIMEOUT": "-5"}, "'timeout' must not be negative"},
 		{"bad stall-timeout", map[string]string{"EASYSFTP_STALL_TIMEOUT": "soon"}, "invalid stall-timeout"},
 		{"negative stall-timeout", map[string]string{"EASYSFTP_STALL_TIMEOUT": "-5"}, "'stall-timeout' must not be negative"},
+		{"bad log-level", map[string]string{"EASYSFTP_LOG_LEVEL": "loud"}, "'log-level' must be quiet, normal or verbose"},
 		{"bad dir-mode", map[string]string{"EASYSFTP_DIR_MODE": "not-octal"}, "invalid dir-mode"},
 		{"dir-mode out of range", map[string]string{"EASYSFTP_DIR_MODE": "1755"}, "invalid dir-mode"},
 		{"bad file-mode", map[string]string{"EASYSFTP_FILE_MODE": "999"}, "invalid file-mode"},

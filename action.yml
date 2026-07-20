@@ -105,6 +105,18 @@ inputs:
       without changing anything on the server.
     required: false
     default: "false"
+  log-level:
+    description: >-
+      How chatty the log output is. "normal" (the default) logs one line per
+      uploaded or deleted file. "quiet" suppresses those per-file lines and
+      keeps connection info, per-target summaries, warnings and errors, so a
+      20,000-file deploy produces a readable log. "verbose" additionally
+      explains every ignore decision (which pattern excluded which file),
+      useful when debugging ignore patterns. A dry run always logs per-file
+      lines regardless of this input, since inspecting the plan is its whole
+      point.
+    required: false
+    default: "normal"
   concurrency:
     description: >-
       Number of files uploaded in parallel. Also bounds the worker pool that
@@ -254,6 +266,7 @@ runs:
         EASYSFTP_MAX_DELETES: ${{ inputs.max-deletes }}
         EASYSFTP_DELETE: ${{ inputs.delete }}
         EASYSFTP_DRY_RUN: ${{ inputs.dry-run }}
+        EASYSFTP_LOG_LEVEL: ${{ inputs.log-level }}
         EASYSFTP_CONCURRENCY: ${{ inputs.concurrency }}
         EASYSFTP_SFTP_REQUEST_CONCURRENCY: ${{ inputs.sftp-request-concurrency }}
         EASYSFTP_SYNC_FAST_PATH: ${{ inputs.sync-fast-path }}

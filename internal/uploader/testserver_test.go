@@ -455,13 +455,21 @@ func (l testLogger) Warningf(format string, args ...any) { l.t.Logf("WARN  "+for
 func (l testLogger) Group(name string)                   { l.t.Logf("GROUP %s", name) }
 func (l testLogger) EndGroup()                           {}
 
-// recordingLogger wraps testLogger and additionally records every warning
-// message, so tests can assert how many warnings a run produced. Safe for
-// concurrent use since uploads happen in parallel workers.
+// recordingLogger wraps testLogger and additionally records every info and
+// warning message, so tests can assert what a run logged. Safe for concurrent
+// use since uploads happen in parallel workers.
 type recordingLogger struct {
 	testLogger
 	mu       sync.Mutex
+	infos    []string
 	warnings []string
+}
+
+func (l *recordingLogger) Infof(format string, args ...any) {
+	l.testLogger.Infof(format, args...)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.infos = append(l.infos, fmt.Sprintf(format, args...))
 }
 
 func (l *recordingLogger) Warningf(format string, args ...any) {

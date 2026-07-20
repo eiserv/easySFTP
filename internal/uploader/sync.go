@@ -125,7 +125,9 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	var deleted []string // relative paths actually removed, for the recovery manifest
 	for _, rel := range toDelete {
 		full := path.Join(base, rel)
-		log.Infof("%sdelete %s", verb, full)
+		if cfg.LogPerFile() {
+			log.Infof("%sdelete %s", verb, full)
+		}
 		if !cfg.DryRun {
 			if err := client.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
 				writeRecoveryManifest(cfg, client, base, mergedManifest(old, upload, completed, deleted), log)

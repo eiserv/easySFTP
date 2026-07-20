@@ -34,6 +34,33 @@ func (s Strategy) valid() bool {
 	return false
 }
 
+// LogLevel selects how chatty the run's log output is.
+type LogLevel string
+
+const (
+	// LogQuiet logs connection info, per-target summaries, warnings and
+	// errors only; per-file operation lines are suppressed (except in
+	// dry-run mode, where inspecting the plan is the whole point).
+	LogQuiet LogLevel = "quiet"
+	// LogNormal is the default: one line per planned file operation,
+	// exactly today's behavior.
+	LogNormal LogLevel = "normal"
+	// LogVerbose additionally explains ignore decisions: which pattern
+	// excluded which file during planning.
+	LogVerbose LogLevel = "verbose"
+)
+
+// resolveLogLevel maps the log-level input to a concrete level.
+func resolveLogLevel(input string) (LogLevel, error) {
+	switch l := LogLevel(input); l {
+	case "":
+		return LogNormal, nil
+	case LogQuiet, LogNormal, LogVerbose:
+		return l, nil
+	}
+	return "", fmt.Errorf("input 'log-level' must be quiet, normal or verbose, got %q", input)
+}
+
 // UploadPair maps a local path to a remote path with its own strategy.
 type UploadPair struct {
 	Local    string
@@ -91,6 +118,24 @@ type Config struct {
 	// counterpart already exists with the same size (one stat per file).
 	// Deliberately coarse; sync's content hashes are the exact alternative.
 	SkipUnchanged bool
+
+	// LogLevel controls per-file log output; see the LogLevel constants.
+	// The zero value behaves like LogNormal, so directly constructed configs
+	// keep today's behavior.
+	LogLevel LogLevel
+}
+
+// LogPerFile reports whether per-file operation lines (upload/delete/skip)
+// should be logged. A dry run always logs them: inspecting the plan is its
+// whole point, regardless of log-level.
+func (c *Config) LogPerFile() bool {
+	return c.LogLevel != LogQuiet || c.DryRun
+}
+
+// Verbose reports whether verbose-only diagnostics (ignore decisions)
+// should be logged.
+func (c *Config) Verbose() bool {
+	return c.LogLevel == LogVerbose
 }
 
 const envPrefix = "EASYSFTP_"
@@ -139,6 +184,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.SkipUnchanged, err = parseBool(get("SKIP_UNCHANGED"), false); err != nil {
 		return nil, fmt.Errorf("invalid skip-unchanged: %w", err)
+	}
+	if cfg.LogLevel, err = resolveLogLevel(get("LOG_LEVEL")); err != nil {
+		return nil, err
 	}
 	if cfg.DirMode, err = parseMode(get("DIR_MODE"), "dir-mode"); err != nil {
 		return nil, err
