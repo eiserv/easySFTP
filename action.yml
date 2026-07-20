@@ -1,6 +1,6 @@
 name: easySFTP
 description: >-
-  Fast, secure SFTP uploads for GitHub Actions with parallel transfers, host key pinning and rsync-like strategies. Written in Go.
+  Fast, secure SFTP uploads for GitHub Actions with parallel transfers, host key pinning and rsync-like strategies.
 author: eiserv
 
 branding:
