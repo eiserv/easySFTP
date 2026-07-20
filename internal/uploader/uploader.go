@@ -94,7 +94,13 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		st := effectiveStrategy(pair)
 		lines := append(append([]string{}, cfg.IgnoreLines...), pair.Ignore...)
 		matcher := ignore.CompileIgnoreLines(lines...)
-		p, err := buildPlan(pair, st, matcher, !hasNegation(lines))
+		// verbose is nil unless log-level is verbose; buildPlan then explains
+		// every ignore decision.
+		var verbose Logger
+		if cfg.Verbose() {
+			verbose = log
+		}
+		p, err := buildPlan(pair, st, matcher, !hasNegation(lines), verbose)
 		if err != nil {
 			return stats, err
 		}
@@ -176,7 +182,11 @@ func hasNegation(lines []string) bool {
 // hundreds of thousands of entries costs one match instead of a full walk.
 // Callers must clear it when the patterns contain "!" re-includes, which could
 // re-include files below an otherwise ignored directory.
-func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore, pruneDirs bool) (plan, error) {
+//
+// verbose, when non-nil, gets one line per ignore decision (which pattern
+// excluded which file or directory), the level of detail needed to debug
+// ignore patterns.
+func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore, pruneDirs bool, verbose Logger) (plan, error) {
 	p := plan{pair: pair, strategy: strategy}
 	remoteBase := normalizeRemote(pair.Remote)
 
@@ -198,7 +208,10 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 		if strings.HasSuffix(pair.Remote, "/") || remoteBase == "." {
 			remotePath = path.Join(remoteBase, filepath.Base(pair.Local))
 		}
-		if matcher.MatchesPath(filepath.Base(pair.Local)) {
+		if matched, pat := matcher.MatchesPathHow(filepath.Base(pair.Local)); matched {
+			if verbose != nil {
+				verbose.Infof("skip %s (ignore pattern %q)", filepath.Base(pair.Local), pat.Line)
+			}
 			return p, nil
 		}
 		p.files = append(p.files, fileItem{
@@ -224,12 +237,23 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
 			// The trailing slash lets directory-only patterns ("dist/") match.
-			if pruneDirs && rel != "." && matcher.MatchesPath(rel+"/") {
-				return filepath.SkipDir
+			if pruneDirs && rel != "." {
+				if matched, pat := matcher.MatchesPathHow(rel + "/"); matched {
+					if verbose != nil {
+						verbose.Infof("skip %s/ and everything below it (ignore pattern %q)", rel, pat.Line)
+					}
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}
-		if rel == manifestName || matcher.MatchesPath(rel) {
+		if rel == manifestName {
+			return nil
+		}
+		if matched, pat := matcher.MatchesPathHow(rel); matched {
+			if verbose != nil {
+				verbose.Infof("skip %s (ignore pattern %q)", rel, pat.Line)
+			}
 			return nil
 		}
 		fi, err := d.Info()
@@ -348,7 +372,9 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 			return err
 		}
 		for _, f := range files {
-			log.Infof("%sdelete %s", verb, f)
+			if cfg.LogPerFile() {
+				log.Infof("%sdelete %s", verb, f)
+			}
 			if !cfg.DryRun {
 				if err := client.Remove(f); err != nil {
 					return fmt.Errorf("deleting %q: %w", f, err)
@@ -412,12 +438,16 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 			if skipUnchanged {
 				client, _ := sess.current()
 				if fi, err := client.Stat(f.remotePath); err == nil && fi.Mode().IsRegular() && fi.Size() == f.size {
-					log.Infof("%sskip %s (remote file has the same size)", verb, f.remotePath)
+					if cfg.LogPerFile() {
+						log.Infof("%sskip %s (remote file has the same size)", verb, f.remotePath)
+					}
 					skipped[i] = true
 					return nil
 				}
 			}
-			log.Infof("%supload %s => %s (%s)", verb, f.localPath, f.remotePath, humanSize(f.size))
+			if cfg.LogPerFile() {
+				log.Infof("%supload %s => %s (%s)", verb, f.localPath, f.remotePath, humanSize(f.size))
+			}
 			if cfg.DryRun {
 				// Report the planned byte count so bytes-uploaded matches the
 				// "planned counts" contract of the other dry-run outputs.
