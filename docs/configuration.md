@@ -143,6 +143,11 @@ ignore: |
 - `!pattern` re-includes files excluded by an earlier pattern.
 - `ignore` and `ignore-from` are additive; in the config file, per-target
   `ignore` lists add to the global one.
+- An ignored directory (e.g. `node_modules/`) is skipped without being walked
+  at all, so huge excluded trees cost nothing during planning. This pruning is
+  automatically disabled as soon as any pattern is a `!` re-include, because a
+  re-include may point below an ignored directory; results are identical either
+  way, only planning speed differs.
 
 ## The YAML config file
 

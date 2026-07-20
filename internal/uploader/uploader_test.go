@@ -17,9 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eiserv/easySFTP/internal/config"
+	ignore "github.com/sabhiram/go-gitignore"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"github.com/eiserv/easySFTP/internal/config"
 )
 
 // writeTree creates files under root; keys are slash-separated relative paths.
@@ -805,5 +807,102 @@ func TestSkipUnchangedWarnsOnNonOverlay(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a warning that skip-unchanged is ignored for sync, got %v", log.warnings)
+	}
+}
+
+func TestIgnoredDirectoryIsPruned(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 000 does not restrict directory reads on Windows")
+	}
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{
+		"index.html":          "x",
+		"node_modules/x/y.js": "y",
+	})
+	// An unreadable ignored directory: descending into it would fail the walk,
+	// so a successful plan proves it was pruned, not just filtered per file.
+	if err := os.Chmod(filepath.Join(local, "node_modules"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(local, "node_modules"), 0o755) })
+
+	matcher := ignore.CompileIgnoreLines("node_modules/")
+	p, err := buildPlan(config.UploadPair{Local: local, Remote: "/www"}, config.StrategyOverlay, matcher, true)
+	if err != nil {
+		t.Fatalf("walk descended into the pruned directory: %v", err)
+	}
+	if len(p.files) != 1 || p.files[0].rel != "index.html" {
+		t.Errorf("unexpected plan files: %+v", p.files)
+	}
+}
+
+func TestIgnoreNegationReincludesBelowIgnoredDirectory(t *testing.T) {
+	srv := startTestServer(t)
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{
+		"index.html":            "x",
+		"node_modules/keep.js":  "keep",
+		"node_modules/other.js": "drop",
+	})
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+	cfg.IgnoreLines = []string{"node_modules/", "!node_modules/keep.js"}
+
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FilesUploaded != 2 {
+		t.Errorf("expected 2 uploads, got %d", stats.FilesUploaded)
+	}
+	if got := readRemote(t, srv, "/www/node_modules/keep.js"); got != "keep" {
+		t.Errorf("re-included file missing or wrong: %q", got)
+	}
+	if remoteExists(t, srv, "/www/node_modules/other.js") {
+		t.Error("ignored file other.js was uploaded")
+	}
+}
+
+func TestHasNegation(t *testing.T) {
+	if hasNegation([]string{"*.log", "node_modules/"}) {
+		t.Error("no negation expected")
+	}
+	if !hasNegation([]string{"*.log", "!important.log"}) {
+		t.Error("negation expected")
+	}
+}
+
+// BenchmarkBuildPlanIgnoredTree compares planning over a tree whose bulk sits
+// in an ignored node_modules/ directory, with and without directory pruning.
+func BenchmarkBuildPlanIgnoredTree(b *testing.B) {
+	local := b.TempDir()
+	for i := range 200 {
+		dir := filepath.Join(local, "node_modules", "pkg"+strconv.Itoa(i))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.Fatal(err)
+		}
+		for j := range 10 {
+			if err := os.WriteFile(filepath.Join(dir, "f"+strconv.Itoa(j)+".js"), []byte("x"), 0o644); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	if err := os.WriteFile(filepath.Join(local, "index.html"), []byte("x"), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	matcher := ignore.CompileIgnoreLines("node_modules/")
+	pair := config.UploadPair{Local: local, Remote: "/www"}
+	for _, bench := range []struct {
+		name  string
+		prune bool
+	}{{"pruned", true}, {"unpruned", false}} {
+		b.Run(bench.name, func(b *testing.B) {
+			for b.Loop() {
+				if _, err := buildPlan(pair, config.StrategyOverlay, matcher, bench.prune); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
