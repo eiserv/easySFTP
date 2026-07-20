@@ -7,6 +7,7 @@ stored as [encrypted secrets](https://docs.github.com/en/actions/security-guides
 - [Mirror a build with sync](#mirror-a-build-with-sync)
 - [Multiple targets with a config file](#multiple-targets-with-a-config-file)
 - [Key-based authentication](#key-based-authentication)
+- [Deploy through a jump host (bastion)](#deploy-through-a-jump-host-bastion)
 - [Upload a single file (with rename)](#upload-a-single-file-with-rename)
 - [Preview a deploy in pull requests](#preview-a-deploy-in-pull-requests)
 - [Using the outputs](#using-the-outputs)
@@ -105,6 +106,27 @@ Preferred over passwords, see the [security guide](security.md#credentials):
     private-key: ${{ secrets.SFTP_PRIVATE_KEY }}
     passphrase: ${{ secrets.SFTP_PASSPHRASE }}   # only if the key is encrypted
     host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
+    uploads: ./dist/ => /var/www/html/
+```
+
+## Deploy through a jump host (bastion)
+
+For servers that are not reachable from the public internet, connect through
+a bastion like OpenSSH's `ProxyJump`. Each hop has its own credentials and
+its own host key verification (see
+[configuration](configuration.md#jump-host-bastion)):
+
+```yaml
+- uses: eiserv/easySFTP@v2
+  with:
+    server: sftp.internal.example.com
+    username: ${{ secrets.SFTP_USERNAME }}
+    private-key: ${{ secrets.SFTP_PRIVATE_KEY }}
+    host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
+    proxy-server: bastion.example.com
+    proxy-username: ${{ secrets.JUMP_USERNAME }}
+    proxy-private-key: ${{ secrets.JUMP_PRIVATE_KEY }}
+    proxy-host-key-fingerprint: ${{ secrets.JUMP_HOST_KEY_FINGERPRINT }}
     uploads: ./dist/ => /var/www/html/
 ```
 

@@ -830,32 +830,94 @@ func sendKeepalives(ctx context.Context, client func() *ssh.Client, interval tim
 	}
 }
 
-// connect dials the server and opens an SFTP session on top of SSH.
-func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, error) {
+// hop carries the connection parameters of one SSH hop: the primary server,
+// or the optional jump host in front of it. inputPrefix ("" or "proxy-")
+// names the inputs in warnings and errors, so each hop's message points at
+// the right knobs.
+type hop struct {
+	addr         string
+	user         string
+	password     string
+	privateKey   string
+	passphrase   string
+	fingerprints []string
+	knownHosts   string
+	inputPrefix  string
+}
+
+// clientConfig builds the ssh.ClientConfig for this hop, including its own
+// host key verification.
+func (h hop) clientConfig(timeout time.Duration, log Logger) (*ssh.ClientConfig, error) {
 	// Auth and host key setup errors are local configuration problems, never
 	// fixed by dialing again; tag them so the connect retry loop fails fast.
-	auth, err := authMethods(cfg)
+	auth, err := authMethods(h)
 	if err != nil {
-		return nil, nil, permanentError{err}
+		return nil, permanentError{err}
 	}
-
-	hostKeyCallback, err := hostKeyCallback(cfg, log)
+	cb, err := hostKeyCallback(h, log)
 	if err != nil {
-		return nil, nil, permanentError{err}
+		return nil, permanentError{err}
 	}
-
-	sshConfig := &ssh.ClientConfig{
-		User:            cfg.Username,
+	return &ssh.ClientConfig{
+		User:            h.user,
 		Auth:            auth,
-		HostKeyCallback: hostKeyCallback,
-		Timeout:         cfg.Timeout,
+		HostKeyCallback: cb,
+		Timeout:         timeout,
+	}, nil
+}
+
+// targetHop maps the primary connection settings onto a hop.
+func targetHop(cfg *config.Config) hop {
+	return hop{
+		addr:         net.JoinHostPort(cfg.Server, fmt.Sprintf("%d", cfg.Port)),
+		user:         cfg.Username,
+		password:     cfg.Password,
+		privateKey:   cfg.PrivateKey,
+		passphrase:   cfg.Passphrase,
+		fingerprints: cfg.HostKeyFingerprints,
+		knownHosts:   cfg.KnownHosts,
+	}
+}
+
+// jumpHop maps the proxy-* settings onto a hop.
+func jumpHop(p *config.Proxy) hop {
+	return hop{
+		addr:         net.JoinHostPort(p.Server, fmt.Sprintf("%d", p.Port)),
+		user:         p.Username,
+		password:     p.Password,
+		privateKey:   p.PrivateKey,
+		passphrase:   p.Passphrase,
+		fingerprints: p.HostKeyFingerprints,
+		knownHosts:   p.KnownHosts,
+		inputPrefix:  "proxy-",
+	}
+}
+
+// connect dials the server, optionally through the configured jump host, and
+// opens an SFTP session on top of SSH. The returned cleanup function closes
+// the jump-host transport (it is a no-op for direct connections) and must be
+// called after the SSH client is closed.
+func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, func(), error) {
+	noop := func() {}
+	target := targetHop(cfg)
+	targetConfig, err := target.clientConfig(cfg.Timeout, log)
+	if err != nil {
+		return nil, nil, noop, err
 	}
 
-	addr := net.JoinHostPort(cfg.Server, fmt.Sprintf("%d", cfg.Port))
-	log.Infof("connecting to %s as %s ...", addr, cfg.Username)
-	sshClient, err := ssh.Dial("tcp", addr, sshConfig)
-	if err != nil {
-		return nil, nil, fmt.Errorf("connecting to %s: %w", addr, err)
+	var sshClient *ssh.Client
+	cleanup := noop
+	if cfg.Proxy == nil {
+		log.Infof("connecting to %s as %s ...", target.addr, target.user)
+		sshClient, err = ssh.Dial("tcp", target.addr, targetConfig)
+		if err != nil {
+			return nil, nil, noop, fmt.Errorf("connecting to %s: %w", target.addr, err)
+		}
+	} else {
+		sshClient, cleanup, err = dialViaJump(cfg, target.addr, targetConfig, log)
+		if err != nil {
+			return nil, nil, noop, err
+		}
 	}
 
 	sftpClient, err := sftp.NewClient(sshClient,
@@ -864,49 +926,82 @@ func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, error) 
 	)
 	if err != nil {
 		sshClient.Close()
-		return nil, nil, fmt.Errorf("opening SFTP session: %w", err)
+		cleanup()
+		return nil, nil, noop, fmt.Errorf("opening SFTP session: %w", err)
 	}
-	return sshClient, sftpClient, nil
+	return sshClient, sftpClient, cleanup, nil
 }
 
-func authMethods(cfg *config.Config) ([]ssh.AuthMethod, error) {
+// dialViaJump connects to the jump host with its own auth and host key
+// verification, opens a TCP tunnel to the target through it, and runs the
+// target's SSH handshake (with the target's own host key verification) over
+// that tunnel. The returned cleanup closes the jump transport.
+func dialViaJump(cfg *config.Config, targetAddr string, targetConfig *ssh.ClientConfig, log Logger) (*ssh.Client, func(), error) {
+	jump := jumpHop(cfg.Proxy)
+	jumpConfig, err := jump.clientConfig(cfg.Timeout, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	log.Infof("connecting to jump host %s as %s ...", jump.addr, jump.user)
+	jumpClient, err := ssh.Dial("tcp", jump.addr, jumpConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connecting to jump host %s: %w", jump.addr, err)
+	}
+	log.Infof("connecting to %s as %s through the jump host ...", targetAddr, targetConfig.User)
+	conn, err := jumpClient.Dial("tcp", targetAddr)
+	if err != nil {
+		jumpClient.Close()
+		return nil, nil, fmt.Errorf("dialing %s through jump host %s: %w", targetAddr, jump.addr, err)
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, targetConfig)
+	if err != nil {
+		conn.Close()
+		jumpClient.Close()
+		return nil, nil, fmt.Errorf("connecting to %s through jump host %s: %w", targetAddr, jump.addr, err)
+	}
+	return ssh.NewClient(ncc, chans, reqs), func() { jumpClient.Close() }, nil
+}
+
+func authMethods(h hop) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
-	if key := strings.TrimSpace(cfg.PrivateKey); key != "" {
+	if key := strings.TrimSpace(h.privateKey); key != "" {
 		var signer ssh.Signer
 		var err error
-		if cfg.Passphrase != "" {
-			signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(key+"\n"), []byte(cfg.Passphrase))
+		if h.passphrase != "" {
+			signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(key+"\n"), []byte(h.passphrase))
 		} else {
 			signer, err = ssh.ParsePrivateKey([]byte(key + "\n"))
 		}
 		if err != nil {
-			return nil, fmt.Errorf("parsing private key: %w", err)
+			return nil, fmt.Errorf("parsing %sprivate-key: %w", h.inputPrefix, err)
 		}
 		methods = append(methods, ssh.PublicKeys(signer))
 	}
-	if cfg.Password != "" {
-		methods = append(methods, ssh.Password(cfg.Password))
+	if h.password != "" {
+		methods = append(methods, ssh.Password(h.password))
 	}
 	return methods, nil
 }
 
-func hostKeyCallback(cfg *config.Config, log Logger) (ssh.HostKeyCallback, error) {
-	want := cfg.HostKeyFingerprints
-	if len(want) == 0 && cfg.KnownHosts == "" {
-		log.Warningf("no host-key-fingerprint or known-hosts configured; the server's identity will NOT be verified. " +
-			"Run 'ssh-keyscan <server>' and set the known-hosts input (or convert with 'ssh-keygen -lf -' " +
-			"and set host-key-fingerprint) to pin it.")
+func hostKeyCallback(h hop, log Logger) (ssh.HostKeyCallback, error) {
+	want := h.fingerprints
+	if len(want) == 0 && h.knownHosts == "" {
+		// The warning fires per hop: a pinned target behind an unpinned jump
+		// host (or vice versa) still deserves a nudge for the open hop.
+		log.Warningf("no %[1]shost-key-fingerprint or %[1]sknown-hosts configured; the identity of %[2]s will NOT be verified. "+
+			"Run 'ssh-keyscan <server>' and set the %[1]sknown-hosts input (or convert with 'ssh-keygen -lf -' "+
+			"and set %[1]shost-key-fingerprint) to pin it.", h.inputPrefix, h.addr)
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
 	for _, fp := range want {
 		if !strings.HasPrefix(fp, "SHA256:") {
-			return nil, fmt.Errorf("host-key-fingerprint must be a SHA256 fingerprint like 'SHA256:...', got %q", fp)
+			return nil, fmt.Errorf("%shost-key-fingerprint must be a SHA256 fingerprint like 'SHA256:...', got %q", h.inputPrefix, fp)
 		}
 	}
 	var khCallback ssh.HostKeyCallback
-	if cfg.KnownHosts != "" {
+	if h.knownHosts != "" {
 		var err error
-		if khCallback, err = knownHostsCallback(cfg.KnownHosts); err != nil {
+		if khCallback, err = knownHostsCallback(h.knownHosts); err != nil {
 			return nil, err
 		}
 	}
