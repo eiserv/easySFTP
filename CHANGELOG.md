@@ -5,6 +5,15 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1](https://github.com/eiserv/easySFTP/compare/v2.2.0...v2.2.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **gha:** sanitize Infof lines against workflow-command spoofing ([#112](https://github.com/eiserv/easySFTP/issues/112)) ([70de96e](https://github.com/eiserv/easySFTP/commit/70de96eb13e052c79ea0d43e4d48f168027c3d13)), closes [#105](https://github.com/eiserv/easySFTP/issues/105)
+* **uploader:** cover deletes, scans and manifest writes with reconnect and stall-timeout ([#113](https://github.com/eiserv/easySFTP/issues/113)) ([b26ab56](https://github.com/eiserv/easySFTP/commit/b26ab5683e057b5dd4ce01bcb14d44865c52441b))
+* warn when opening the sync manifest fails ([#116](https://github.com/eiserv/easySFTP/issues/116)) ([8b7c7bf](https://github.com/eiserv/easySFTP/commit/8b7c7bf114bac3dc306740143412c8bb3cd1a2d8))
+
 ## [2.2.0](https://github.com/eiserv/easySFTP/compare/v2.1.0...v2.2.0) (2026-07-20)
 
 
