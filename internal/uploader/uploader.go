@@ -18,8 +18,8 @@ import (
 	"os"
 	"time"
 
-	ignore "github.com/sabhiram/go-gitignore"
 	"github.com/pkg/sftp"
+	ignore "github.com/sabhiram/go-gitignore"
 
 	"github.com/eiserv/easySFTP/internal/config"
 )
