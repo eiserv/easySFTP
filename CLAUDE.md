@@ -79,10 +79,25 @@ Look at how existing inputs are wired before adding a new one:
   - Directory chmod against this fake server always errors (see above);
     that's a fake-server limitation, not a bug in the code under test.
 - Similar fault-injection wrappers exist for rename (`faultyRename`,
-  `withFailRename()`) and connection drops (`withDropAfter`,
-  `withDropFirstConnAfter`). Follow that pattern (wrap the relevant
-  `Handlers` field, add a `serverOption`) for new fault-injection needs
-  instead of building a new fake server.
+  `withFailRename()`), connection drops (`withDropAfter`,
+  `withDropFirstConnAfter`), request-triggered drops
+  (`withDropOnRequest(method, path)`, which kills the live connection the
+  first time a matching SFTP request arrives; use it to simulate a drop
+  during a non-transfer phase like a delete sweep or remote scan) and
+  request-triggered hangs (`withStallOnRequest`). Follow that pattern (wrap
+  the relevant `Handlers` field, add a `serverOption`) for new
+  fault-injection needs instead of building a new fake server. Note that
+  `withDropOnRequest` closes *every* live connection, including any
+  `verifyClient` session opened before the drop fires; open verification
+  clients after the run, not before.
+- Every remote operation outside the per-file upload path must go through
+  `session.do` (see `internal/uploader/session.go`): it redials on
+  connection-class errors sharing the `retries` reconnect budget and marks
+  the operation active for the stall watchdog. Ops passed to it must be
+  idempotent, because a retried op may have partially or fully taken effect
+  before the connection died. Multi-round-trip helpers called inside a `do`
+  op should call `watch.tick()` (nil-safe) after each completed round-trip
+  so a long healthy phase is not mistaken for a stall.
 - Every `FileCmder` wrapper in `testserver_test.go` must implement
   `PosixRename` (delegate via `posixRenamePassthrough`): pkg/sftp serves
   posix-rename only when the outermost `FileCmder` implements
