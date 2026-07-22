@@ -42,6 +42,22 @@ type testServer struct {
 	accepted      int32 // total connections accepted, for asserting attempt counts
 
 	keepalives *int64 // if set, counts "keepalive@openssh.com" global requests received
+
+	// Live connections, tracked so request-triggered fault injection
+	// (withDropOnRequest) can kill them from inside a handler.
+	connMu    sync.Mutex
+	liveConns []net.Conn
+}
+
+// closeLiveConns closes every currently accepted connection, simulating a
+// server-side drop that hits mid-request.
+func (s *testServer) closeLiveConns() {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	for _, c := range s.liveConns {
+		c.Close()
+	}
+	s.liveConns = nil
 }
 
 // serverOption tweaks a testServer before it starts serving.
@@ -387,6 +403,96 @@ func (f *faultyPathCmd) PosixRename(r *sftp.Request) error {
 	return posixRenamePassthrough(f.inner, r)
 }
 
+// dropOnRequest kills the client's connection the first time a matching SFTP
+// request arrives, simulating a connection drop during a non-transfer phase
+// (a delete sweep, a remote scan, a manifest write) rather than mid-upload.
+// The matched request never completes on the server, exactly like a real drop
+// between request and response; later connections (reconnects) run clean.
+type dropOnRequest struct {
+	inner  sftp.FileCmder
+	list   sftp.FileLister
+	method string // e.g. "Remove", "List"
+	path   string
+	kill   func()
+	fired  atomic.Bool
+}
+
+// withDropOnRequest installs a dropOnRequest for the given method and exact
+// path, wrapping both the command and list handlers.
+func withDropOnRequest(method, path string) serverOption {
+	return func(s *testServer) {
+		d := &dropOnRequest{
+			inner:  s.handlers.FileCmd,
+			list:   s.handlers.FileList,
+			method: method,
+			path:   path,
+			kill:   s.closeLiveConns,
+		}
+		s.handlers.FileCmd = d
+		s.handlers.FileList = d
+	}
+}
+
+func (d *dropOnRequest) trip(method, path string) bool {
+	if method == d.method && path == d.path && !d.fired.Swap(true) {
+		d.kill()
+		return true
+	}
+	return false
+}
+
+func (d *dropOnRequest) Filecmd(r *sftp.Request) error {
+	if d.trip(r.Method, r.Filepath) {
+		// The connection is already dead; the client never sees this error.
+		return errors.New("injected connection drop")
+	}
+	return d.inner.Filecmd(r)
+}
+
+func (d *dropOnRequest) PosixRename(r *sftp.Request) error {
+	if d.trip("PosixRename", r.Target) {
+		return errors.New("injected connection drop")
+	}
+	return posixRenamePassthrough(d.inner, r)
+}
+
+func (d *dropOnRequest) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
+	if d.trip(r.Method, r.Filepath) {
+		return nil, errors.New("injected connection drop")
+	}
+	return d.list.Filelist(r)
+}
+
+// stallOnRequest blocks the first matching SFTP request without responding,
+// simulating a server that is alive but hangs during a non-transfer phase.
+// The block releases after a generous safety timeout so an abandoned handler
+// goroutine cannot outlive the test binary for long (same pattern as
+// stallConn).
+type stallOnRequest struct {
+	inner  sftp.FileCmder
+	method string
+	path   string
+	fired  atomic.Bool
+}
+
+func withStallOnRequest(method, path string) serverOption {
+	return func(s *testServer) {
+		s.handlers.FileCmd = &stallOnRequest{inner: s.handlers.FileCmd, method: method, path: path}
+	}
+}
+
+func (f *stallOnRequest) Filecmd(r *sftp.Request) error {
+	if r.Method == f.method && r.Filepath == f.path && !f.fired.Swap(true) {
+		time.Sleep(30 * time.Second)
+		return errors.New("stalled request finally failed")
+	}
+	return f.inner.Filecmd(r)
+}
+
+func (f *stallOnRequest) PosixRename(r *sftp.Request) error {
+	return posixRenamePassthrough(f.inner, r)
+}
+
 // dropConn closes the connection once it has read limit bytes, simulating a
 // network drop partway through a transfer.
 type dropConn struct {
@@ -451,6 +557,9 @@ func (s *testServer) acceptLoop() {
 		if s.stallAfter > 0 {
 			conn = &stallConn{Conn: conn, limit: s.stallAfter, stall: make(chan struct{})}
 		}
+		s.connMu.Lock()
+		s.liveConns = append(s.liveConns, conn)
+		s.connMu.Unlock()
 		go s.handleConn(conn)
 	}
 }

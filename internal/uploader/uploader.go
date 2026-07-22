@@ -13,10 +13,13 @@ package uploader
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	ignore "github.com/sabhiram/go-gitignore"
+	"github.com/pkg/sftp"
 
 	"github.com/eiserv/easySFTP/internal/config"
 )
@@ -153,16 +156,22 @@ func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan,
 // the strategy is clean.
 func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, watch *stallWatchdog, log Logger) error {
 	verb := planVerb(cfg)
-	// Non-upload operations (the clean sweep below) use a client snapshot;
-	// only the per-file upload path is reconnect-aware.
-	client, _ := sess.current()
 
 	if p.strategy == config.StrategyClean {
 		base := normalizeRemote(p.pair.Remote)
 		if err := checkRemoteRoot(p.pair.Remote); err != nil {
 			return err
 		}
-		files, dirs, err := listRemoteContents(client, base)
+		// The whole sweep runs through sess.do, so a connection drop mid-scan
+		// or mid-delete redials (within the shared reconnect budget) instead
+		// of failing the run; see issue #107. The scan is idempotent and
+		// simply reruns on a fresh client.
+		var files, dirs []string
+		err := sess.do(ctx, watch, func(client *sftp.Client) error {
+			var err error
+			files, dirs, err = listRemoteContents(client, base, watch)
+			return err
+		})
 		if err != nil {
 			return fmt.Errorf("scanning remote directory %q: %w", p.pair.Remote, err)
 		}
@@ -174,7 +183,15 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 				log.Infof("%sdelete %s", verb, f)
 			}
 			if !cfg.DryRun {
-				if err := client.Remove(f); err != nil {
+				err := sess.do(ctx, watch, func(client *sftp.Client) error {
+					// Already-gone counts as deleted: a retried delete may
+					// have landed before the connection died.
+					if err := client.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+						return err
+					}
+					return nil
+				})
+				if err != nil {
 					return fmt.Errorf("deleting %q: %w", f, err)
 				}
 			}
@@ -184,7 +201,10 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		// directory that is not empty (e.g. an unreadable entry) is left be.
 		for i := len(dirs) - 1; i >= 0; i-- {
 			if !cfg.DryRun {
-				_ = client.RemoveDirectory(dirs[i])
+				dir := dirs[i]
+				_ = sess.do(ctx, watch, func(client *sftp.Client) error {
+					return client.RemoveDirectory(dir)
+				})
 			}
 		}
 	}

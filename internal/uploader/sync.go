@@ -51,11 +51,19 @@ type manifest struct {
 func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, watch *stallWatchdog, log Logger) error {
 	verb := planVerb(cfg)
 	base := normalizeRemote(p.pair.Remote)
-	// Manifest handling and deletions use a client snapshot; only the
-	// per-file upload path is reconnect-aware.
-	client, _ := sess.current()
 
-	old := readManifest(client, base, cfg.SyncManifestName(), log)
+	// Every remote operation in this function runs through sess.do, so a
+	// connection drop during manifest handling or the delete phase redials
+	// (within the shared reconnect budget) instead of failing the run, and a
+	// hung server trips stall-timeout; see issue #107.
+	var old manifest
+	if err := sess.do(ctx, watch, func(client *sftp.Client) error {
+		var err error
+		old, err = readManifest(client, base, cfg.SyncManifestName(), log)
+		return err
+	}); err != nil {
+		return fmt.Errorf("reading sync manifest in %q: %w", base, err)
+	}
 
 	// Hash after reading the manifest (not during buildPlan) so that, with
 	// sync-fast-path opted in, unchanged files whose size and mtime still
@@ -112,14 +120,8 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	// skip-unchanged is always off here: sync already decided what changed
 	// from the manifest hashes, which is strictly more precise.
 	completed, err := uploadFiles(ctx, cfg, sess, upload, dirs, stats, verb, watch, false, log)
-
-	// A reconnect during the uploads leaves the snapshot above dead; refresh
-	// it before anything else touches the server, so the recovery manifest
-	// below (and the deletions after it) use the live client.
-	client, _ = sess.current()
-
 	if err != nil {
-		writeRecoveryManifest(cfg, client, base, mergedManifest(old, upload, completed, nil), log)
+		writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, nil), log)
 		return err
 	}
 
@@ -130,8 +132,16 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 			log.Infof("%sdelete %s", verb, full)
 		}
 		if !cfg.DryRun {
-			if err := client.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
-				writeRecoveryManifest(cfg, client, base, mergedManifest(old, upload, completed, deleted), log)
+			err := sess.do(ctx, watch, func(client *sftp.Client) error {
+				// Already-gone counts as deleted: a retried delete may have
+				// landed before the connection died.
+				if err := client.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+				return nil
+			})
+			if err != nil {
+				writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, deleted), log)
 				return fmt.Errorf("deleting %q: %w", full, err)
 			}
 		}
@@ -148,8 +158,10 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	for i, rel := range deleted {
 		deletedFull[i] = path.Join(base, rel)
 	}
-	pruneEmptyDirs(client, base, deletedFull)
-	if err := writeManifest(client, base, cfg.SyncManifestName(), manifest{Version: manifestVersion, Files: local}); err != nil {
+	pruneEmptyDirs(ctx, sess, watch, base, deletedFull)
+	if err := sess.do(ctx, watch, func(client *sftp.Client) error {
+		return writeManifest(client, base, cfg.SyncManifestName(), manifest{Version: manifestVersion, Files: local})
+	}); err != nil {
 		return fmt.Errorf("writing sync manifest in %q: %w", base, err)
 	}
 	return nil
@@ -178,12 +190,17 @@ func mergedManifest(old manifest, upload []fileItem, completed []bool, deleted [
 // writeRecoveryManifest best-effort persists the merged manifest of a failing
 // run, so a retry resumes from the files that did make it instead of
 // re-uploading them. The run is already failing; a manifest write error here
-// is logged, not returned.
-func writeRecoveryManifest(cfg *config.Config, client *sftp.Client, base string, m manifest, log Logger) {
+// is logged, not returned. It goes through sess.do so a run that failed to a
+// connection drop still records its progress on the redialed connection
+// (budget permitting).
+func writeRecoveryManifest(ctx context.Context, cfg *config.Config, sess *session, watch *stallWatchdog, base string, m manifest, log Logger) {
 	if cfg.DryRun {
 		return
 	}
-	if err := writeManifest(client, base, cfg.SyncManifestName(), m); err != nil {
+	err := sess.do(ctx, watch, func(client *sftp.Client) error {
+		return writeManifest(client, base, cfg.SyncManifestName(), m)
+	})
+	if err != nil {
 		log.Warningf("could not record partial progress in the sync manifest in %s (a retry will re-upload this run's completed files): %v", base, err)
 		return
 	}
@@ -193,31 +210,40 @@ func writeRecoveryManifest(cfg *config.Config, client *sftp.Client, base string,
 // readManifest loads the remote manifest. A missing manifest means a first
 // sync (empty). A corrupt one is treated the same, with a warning, so a bad
 // manifest degrades to "upload everything, delete nothing" instead of failing.
+// A connection-class failure is returned as an error instead of being folded
+// into "first sync": the caller (sess.do) reconnects and retries the read, so
+// a mid-run drop cannot silently discard the manifest.
 //
 // Both the current (v2: hash+size+mtime) and old (v1: hash only) formats are
 // accepted; a v1 entry decodes with MTime 0, which never matches the fast
 // path in hashPlanFiles, so upgrading from a v1 manifest costs one full
 // re-hash and then writes v2 from then on.
-func readManifest(client *sftp.Client, dir, name string, log Logger) manifest {
+func readManifest(client *sftp.Client, dir, name string, log Logger) (manifest, error) {
 	empty := manifest{Version: manifestVersion, Files: map[string]manifestEntry{}}
 	f, err := client.Open(path.Join(dir, name))
 	if err != nil {
+		if isConnError(err) {
+			return empty, err
+		}
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Warningf("could not open sync manifest in %s (%v); treating as first sync", dir, err)
 		}
-		return empty
+		return empty, nil
 	}
 	defer f.Close()
 
 	data, err := io.ReadAll(f)
 	if err != nil {
+		if isConnError(err) {
+			return empty, err
+		}
 		log.Warningf("could not read sync manifest in %s (%v); treating as first sync", dir, err)
-		return empty
+		return empty, nil
 	}
 
 	var v2 manifest
 	if err := json.Unmarshal(data, &v2); err == nil && v2.Files != nil {
-		return v2
+		return v2, nil
 	}
 
 	var v1 struct {
@@ -229,11 +255,11 @@ func readManifest(client *sftp.Client, dir, name string, log Logger) manifest {
 		for rel, hash := range v1.Files {
 			files[rel] = manifestEntry{Hash: hash}
 		}
-		return manifest{Version: v1.Version, Files: files}
+		return manifest{Version: v1.Version, Files: files}, nil
 	}
 
 	log.Warningf("sync manifest in %s is unreadable; treating as first sync", dir)
-	return empty
+	return empty, nil
 }
 
 // writeManifest atomically writes the manifest into dir under name.
@@ -259,8 +285,10 @@ func writeManifest(client *sftp.Client, dir, name string, m manifest) error {
 }
 
 // pruneEmptyDirs best-effort removes directories left empty by deletions,
-// deepest first, walking up to (but not including) base.
-func pruneEmptyDirs(client *sftp.Client, base string, deleted []string) {
+// deepest first, walking up to (but not including) base. Each removal runs
+// through sess.do: the outcome stays best-effort, but a dropped connection is
+// redialed rather than silently failing every remaining removal.
+func pruneEmptyDirs(ctx context.Context, sess *session, watch *stallWatchdog, base string, deleted []string) {
 	seen := map[string]struct{}{}
 	var candidates []string
 	for _, f := range deleted {
@@ -275,7 +303,9 @@ func pruneEmptyDirs(client *sftp.Client, base string, deleted []string) {
 	// Deepest paths sort last; remove them first so parents can then empty out.
 	sort.Sort(sort.Reverse(sort.StringSlice(candidates)))
 	for _, dir := range candidates {
-		_ = client.RemoveDirectory(dir)
+		_ = sess.do(ctx, watch, func(client *sftp.Client) error {
+			return client.RemoveDirectory(dir)
+		})
 	}
 }
 

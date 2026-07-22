@@ -42,8 +42,18 @@ func (w *stallWatchdog) stop() { close(w.done) }
 // begin marks one transfer attempt as active. The tick resets the silence
 // clock, so a transfer that hangs in its very first operation (e.g. opening
 // the remote file on a stalled server) still gets the full timeout window.
-func (w *stallWatchdog) begin() { w.ticks.Add(1); w.active.Add(1) }
+func (w *stallWatchdog) begin() { w.tick(); w.active.Add(1) }
 func (w *stallWatchdog) end()   { w.active.Add(-1) }
+
+// tick counts one unit of remote progress. Safe on a nil watchdog, so helpers
+// inside multi-operation phases (remote scans, directory creation) can tick
+// after every completed round-trip without threading nil checks around: a
+// long but healthy phase must not read as silence.
+func (w *stallWatchdog) tick() {
+	if w != nil {
+		w.ticks.Add(1)
+	}
+}
 
 func (w *stallWatchdog) monitor() {
 	interval := w.timeout / 4
