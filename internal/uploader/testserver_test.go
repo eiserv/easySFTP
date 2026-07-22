@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -45,6 +46,26 @@ type testServer struct {
 
 // serverOption tweaks a testServer before it starts serving.
 type serverOption func(*testServer)
+
+// faultyOpen rejects reads of one exact path while delegating every other
+// request to the in-memory handler.
+type faultyOpen struct {
+	inner sftp.FileReader
+	path  string
+}
+
+func (f *faultyOpen) Fileread(r *sftp.Request) (io.ReaderAt, error) {
+	if r.Filepath == f.path {
+		return nil, errors.New("injected open failure")
+	}
+	return f.inner.Fileread(r)
+}
+
+func withFailOpen(path string) serverOption {
+	return func(s *testServer) {
+		s.handlers.FileGet = &faultyOpen{inner: s.handlers.FileGet, path: path}
+	}
+}
 
 // withFailRename makes the server reject every (Posix)Rename, simulating a
 // server that lets the temp upload through but cannot swap it into place.

@@ -202,6 +202,9 @@ func readManifest(client *sftp.Client, dir, name string, log Logger) manifest {
 	empty := manifest{Version: manifestVersion, Files: map[string]manifestEntry{}}
 	f, err := client.Open(path.Join(dir, name))
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Warningf("could not open sync manifest in %s (%v); treating as first sync", dir, err)
+		}
 		return empty
 	}
 	defer f.Close()

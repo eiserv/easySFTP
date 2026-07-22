@@ -22,6 +22,34 @@ func syncConfig(srv *testServer, local string) *config.Config {
 	return cfg
 }
 
+func TestReadManifestWarnsWhenOpenFails(t *testing.T) {
+	srv := startTestServer(t, withFailOpen("/www/"+manifestName))
+	log := &recordingLogger{testLogger: testLogger{t}}
+
+	got := readManifest(srv.verifyClient(t), "/www", manifestName, log)
+
+	if len(got.Files) != 0 {
+		t.Fatalf("readManifest returned %d files after an open failure, want 0", len(got.Files))
+	}
+	if len(log.warnings) != 1 || !strings.Contains(log.warnings[0], "could not open sync manifest") {
+		t.Fatalf("expected one manifest open warning, got %v", log.warnings)
+	}
+}
+
+func TestReadManifestKeepsMissingManifestSilent(t *testing.T) {
+	srv := startTestServer(t)
+	log := &recordingLogger{testLogger: testLogger{t}}
+
+	got := readManifest(srv.verifyClient(t), "/www", manifestName, log)
+
+	if len(got.Files) != 0 {
+		t.Fatalf("readManifest returned %d files for a missing manifest, want 0", len(got.Files))
+	}
+	if len(log.warnings) != 0 {
+		t.Fatalf("missing manifest should be silent, got warnings %v", log.warnings)
+	}
+}
+
 func TestSyncIncremental(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
