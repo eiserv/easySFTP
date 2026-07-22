@@ -15,9 +15,20 @@ func escapeData(s string) string {
 	return r.Replace(s)
 }
 
-// Infof prints a plain log line.
+// sanitizeLine replaces line breaks with spaces so an interpolated value (for
+// example a local file name, which on Linux may legally contain newlines) can
+// never start a new physical log line and forge a workflow command such as
+// "::error::" or "::add-mask::". Mirrors easysftp_error in
+// scripts/action-lib.sh, which does the same for the same reason.
+func sanitizeLine(s string) string {
+	r := strings.NewReplacer("\r", " ", "\n", " ")
+	return r.Replace(s)
+}
+
+// Infof prints a plain log line. The formatted message is sanitized to a
+// single physical line; see sanitizeLine.
 func Infof(format string, args ...any) {
-	fmt.Printf(format+"\n", args...)
+	fmt.Println(sanitizeLine(fmt.Sprintf(format, args...)))
 }
 
 // Noticef prints a notice annotation.
