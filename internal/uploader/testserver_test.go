@@ -468,8 +468,7 @@ func (s *testServer) handleConn(conn net.Conn) {
 				req.Reply(ok, nil)
 				if ok {
 					server := sftp.NewRequestServer(channel, s.handlers)
-					serr := server.Serve()
-					fmt.Printf("DEBUG server.Serve on %v returned: %v\n", conn.RemoteAddr(), serr)
+					_ = server.Serve()
 					server.Close()
 					return
 				}
