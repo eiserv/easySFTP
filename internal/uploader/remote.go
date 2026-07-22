@@ -19,7 +19,7 @@ import (
 // treats an already-existing directory as success, so ancestors are never
 // stat'd or created one level at a time. Only when a creation fails does it
 // look closer, to report a path that already exists as a file clearly.
-func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, log Logger) error {
+func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, watch *stallWatchdog, log Logger) error {
 	for _, dir := range leafDirs(dirs) {
 		if err := client.MkdirAll(dir); err != nil {
 			if bad := nonDirConflict(client, dir); bad != "" {
@@ -27,6 +27,7 @@ func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, 
 			}
 			return fmt.Errorf("creating remote directory %q: %w", dir, err)
 		}
+		watch.tick()
 	}
 
 	if dirMode != nil {
@@ -36,6 +37,7 @@ func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, 
 				log.Warningf("could not set dir-mode %04o on %s (server may reject SETSTAT); not warning again this run: %v", dirMode.Perm(), dir, err)
 				warned = true
 			}
+			watch.tick()
 		}
 	}
 	return nil
@@ -94,8 +96,9 @@ func checkMaxDeletes(n int, cfg *config.Config) error {
 
 // listRemoteContents returns every regular file and directory under dir
 // (recursively, dir itself excluded), directories parents-first. A missing
-// dir yields empty lists and no error.
-func listRemoteContents(client *sftp.Client, dir string) (files, dirs []string, err error) {
+// dir yields empty lists and no error. Each completed directory listing ticks
+// the stall watchdog, so a deep but progressing scan is not read as a stall.
+func listRemoteContents(client *sftp.Client, dir string, watch *stallWatchdog) (files, dirs []string, err error) {
 	entries, err := client.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -103,11 +106,12 @@ func listRemoteContents(client *sftp.Client, dir string) (files, dirs []string, 
 		}
 		return nil, nil, err
 	}
+	watch.tick()
 	for _, e := range entries {
 		full := path.Join(dir, e.Name())
 		if e.IsDir() {
 			dirs = append(dirs, full)
-			subFiles, subDirs, err := listRemoteContents(client, full)
+			subFiles, subDirs, err := listRemoteContents(client, full, watch)
 			if err != nil {
 				return nil, nil, err
 			}

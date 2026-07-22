@@ -26,8 +26,11 @@ func TestReadManifestWarnsWhenOpenFails(t *testing.T) {
 	srv := startTestServer(t, withFailOpen("/www/"+manifestName))
 	log := &recordingLogger{testLogger: testLogger{t}}
 
-	got := readManifest(srv.verifyClient(t), "/www", manifestName, log)
+	got, err := readManifest(srv.verifyClient(t), "/www", manifestName, log)
 
+	if err != nil {
+		t.Fatalf("readManifest returned error %v, want nil for a non-connection open failure", err)
+	}
 	if len(got.Files) != 0 {
 		t.Fatalf("readManifest returned %d files after an open failure, want 0", len(got.Files))
 	}
@@ -40,8 +43,11 @@ func TestReadManifestKeepsMissingManifestSilent(t *testing.T) {
 	srv := startTestServer(t)
 	log := &recordingLogger{testLogger: testLogger{t}}
 
-	got := readManifest(srv.verifyClient(t), "/www", manifestName, log)
+	got, err := readManifest(srv.verifyClient(t), "/www", manifestName, log)
 
+	if err != nil {
+		t.Fatalf("readManifest returned error %v, want nil for a missing manifest", err)
+	}
 	if len(got.Files) != 0 {
 		t.Fatalf("readManifest returned %d files for a missing manifest, want 0", len(got.Files))
 	}

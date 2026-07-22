@@ -37,8 +37,13 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 	skipped := make([]bool, len(files))
 
 	if !cfg.DryRun {
-		client, _ := sess.current()
-		if err := createRemoteDirs(client, dirs, cfg.DirMode, log); err != nil {
+		// Through sess.do so a connection drop during directory setup redials
+		// instead of failing the run; MkdirAll and chmod are idempotent, so
+		// rerunning the whole pass on a fresh client is safe.
+		err := sess.do(ctx, watch, func(client *sftp.Client) error {
+			return createRemoteDirs(client, dirs, cfg.DirMode, watch, log)
+		})
+		if err != nil {
 			return completed, err
 		}
 	}

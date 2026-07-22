@@ -214,8 +214,9 @@ inputs:
       the initial connection (a transient dial failure is retried with the
       same backoff; host key mismatches and authentication failures are not)
       and bounds how often a connection that drops mid-run is redialed; the
-      per-file retry then runs against the fresh connection instead of the
-      dead one. 0 disables all of these.
+      failed operation (an upload, a remote scan, a delete, a sync manifest
+      read/write) is then retried against the fresh connection instead of
+      the dead one. 0 disables all of these.
     required: false
     default: "2"
   timeout:
@@ -224,9 +225,10 @@ inputs:
     default: "30"
   stall-timeout:
     description: >-
-      Abort the run when active file transfers make no progress for this many
-      seconds. 0 (the default) disables the check. Catches servers that
-      accept the connection and then hang mid-transfer (hung storage backend,
+      Abort the run when active remote operations (file transfers, remote
+      scans, delete sweeps, sync manifest reads and writes) make no progress
+      for this many seconds. 0 (the default) disables the check. Catches
+      servers that accept the connection and then hang (hung storage backend,
       half-open connection that still answers keepalives), which would
       otherwise block the job until the job-level timeout, 6 hours by
       default. On a stall the connection is closed and the run fails with a

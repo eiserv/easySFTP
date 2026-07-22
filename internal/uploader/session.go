@@ -135,6 +135,42 @@ func (s *session) reconnect(ctx context.Context, gen int) (*sftp.Client, error) 
 	return s.sftpClient, nil
 }
 
+// do runs op against the live client, redialing on a connection-class failure
+// so the retried op runs against a fresh client instead of the dead one.
+// Reconnects share the run-wide budget (the retries input) with the upload
+// path; past that budget the original failure is returned. Non-connection
+// errors are returned as-is, untouched.
+//
+// The op is marked active for the stall watchdog for its duration, so a
+// server that hangs during a remote scan, a delete sweep or a manifest write
+// trips stall-timeout just like a hung transfer. Ops must be idempotent: a
+// retried op may have partially (or fully) taken effect on the server before
+// the connection died.
+func (s *session) do(ctx context.Context, watch *stallWatchdog, op func(*sftp.Client) error) error {
+	for {
+		client, gen := s.current()
+		if watch != nil {
+			watch.begin()
+		}
+		err := op(client)
+		if watch != nil {
+			watch.end()
+		}
+		if err == nil || !isConnError(err) {
+			return err
+		}
+		// The watchdog closed the connection because the server stopped
+		// making progress; redialing would just stall again, so fail fast
+		// (mirrors uploadFileWithRetry).
+		if watch != nil && watch.fired.Load() {
+			return err
+		}
+		if _, rerr := s.reconnect(ctx, gen); rerr != nil {
+			return fmt.Errorf("%w (%v)", err, rerr)
+		}
+	}
+}
+
 // close tears the session down at the end of the run.
 func (s *session) close() {
 	s.mu.Lock()
