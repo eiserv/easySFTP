@@ -1,6 +1,7 @@
 package gha
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,44 @@ func parseGithubOutput(t *testing.T, raw string) map[string]string {
 		}
 	}
 	return out
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
+// it printed.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	w.Close()
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stdout: %v", err)
+	}
+	return string(data)
+}
+
+// A file name containing a newline must not let the second physical line start
+// with a workflow command (::error::, ::add-mask::, ...); the runner would
+// interpret it. See issue #105.
+func TestInfofNeutralizesWorkflowCommandSpoofing(t *testing.T) {
+	name := "dist/x\n::error::deploy compromised, rotate credentials"
+	out := captureStdout(t, func() {
+		Infof("upload %s => %s", name, "/www/x\r\n::add-mask::secret")
+	})
+	if want := "upload dist/x ::error::deploy compromised, rotate credentials => /www/x  ::add-mask::secret\n"; out != want {
+		t.Errorf("Infof output = %q, want %q", out, want)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "::") {
+			t.Errorf("Infof let a physical line start with a workflow command: %q", line)
+		}
+	}
 }
 
 func TestSetOutputRoundTripsSpecialCharacters(t *testing.T) {
