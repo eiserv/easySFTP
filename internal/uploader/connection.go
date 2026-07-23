@@ -39,19 +39,30 @@ func sendKeepalives(ctx context.Context, client func() *ssh.Client, interval tim
 	}
 }
 
+// hopNames holds the user-facing option names of one hop's host key knobs,
+// so warnings and errors point at what the user actually writes: inline
+// input names for the primary hop in inline mode, config-file paths in
+// config mode, and connection.proxy.* paths for the jump host (which only
+// exists in config mode).
+type hopNames struct {
+	hostKey    string
+	knownHosts string
+	allowAny   string
+	privateKey string
+}
+
 // hop carries the connection parameters of one SSH hop: the primary server,
-// or the optional jump host in front of it. inputPrefix ("" or "proxy-")
-// names the inputs in warnings and errors, so each hop's message points at
-// the right knobs.
+// or the optional jump host in front of it.
 type hop struct {
-	addr         string
-	user         string
-	password     string
-	privateKey   string
-	passphrase   string
-	fingerprints []string
-	knownHosts   string
-	inputPrefix  string
+	addr            string
+	user            string
+	password        string
+	privateKey      string
+	passphrase      string
+	fingerprints    []string
+	knownHosts      string
+	allowAnyHostKey bool
+	names           hopNames
 }
 
 // clientConfig builds the ssh.ClientConfig for this hop, including its own
@@ -77,28 +88,46 @@ func (h hop) clientConfig(timeout time.Duration, log Logger) (*ssh.ClientConfig,
 
 // targetHop maps the primary connection settings onto a hop.
 func targetHop(cfg *config.Config) hop {
+	names := hopNames{hostKey: "host-key", knownHosts: "known-hosts", allowAny: "allow-any-host-key", privateKey: "private-key"}
+	if cfg.ConfigPath != "" {
+		names = hopNames{hostKey: "connection.host_key", knownHosts: "connection.known_hosts",
+			allowAny: "connection.allow_any_host_key", privateKey: "private-key"}
+	}
 	return hop{
-		addr:         net.JoinHostPort(cfg.Server, fmt.Sprintf("%d", cfg.Port)),
-		user:         cfg.Username,
-		password:     cfg.Password,
-		privateKey:   cfg.PrivateKey,
-		passphrase:   cfg.Passphrase,
-		fingerprints: cfg.HostKeyFingerprints,
-		knownHosts:   cfg.KnownHosts,
+		addr:            net.JoinHostPort(cfg.Server, fmt.Sprintf("%d", cfg.Port)),
+		user:            cfg.Username,
+		password:        cfg.Password,
+		privateKey:      cfg.PrivateKey,
+		passphrase:      cfg.Passphrase,
+		fingerprints:    cfg.HostKeyFingerprints,
+		knownHosts:      cfg.KnownHosts,
+		allowAnyHostKey: cfg.AllowAnyHostKey,
+		names:           names,
 	}
 }
 
-// jumpHop maps the proxy-* settings onto a hop.
+// jumpHop maps the connection.proxy settings onto a hop.
 func jumpHop(p *config.Proxy) hop {
 	return hop{
-		addr:         net.JoinHostPort(p.Server, fmt.Sprintf("%d", p.Port)),
-		user:         p.Username,
-		password:     p.Password,
-		privateKey:   p.PrivateKey,
-		passphrase:   p.Passphrase,
-		fingerprints: p.HostKeyFingerprints,
-		knownHosts:   p.KnownHosts,
-		inputPrefix:  "proxy-",
+		addr:            net.JoinHostPort(p.Server, fmt.Sprintf("%d", p.Port)),
+		user:            p.Username,
+		password:        p.Password,
+		privateKey:      p.PrivateKey,
+		passphrase:      p.Passphrase,
+		fingerprints:    p.HostKeyFingerprints,
+		knownHosts:      p.KnownHosts,
+		allowAnyHostKey: p.AllowAnyHostKey,
+		names: hopNames{hostKey: "connection.proxy.host_key", knownHosts: "connection.proxy.known_hosts",
+			allowAny: "connection.proxy.allow_any_host_key", privateKey: "proxy-private-key"},
+	}
+}
+
+// logHostKeyStatus reports one hop's successful verification. The unverified
+// case already warned in hostKeyCallback; this line is the positive signal
+// the compact default log promises ("Host key verified").
+func logHostKeyStatus(h hop, log Logger) {
+	if len(h.fingerprints) > 0 || h.knownHosts != "" {
+		log.Infof("host key of %s verified against the pinned key(s)", h.addr)
 	}
 }
 
@@ -122,6 +151,7 @@ func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, func(),
 		if err != nil {
 			return nil, nil, noop, fmt.Errorf("connecting to %s: %w", target.addr, err)
 		}
+		logHostKeyStatus(target, log)
 	} else {
 		sshClient, cleanup, err = dialViaJump(cfg, target.addr, targetConfig, log)
 		if err != nil {
@@ -156,6 +186,7 @@ func dialViaJump(cfg *config.Config, targetAddr string, targetConfig *ssh.Client
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to jump host %s: %w", jump.addr, err)
 	}
+	logHostKeyStatus(jump, log)
 	log.Infof("connecting to %s as %s through the jump host ...", targetAddr, targetConfig.User)
 	conn, err := jumpClient.Dial("tcp", targetAddr)
 	if err != nil {
@@ -168,6 +199,7 @@ func dialViaJump(cfg *config.Config, targetAddr string, targetConfig *ssh.Client
 		jumpClient.Close()
 		return nil, nil, fmt.Errorf("connecting to %s through jump host %s: %w", targetAddr, jump.addr, err)
 	}
+	logHostKeyStatus(targetHop(cfg), log)
 	return ssh.NewClient(ncc, chans, reqs), func() { jumpClient.Close() }, nil
 }
 
@@ -182,7 +214,7 @@ func authMethods(h hop) ([]ssh.AuthMethod, error) {
 			signer, err = ssh.ParsePrivateKey([]byte(key + "\n"))
 		}
 		if err != nil {
-			return nil, fmt.Errorf("parsing %sprivate-key: %w", h.inputPrefix, err)
+			return nil, fmt.Errorf("parsing %s: %w", h.names.privateKey, err)
 		}
 		methods = append(methods, ssh.PublicKeys(signer))
 	}

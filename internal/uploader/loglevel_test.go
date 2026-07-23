@@ -21,13 +21,12 @@ func countInfos(log *recordingLogger, substr string) int {
 	return n
 }
 
-func TestQuietSuppressesPerFileLines(t *testing.T) {
+func TestNormalSuppressesPerFileLines(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
 	writeTree(t, local, map[string]string{"a.txt": "1", "b.txt": "2"})
 
 	cfg := baseConfig(srv)
-	cfg.LogLevel = config.LogQuiet
 	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www", Strategy: config.StrategySync}}
 
 	log := &recordingLogger{testLogger: testLogger{t}}
@@ -39,23 +38,25 @@ func TestQuietSuppressesPerFileLines(t *testing.T) {
 		t.Errorf("expected 2 uploads, got %d", stats.FilesUploaded)
 	}
 	if n := countInfos(log, "upload "); n != 0 {
-		t.Errorf("expected no per-file upload lines in quiet mode, got %d: %v", n, log.infos)
+		t.Errorf("expected no per-file upload lines at the default level, got %d: %v", n, log.infos)
 	}
 	if n := countInfos(log, "sync: "); n != 1 {
-		t.Errorf("expected the per-target sync summary to survive quiet mode, got %d", n)
+		t.Errorf("expected the per-deployment sync summary to survive the default level, got %d", n)
+	}
+	if n := countInfos(log, "deployment "); n != 1 {
+		t.Errorf("expected one deployment summary line, got %d: %v", n, log.infos)
 	}
 	if n := countInfos(log, "connecting to "); n != 1 {
-		t.Errorf("expected the connection line to survive quiet mode, got %d", n)
+		t.Errorf("expected the connection line to survive the default level, got %d", n)
 	}
 }
 
-func TestQuietDryRunStillLogsThePlan(t *testing.T) {
+func TestNormalDryRunStillLogsThePlan(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
 	writeTree(t, local, map[string]string{"a.txt": "1"})
 
 	cfg := baseConfig(srv)
-	cfg.LogLevel = config.LogQuiet
 	cfg.DryRun = true
 	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
 
@@ -64,11 +65,11 @@ func TestQuietDryRunStillLogsThePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := countInfos(log, "would upload "); n != 1 {
-		t.Errorf("dry-run must log the plan regardless of quiet, got %d plan lines: %v", n, log.infos)
+		t.Errorf("dry-run must log the plan regardless of log-level, got %d plan lines: %v", n, log.infos)
 	}
 }
 
-func TestVerboseExplainsIgnoreDecisions(t *testing.T) {
+func TestVerboseLogsPerFileLines(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
 	writeTree(t, local, map[string]string{"index.html": "x", "debug.log": "y"})
@@ -82,17 +83,21 @@ func TestVerboseExplainsIgnoreDecisions(t *testing.T) {
 	if _, err := Run(context.Background(), cfg, log); err != nil {
 		t.Fatal(err)
 	}
-	if n := countInfos(log, `skip debug.log (ignore pattern "*.log")`); n != 1 {
-		t.Errorf("expected one ignore-decision line, got %d: %v", n, log.infos)
+	if n := countInfos(log, "upload "); n != 1 {
+		t.Errorf("expected the per-file upload line at verbose level, got %d", n)
+	}
+	if n := countInfos(log, "ignore pattern"); n != 0 {
+		t.Errorf("expected no exclude-decision lines at verbose level, got %d: %v", n, log.infos)
 	}
 }
 
-func TestNormalDoesNotExplainIgnoreDecisions(t *testing.T) {
+func TestDebugExplainsExcludeDecisions(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
 	writeTree(t, local, map[string]string{"index.html": "x", "debug.log": "y"})
 
 	cfg := baseConfig(srv)
+	cfg.LogLevel = config.LogDebug
 	cfg.IgnoreLines = []string{"*.log"}
 	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
 
@@ -100,10 +105,10 @@ func TestNormalDoesNotExplainIgnoreDecisions(t *testing.T) {
 	if _, err := Run(context.Background(), cfg, log); err != nil {
 		t.Fatal(err)
 	}
-	if n := countInfos(log, "ignore pattern"); n != 0 {
-		t.Errorf("expected no ignore-decision lines at normal level, got %d: %v", n, log.infos)
+	if n := countInfos(log, `skip debug.log (ignore pattern "*.log")`); n != 1 {
+		t.Errorf("expected one exclude-decision line, got %d: %v", n, log.infos)
 	}
 	if n := countInfos(log, "upload "); n != 1 {
-		t.Errorf("expected the per-file upload line at normal level, got %d", n)
+		t.Errorf("expected the per-file upload line at debug level, got %d", n)
 	}
 }

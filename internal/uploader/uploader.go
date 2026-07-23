@@ -40,16 +40,14 @@ type Stats struct {
 	BytesUploaded int64
 	Duration      time.Duration
 
-	// Targets breaks the totals above down per upload pair. It is only
-	// populated when the config has more than one pair: a single-target run
-	// has nothing to break down, so it stays nil and callers can use that to
-	// decide whether a per-target table is worth showing.
+	// Targets breaks the totals above down per deployment, in plan order.
 	Targets []TargetStats
 }
 
-// TargetStats summarizes what a run did (or would do) for a single upload
-// pair, so a multi-target deploy can be broken down in the job summary.
+// TargetStats summarizes what a run did (or would do) for a single
+// deployment, so the job summary can break a deploy down per deployment.
 type TargetStats struct {
+	Name          string // deployment name from the config file; "" inline
 	Local         string
 	Remote        string
 	Strategy      config.Strategy
@@ -57,6 +55,7 @@ type TargetStats struct {
 	FilesDeleted  int
 	FilesSkipped  int
 	BytesUploaded int64
+	Duration      time.Duration
 }
 
 // Run executes the configured upload and returns transfer statistics.
@@ -72,10 +71,10 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		st := effectiveStrategy(pair)
 		lines := append(append([]string{}, cfg.IgnoreLines...), pair.Ignore...)
 		matcher := ignore.CompileIgnoreLines(lines...)
-		// verbose is nil unless log-level is verbose; buildPlan then explains
-		// every ignore decision.
+		// verbose is nil unless log-level is debug; buildPlan then explains
+		// every exclude decision.
 		var verbose Logger
-		if cfg.Verbose() {
+		if cfg.Debug() {
 			verbose = log
 		}
 		p, err := buildPlan(pair, st, planOptions{
@@ -115,21 +114,26 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 			return stats, err
 		}
 		before := *stats
+		planStart := time.Now()
 		err := executePlan(ctx, cfg, sess, p, stats, watch, log)
-		if len(plans) > 1 {
-			// Recorded from the before/after delta (not threaded through
-			// executePlan) so a target's partial progress on failure is
-			// still captured, matching the totals' own partial-progress
-			// behavior.
-			stats.Targets = append(stats.Targets, TargetStats{
-				Local:         p.pair.Local,
-				Remote:        p.pair.Remote,
-				Strategy:      p.strategy,
-				FilesUploaded: stats.FilesUploaded - before.FilesUploaded,
-				FilesDeleted:  stats.FilesDeleted - before.FilesDeleted,
-				FilesSkipped:  stats.FilesSkipped - before.FilesSkipped,
-				BytesUploaded: stats.BytesUploaded - before.BytesUploaded,
-			})
+		// Recorded from the before/after delta (not threaded through
+		// executePlan) so a target's partial progress on failure is
+		// still captured, matching the totals' own partial-progress
+		// behavior.
+		ts := TargetStats{
+			Name:          p.pair.Name,
+			Local:         p.pair.Local,
+			Remote:        p.pair.Remote,
+			Strategy:      p.strategy,
+			FilesUploaded: stats.FilesUploaded - before.FilesUploaded,
+			FilesDeleted:  stats.FilesDeleted - before.FilesDeleted,
+			FilesSkipped:  stats.FilesSkipped - before.FilesSkipped,
+			BytesUploaded: stats.BytesUploaded - before.BytesUploaded,
+			Duration:      time.Since(planStart),
+		}
+		stats.Targets = append(stats.Targets, ts)
+		if err == nil {
+			logDeploymentSummary(cfg, p.pair, ts, log)
 		}
 		if err != nil {
 			if watch != nil && watch.fired.Load() {
@@ -142,13 +146,30 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	return stats, nil
 }
 
+// logDeploymentSummary logs the compact one-line result of a completed
+// deployment, the core of the default (non-verbose) log output.
+func logDeploymentSummary(cfg *config.Config, pair config.UploadPair, ts TargetStats, log Logger) {
+	if cfg.DryRun {
+		log.Infof("deployment %s: %d file(s) to upload (%s), %d to delete, %d unchanged (dry-run)",
+			pair.Label(), ts.FilesUploaded, humanSize(ts.BytesUploaded), ts.FilesDeleted, ts.FilesSkipped)
+		return
+	}
+	log.Infof("deployment %s: uploaded %d file(s) (%s), deleted %d, skipped %d unchanged, took %s",
+		pair.Label(), ts.FilesUploaded, humanSize(ts.BytesUploaded), ts.FilesDeleted, ts.FilesSkipped,
+		ts.Duration.Round(time.Millisecond))
+}
+
 // executePlan performs (or previews) one plan according to its strategy.
 func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, watch *stallWatchdog, log Logger) error {
-	log.Group(fmt.Sprintf("%s => %s [%s] (%d local files)", p.pair.Local, p.pair.Remote, p.strategy, len(p.files)))
+	header := fmt.Sprintf("%s => %s [%s] (%d local files)", p.pair.Local, p.pair.Remote, p.strategy, len(p.files))
+	if p.pair.Name != "" {
+		header = fmt.Sprintf("%s: %s", p.pair.Name, header)
+	}
+	log.Group(header)
 	defer log.EndGroup()
 
 	if cfg.SkipUnchanged && p.strategy != config.StrategyOverlay {
-		log.Warningf("skip-unchanged only applies to the overlay strategy; ignoring it for this %s target", p.strategy)
+		log.Warningf("advanced.skip_unchanged only applies to the overlay mode; ignoring it for this %s deployment", p.strategy)
 	}
 
 	if p.strategy == config.StrategySync {

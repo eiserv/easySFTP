@@ -1,6 +1,6 @@
 name: easySFTP
 description: >-
-  Fast, secure SFTP uploads for GitHub Actions with parallel transfers, host key pinning and rsync-like strategies.
+  Fast, secure SFTP uploads for GitHub Actions with parallel transfers, host key pinning and rsync-like deployment modes.
 author: eiserv
 
 branding:
@@ -8,138 +8,113 @@ branding:
   color: blue
 
 inputs:
-  build-mode:
+  # --- Connection (inline mode) ---
+  host:
     description: >-
-      How to obtain easySFTP: "prebuilt" downloads and verifies the matching
-      release binary (default); "source" installs Go and builds this checkout.
+      Hostname or IP address of the SFTP server (e.g. sftp.example.com).
+      Required in inline mode; in config mode it comes from the config file
+      (connection.host).
     required: false
-    default: prebuilt
-  server:
-    description: Hostname or IP address of the SFTP server (e.g. sftp.example.com).
-    required: true
   port:
-    description: SSH port of the server.
+    description: >-
+      SSH port of the server. Defaults to 22. Deliberately has no declared
+      default value: the runner exports declared defaults unconditionally,
+      which would wrongly trip the config-mode mutual-exclusion check.
     required: false
-    default: "22"
   username:
-    description: Username used for authentication.
-    required: true
+    description: >-
+      Username used for authentication. Required in inline mode; in config
+      mode it comes from the config file (connection.username).
+    required: false
   password:
     description: >-
       Password used for authentication. Provide this or private-key (or both).
-      Always store this in a GitHub Actions secret.
+      Always store this in a GitHub Actions secret. As a credential, this
+      input is used in both inline and config mode.
     required: false
   private-key:
     description: >-
       SSH private key (PEM/OpenSSH format) used for authentication. Always
-      store this in a GitHub Actions secret.
+      store this in a GitHub Actions secret. As a credential, this input is
+      used in both inline and config mode.
     required: false
   passphrase:
     description: Passphrase for the private key, if it is encrypted.
     required: false
-  host-key-fingerprint:
+  host-key:
     description: >-
       Expected SHA256 fingerprint(s) of the server's host key, one per line
       (format "SHA256:..."). The connection is accepted if the server presents
       a key matching any of them, so you can simply pin all of your server's
-      keys. Strongly recommended: without this input, the server's identity is
-      not verified. Obtain the fingerprints with:
-      ssh-keyscan <server> | ssh-keygen -lf -
+      keys. Obtain the fingerprints with: ssh-keyscan <server> | ssh-keygen -lf -
+      Without this input or known-hosts, the run fails unless
+      allow-any-host-key is explicitly set.
     required: false
   known-hosts:
     description: >-
       Expected host key(s) in OpenSSH known_hosts format, e.g. the verbatim
       output of "ssh-keyscan <server>", or the server's lines from your own
-      ~/.ssh/known_hosts. An alternative to host-key-fingerprint (no
-      ssh-keygen conversion step); if both are set, a key matching either is
-      accepted. Hashed entries and "[host]:port" entries for non-standard
-      ports are supported.
+      ~/.ssh/known_hosts. An alternative to host-key (no ssh-keygen conversion
+      step); if both are set, a key matching either is accepted. Hashed
+      entries and "[host]:port" entries for non-standard ports are supported.
     required: false
-  proxy-server:
+  allow-any-host-key:
     description: >-
-      Hostname or IP address of an optional jump host (bastion) through which
-      the SFTP server is reached, like OpenSSH's ProxyJump. When set,
-      easySFTP connects to the jump host first (with its own proxy-*
-      credentials and host key verification) and tunnels the SFTP connection
-      to "server" through it. Leave empty to connect directly.
+      Set to "true" to explicitly skip host key verification. NOT recommended:
+      without verification, a man-in-the-middle can intercept the deployment
+      and the credentials. In v3 an unverified connection is no longer the
+      silent default; this opt-in (or a pinned key) is required.
     required: false
-  proxy-port:
-    description: SSH port of the jump host.
-    required: false
-  proxy-username:
-    description: Username used for authenticating against the jump host.
-    required: false
-  proxy-password:
+
+  # --- Deployment (inline mode) ---
+  source:
     description: >-
-      Password for the jump host. Provide this or proxy-private-key (or
-      both). Always store this in a GitHub Actions secret.
+      Local path to upload: a directory (uploaded recursively) or a single
+      file. Required in inline mode, together with target.
     required: false
-  proxy-private-key:
+  target:
     description: >-
-      SSH private key (PEM/OpenSSH format) for the jump host. Always store
-      this in a GitHub Actions secret.
+      Remote destination path, e.g. /var/www/html. Required in inline mode,
+      together with source.
     required: false
-  proxy-passphrase:
-    description: Passphrase for the jump host's private key, if it is encrypted.
-    required: false
-  proxy-host-key-fingerprint:
+  mode:
     description: >-
-      Expected SHA256 fingerprint(s) of the jump host's host key, one per
-      line (format "SHA256:..."). Host key verification applies to each hop
-      independently; without this input (or proxy-known-hosts) the jump
-      host's identity is not verified, and a warning is printed for this hop.
-    required: false
-  proxy-known-hosts:
-    description: >-
-      Expected host key(s) of the jump host in OpenSSH known_hosts format
-      (e.g. verbatim "ssh-keyscan <jump-host>" output). Alternative to
-      proxy-host-key-fingerprint; if both are set, a key matching either is
-      accepted.
-    required: false
-  uploads:
-    description: >-
-      One "local => remote" mapping per line, e.g. "./dist/ => /var/www/html/".
-      Local paths may be directories (uploaded recursively) or single files.
-      Lines starting with "#" are ignored. Required unless config-file is set.
-    required: false
-  config-file:
-    description: >-
-      Path to an optional YAML config file describing the deployment targets,
-      their strategy and delete guards (see docs/configuration.md). When set, it
-      replaces the uploads/strategy/ignore inputs. Connection settings
-      always come from the inputs above.
-    required: false
-  strategy:
-    description: >-
-      Reconciliation strategy for every target: "overlay" (upload only, never
+      How the remote target is reconciled: "overlay" (upload only, never
       delete; the default), "sync" (upload changed files and delete files no
       longer present locally, tracked via a manifest) or "clean" (wipe the
       remote target directory, then upload).
     required: false
-  ignore:
+  exclude:
     description: >-
       Gitignore-style exclude patterns, one per line (e.g. "*.log" or
       "node_modules/"). Prefix with "!" to re-include files.
     required: false
-  ignore-from:
-    description: Path to a file containing gitignore-style exclude patterns.
-    required: false
-  max-deletes:
+
+  # --- Config mode ---
+  config:
     description: >-
-      Refuse the run if the "sync" or "clean" strategy would delete more than
-      this many remote files. Unset or 0 means unlimited. Only valid
-      without config-file; with a config file, set "guards.max_deletes"
-      there instead. Deliberately has no declared default: a default value
-      would always be exported and wrongly trip the config-file
-      mutual-exclusion check.
+      Path to a YAML config file (version 3) that holds every non-secret
+      setting: connection (including proxy), named deployments, safety limits
+      and advanced tuning. Mutually exclusive with the inline connection and
+      deployment inputs above; only credentials, dry-run and log-level may be
+      combined with it. See docs/configuration.md.
     required: false
-  delete:
+  proxy-password:
     description: >-
-      Removed in v2; use "strategy: clean" instead. Still declared so that a
-      workflow passing it fails loudly rather than silently degrading to the
-      "overlay" default. Will be deleted in v3.
+      Password for the jump host defined as connection.proxy in the config
+      file. Always store this in a GitHub Actions secret.
     required: false
-    default: "false"
+  proxy-private-key:
+    description: >-
+      SSH private key (PEM/OpenSSH format) for the jump host defined as
+      connection.proxy in the config file. Always store this in a GitHub
+      Actions secret.
+    required: false
+  proxy-passphrase:
+    description: Passphrase for the jump host's private key, if it is encrypted.
+    required: false
+
+  # --- Run-wide switches (both modes) ---
   dry-run:
     description: >-
       If "true", connect and log everything that would be uploaded or deleted
@@ -148,131 +123,114 @@ inputs:
     default: "false"
   log-level:
     description: >-
-      How chatty the log output is. "normal" (the default) logs one line per
-      uploaded or deleted file. "quiet" suppresses those per-file lines and
-      keeps connection info, per-target summaries, warnings and errors, so a
-      20,000-file deploy produces a readable log. "verbose" additionally
-      explains every ignore decision (which pattern excluded which file),
-      useful when debugging ignore patterns. A dry run always logs per-file
-      lines regardless of this input, since inspecting the plan is its whole
-      point.
+      How chatty the log output is. "normal" (the default) logs connection
+      status, one compact summary per deployment, warnings and errors.
+      "verbose" additionally logs one line per uploaded, deleted or skipped
+      file. "debug" additionally explains every exclude decision (which
+      pattern excluded which file). A dry run always logs per-file lines
+      regardless of this input, since inspecting the plan is its whole point.
     required: false
     default: "normal"
+
+  # --- Removed in v3 (tombstones) ---
+  # These inputs are still declared, without defaults, so a v2 workflow that
+  # passes them fails with a migration hint instead of the runner silently
+  # dropping them. See docs/migration-v3.md.
+  build-mode:
+    description: >-
+      Removed in v3. The build mode is now selected automatically: release
+      tags download the verified prebuilt binary, development refs build from
+      source.
+    required: false
+  server:
+    description: "Removed in v3: renamed to 'host'. See docs/migration-v3.md."
+    required: false
+  host-key-fingerprint:
+    description: "Removed in v3: renamed to 'host-key'. See docs/migration-v3.md."
+    required: false
+  uploads:
+    description: >-
+      Removed in v3: use 'source' and 'target' for a single deployment, or a
+      config file for multiple deployments. See docs/migration-v3.md.
+    required: false
+  config-file:
+    description: "Removed in v3: renamed to 'config' (new file format, version 3). See docs/migration-v3.md."
+    required: false
+  strategy:
+    description: "Removed in v3: renamed to 'mode'. See docs/migration-v3.md."
+    required: false
+  ignore:
+    description: "Removed in v3: renamed to 'exclude'. See docs/migration-v3.md."
+    required: false
+  ignore-from:
+    description: "Removed in v3: put the patterns in 'exclude' or in the config file. See docs/migration-v3.md."
+    required: false
+  max-deletes:
+    description: "Removed in v3: moved to 'safety.max_deletes' in the config file. See docs/migration-v3.md."
+    required: false
+  delete:
+    description: "Removed in v2: use 'mode: clean'. See docs/migration-v3.md."
+    required: false
   concurrency:
-    description: >-
-      Number of files uploaded in parallel. Also bounds the worker pool that
-      hashes local files for the sync strategy.
+    description: "Removed in v3: moved to 'advanced.concurrency' in the config file. See docs/migration-v3.md."
     required: false
-    default: "4"
   sftp-request-concurrency:
-    description: >-
-      Advanced. Maximum number of in-flight SFTP requests per file (pipelining
-      within a single file's transfer, independent of "concurrency" which
-      controls how many files are transferred at once). Lower it if a small
-      or resource-constrained SFTP server struggles under load; raise it to
-      push more throughput per file on a fast link to a capable server.
+    description: "Removed in v3: moved to 'advanced.request_concurrency' in the config file. See docs/migration-v3.md."
     required: false
-    default: "16"
+  retries:
+    description: "Removed in v3: moved to 'advanced.retries' in the config file. See docs/migration-v3.md."
+    required: false
+  timeout:
+    description: "Removed in v3: moved to 'advanced.timeout' in the config file. See docs/migration-v3.md."
+    required: false
+  stall-timeout:
+    description: "Removed in v3: moved to 'advanced.stall_timeout' in the config file. See docs/migration-v3.md."
+    required: false
   sync-fast-path:
-    description: >-
-      If "true", the sync strategy skips re-hashing a file whose size and
-      modification time still match its last-synced manifest entry, reusing
-      the stored hash instead. This is faster on large trees but, like
-      rsync's quick check, can miss a same-size edit made within the same
-      second as the previous one; see docs/strategies.md. Off by default,
-      since content-hash comparison is what "sync" advertises. Only helps
-      when local modification times are meaningful across runs (e.g. a
-      restored build cache); a fresh "actions/checkout" gives every file a
-      new modification time on every run, so this has no effect there.
-    required: false
-    default: "false"
-  manifest-name:
-    description: >-
-      File name of the manifest the "sync" strategy keeps in each remote
-      target (default ".easysftp-manifest.json"). In a web-root deployment
-      the manifest is served like any other file and discloses the full file
-      list plus content hashes; an unguessable name (e.g. a generated suffix
-      stored in a secret) mitigates that, and a web-server deny rule removes
-      it entirely (see docs/security.md). Must be a bare file name, no path.
-      Changing it mid-life starts a fresh manifest: the next sync re-uploads
-      everything, tracks deletions from scratch, and leaves the old manifest
-      file behind on the server; delete it manually.
+    description: "Removed in v3: moved to 'sync.fast_path' in the config file. See docs/migration-v3.md."
     required: false
   skip-unchanged:
-    description: >-
-      If "true", the overlay strategy skips uploading a file when the remote
-      file already exists with the same size (one stat per file, performed
-      inside the parallel workers). Cheap but deliberately coarse: an edit
-      that keeps the file size identical is missed; use the sync strategy for
-      exact content-hash comparison. Ignored (with a warning) by the sync and
-      clean strategies.
+    description: "Removed in v3: moved to 'advanced.skip_unchanged' in the config file. See docs/migration-v3.md."
     required: false
-    default: "false"
-  retries:
-    description: >-
-      How often a failed file upload is retried (with backoff). Also covers
-      the initial connection (a transient dial failure is retried with the
-      same backoff; host key mismatches and authentication failures are not)
-      and bounds how often a connection that drops mid-run is redialed; the
-      failed operation (an upload, a remote scan, a delete, a sync manifest
-      read/write) is then retried against the fresh connection instead of
-      the dead one. 0 disables all of these.
+  manifest-name:
+    description: "Removed in v3: moved to 'sync.manifest' in the config file. See docs/migration-v3.md."
     required: false
-    default: "2"
-  timeout:
-    description: Connection timeout in seconds. 0 disables the timeout entirely.
-    required: false
-    default: "30"
-  stall-timeout:
-    description: >-
-      Abort the run when active remote operations (file transfers, remote
-      scans, delete sweeps, sync manifest reads and writes) make no progress
-      for this many seconds. 0 (the default) disables the check. Catches
-      servers that accept the connection and then hang (hung storage backend,
-      half-open connection that still answers keepalives), which would
-      otherwise block the job until the job-level timeout, 6 hours by
-      default. On a stall the connection is closed and the run fails with a
-      clear error. Pick a value comfortably above the longest pause a healthy
-      transfer to your server may hit; 60 to 300 is a reasonable range.
-    required: false
-    default: "0"
   dir-mode:
-    description: >-
-      Octal permission (e.g. "755") applied to every remote directory the run
-      creates or touches, overriding the server's umask default. Off by
-      default. Best-effort: a server that rejects the chmod produces one
-      warning per run, not a failure.
+    description: "Removed in v3: moved to 'permissions.directories' in the config file. See docs/migration-v3.md."
     required: false
   file-mode:
-    description: >-
-      Octal permission (e.g. "644") applied to every uploaded file, overriding
-      the default of mirroring the local file's permission bits. Off by
-      default. Best-effort: a server that rejects the chmod produces one
-      warning per run, not a failure.
+    description: "Removed in v3: moved to 'permissions.files' in the config file. See docs/migration-v3.md."
     required: false
   preserve-times:
-    description: >-
-      If "true", every uploaded file keeps its local modification time on the
-      server instead of "now". Useful when the server derives Last-Modified
-      or ETag headers from file mtimes, or when server-side tooling compares
-      timestamps. Off by default. A server that rejects the request produces
-      one warning per run, not a failure. Note that a fresh actions/checkout
-      gives every file the checkout time; combine with something that restores
-      real mtimes (e.g. a build, or git-restore-mtime) if that matters.
+    description: "Removed in v3: moved to 'permissions.preserve_times' in the config file. See docs/migration-v3.md."
     required: false
-    default: "false"
+  proxy-server:
+    description: "Removed in v3: moved to 'connection.proxy.host' in the config file. See docs/migration-v3.md."
+    required: false
+  proxy-port:
+    description: "Removed in v3: moved to 'connection.proxy.port' in the config file. See docs/migration-v3.md."
+    required: false
+  proxy-username:
+    description: "Removed in v3: moved to 'connection.proxy.username' in the config file. See docs/migration-v3.md."
+    required: false
+  proxy-host-key-fingerprint:
+    description: "Removed in v3: moved to 'connection.proxy.host_key' in the config file. See docs/migration-v3.md."
+    required: false
+  proxy-known-hosts:
+    description: "Removed in v3: moved to 'connection.proxy.known_hosts' in the config file. See docs/migration-v3.md."
+    required: false
 
 outputs:
   files-uploaded:
     description: Number of files that were uploaded (or would be, in dry-run mode).
     value: ${{ steps.easysftp.outputs.files-uploaded }}
   files-deleted:
-    description: Number of remote files deleted by the clean/sync strategy.
+    description: Number of remote files deleted by the clean/sync mode.
     value: ${{ steps.easysftp.outputs.files-deleted }}
   files-skipped:
     description: >-
-      Number of unchanged files skipped (by the sync strategy, or by overlay
-      with skip-unchanged).
+      Number of unchanged files skipped (by the sync mode, or by overlay
+      with advanced.skip_unchanged).
     value: ${{ steps.easysftp.outputs.files-skipped }}
   bytes-uploaded:
     description: Total number of bytes transferred.
@@ -318,22 +276,29 @@ runs:
       run: '"$BINARY"'
       env:
         BINARY: ${{ steps.prepare.outputs.binary }}
-        EASYSFTP_SERVER: ${{ inputs.server }}
+        # v3 inputs
+        EASYSFTP_HOST: ${{ inputs.host }}
         EASYSFTP_PORT: ${{ inputs.port }}
         EASYSFTP_USERNAME: ${{ inputs.username }}
         EASYSFTP_PASSWORD: ${{ inputs.password }}
         EASYSFTP_PRIVATE_KEY: ${{ inputs.private-key }}
         EASYSFTP_PASSPHRASE: ${{ inputs.passphrase }}
-        EASYSFTP_HOST_KEY_FINGERPRINT: ${{ inputs.host-key-fingerprint }}
+        EASYSFTP_HOST_KEY: ${{ inputs.host-key }}
         EASYSFTP_KNOWN_HOSTS: ${{ inputs.known-hosts }}
-        EASYSFTP_PROXY_SERVER: ${{ inputs.proxy-server }}
-        EASYSFTP_PROXY_PORT: ${{ inputs.proxy-port }}
-        EASYSFTP_PROXY_USERNAME: ${{ inputs.proxy-username }}
+        EASYSFTP_ALLOW_ANY_HOST_KEY: ${{ inputs.allow-any-host-key }}
+        EASYSFTP_SOURCE: ${{ inputs.source }}
+        EASYSFTP_TARGET: ${{ inputs.target }}
+        EASYSFTP_MODE: ${{ inputs.mode }}
+        EASYSFTP_EXCLUDE: ${{ inputs.exclude }}
+        EASYSFTP_CONFIG: ${{ inputs.config }}
         EASYSFTP_PROXY_PASSWORD: ${{ inputs.proxy-password }}
         EASYSFTP_PROXY_PRIVATE_KEY: ${{ inputs.proxy-private-key }}
         EASYSFTP_PROXY_PASSPHRASE: ${{ inputs.proxy-passphrase }}
-        EASYSFTP_PROXY_HOST_KEY_FINGERPRINT: ${{ inputs.proxy-host-key-fingerprint }}
-        EASYSFTP_PROXY_KNOWN_HOSTS: ${{ inputs.proxy-known-hosts }}
+        EASYSFTP_DRY_RUN: ${{ inputs.dry-run }}
+        EASYSFTP_LOG_LEVEL: ${{ inputs.log-level }}
+        # Removed-input tombstones: any non-empty value fails with a hint.
+        EASYSFTP_SERVER: ${{ inputs.server }}
+        EASYSFTP_HOST_KEY_FINGERPRINT: ${{ inputs.host-key-fingerprint }}
         EASYSFTP_UPLOADS: ${{ inputs.uploads }}
         EASYSFTP_CONFIG_FILE: ${{ inputs.config-file }}
         EASYSFTP_STRATEGY: ${{ inputs.strategy }}
@@ -341,16 +306,19 @@ runs:
         EASYSFTP_IGNORE_FROM: ${{ inputs.ignore-from }}
         EASYSFTP_MAX_DELETES: ${{ inputs.max-deletes }}
         EASYSFTP_DELETE: ${{ inputs.delete }}
-        EASYSFTP_DRY_RUN: ${{ inputs.dry-run }}
-        EASYSFTP_LOG_LEVEL: ${{ inputs.log-level }}
         EASYSFTP_CONCURRENCY: ${{ inputs.concurrency }}
         EASYSFTP_SFTP_REQUEST_CONCURRENCY: ${{ inputs.sftp-request-concurrency }}
-        EASYSFTP_SYNC_FAST_PATH: ${{ inputs.sync-fast-path }}
-        EASYSFTP_SKIP_UNCHANGED: ${{ inputs.skip-unchanged }}
-        EASYSFTP_MANIFEST_NAME: ${{ inputs.manifest-name }}
         EASYSFTP_RETRIES: ${{ inputs.retries }}
         EASYSFTP_TIMEOUT: ${{ inputs.timeout }}
         EASYSFTP_STALL_TIMEOUT: ${{ inputs.stall-timeout }}
+        EASYSFTP_SYNC_FAST_PATH: ${{ inputs.sync-fast-path }}
+        EASYSFTP_SKIP_UNCHANGED: ${{ inputs.skip-unchanged }}
+        EASYSFTP_MANIFEST_NAME: ${{ inputs.manifest-name }}
         EASYSFTP_DIR_MODE: ${{ inputs.dir-mode }}
         EASYSFTP_FILE_MODE: ${{ inputs.file-mode }}
         EASYSFTP_PRESERVE_TIMES: ${{ inputs.preserve-times }}
+        EASYSFTP_PROXY_SERVER: ${{ inputs.proxy-server }}
+        EASYSFTP_PROXY_PORT: ${{ inputs.proxy-port }}
+        EASYSFTP_PROXY_USERNAME: ${{ inputs.proxy-username }}
+        EASYSFTP_PROXY_HOST_KEY_FINGERPRINT: ${{ inputs.proxy-host-key-fingerprint }}
+        EASYSFTP_PROXY_KNOWN_HOSTS: ${{ inputs.proxy-known-hosts }}

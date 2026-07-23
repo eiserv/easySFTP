@@ -17,6 +17,7 @@ var PAGES = [
   { id: "security", title: "security", group: "guide", dir: "docs/" },
   { id: "troubleshooting", title: "troubleshooting", group: "guide", dir: "docs/" },
   { id: "contributing", title: "contributing", group: "project", dir: "" },
+  { id: "migration-v3", title: "migrating v2 => v3", group: "project", dir: "docs/" },
   { id: "migrating-v1-to-v2", title: "migrating v1 => v2", group: "project", dir: "docs/" }
 ];
 

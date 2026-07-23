@@ -90,7 +90,7 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, opts planOption
 	// sync and clean reconcile a directory tree; they are meaningless for a
 	// single file and would delete the wrong things, so reject that up front.
 	if !info.IsDir() && strategy != config.StrategyOverlay {
-		return p, fmt.Errorf("strategy %q requires a directory, but local path %q is a single file (use the overlay strategy)", strategy, pair.Local)
+		return p, fmt.Errorf("mode %q requires a directory, but local path %q is a single file (use the overlay mode)", strategy, pair.Local)
 	}
 
 	// A single file maps directly onto the remote path. A trailing slash on

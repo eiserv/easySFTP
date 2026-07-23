@@ -10,13 +10,28 @@ easysftp_error() {
   return 1
 }
 
-validate_build_mode() {
-  case "${1:-}" in
-    prebuilt | source)
-      printf '%s\n' "$1"
+# detect_build_mode picks how to obtain the easySFTP binary from the action
+# ref alone (the build-mode input was removed in v3): a ref matching the
+# checkout's release version (tag or exact release commit) uses the verified
+# prebuilt release asset; every development ref (branches, other commit SHAs,
+# local "uses: ./") builds the checkout from source.
+detect_build_mode() {
+  local action_ref=$1
+  local version=$2
+  local release_commit=${3:-}
+  local major minor patch
+
+  IFS=. read -r major minor patch <<< "${version#v}"
+  case "$action_ref" in
+    "v$major" | "v$major.$minor" | "v$major.$minor.$patch")
+      printf 'prebuilt\n'
       ;;
     *)
-      easysftp_error "invalid build-mode '${1:-}'; supported values are 'prebuilt' and 'source'"
+      if [[ "$action_ref" =~ ^[0-9a-f]{40}$ ]] && [[ -n "$release_commit" ]] && [[ "$action_ref" == "$release_commit" ]]; then
+        printf 'prebuilt\n'
+      else
+        printf 'source\n'
+      fi
       ;;
   esac
 }
@@ -44,30 +59,6 @@ read_release_version() {
   fi
 
   printf '%s\n' "${lines[1]}"
-}
-
-validate_release_ref() {
-  local action_ref=$1
-  local version=$2
-  local release_commit=${3:-}
-  local major minor patch
-
-  IFS=. read -r major minor patch <<< "${version#v}"
-  case "$action_ref" in
-    "v$major" | "v$major.$minor" | "v$major.$minor.$patch")
-      ;;
-    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
-      if [[ ! "$action_ref" =~ ^[0-9a-f]{40}$ ]] || [[ "$action_ref" != "$release_commit" ]]; then
-        easysftp_error "commit ref '$action_ref' does not match the published $version release commit. Use build-mode: source"
-      fi
-      ;;
-    v[0-9]*)
-      easysftp_error "action ref '$action_ref' does not match version '$version' from .easysftp-version"
-      ;;
-    *)
-      easysftp_error "prebuilt mode requires a release tag ref (@vX, @vX.Y, or @vX.Y.Z) or its matching full commit SHA; '$action_ref' is a development ref. Use build-mode: source"
-      ;;
-  esac
 }
 
 resolve_release_commit() {

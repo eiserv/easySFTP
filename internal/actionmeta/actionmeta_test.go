@@ -51,28 +51,47 @@ func TestActionMetadata(t *testing.T) {
 	if len(action.Runs.Steps) == 0 {
 		t.Fatal("action has no steps")
 	}
+	// The build-mode tombstone must not have a default: build mode is
+	// selected automatically in v3, and a declared default would trip the
+	// tombstone check on every run.
 	input, ok := action.Inputs["build-mode"]
 	if !ok {
-		t.Fatal("build-mode input is missing")
+		t.Fatal("build-mode input (tombstone) is missing")
 	}
-	if input.Default != "prebuilt" {
-		t.Errorf("build-mode default = %q, want prebuilt", input.Default)
+	if input.Default != "" {
+		t.Errorf("build-mode default = %q, want none (removed in v3)", input.Default)
 	}
 
 	wantInputs := []string{
-		"build-mode", "server", "port", "username", "password", "private-key",
-		"passphrase", "host-key-fingerprint", "known-hosts",
-		"proxy-server", "proxy-port", "proxy-username", "proxy-password",
-		"proxy-private-key", "proxy-passphrase", "proxy-host-key-fingerprint",
-		"proxy-known-hosts", "uploads", "config-file", "strategy",
-		"ignore", "ignore-from", "max-deletes", "delete", "dry-run", "concurrency",
-		"sftp-request-concurrency", "sync-fast-path", "skip-unchanged", "retries",
-		"timeout", "stall-timeout", "dir-mode", "file-mode", "log-level", "manifest-name",
-		"preserve-times",
+		// live v3 inputs
+		"host", "port", "username", "password", "private-key", "passphrase",
+		"host-key", "known-hosts", "allow-any-host-key",
+		"source", "target", "mode", "exclude", "config",
+		"proxy-password", "proxy-private-key", "proxy-passphrase",
+		"dry-run", "log-level",
+		// removed-input tombstones (fail with a migration hint when set)
+		"build-mode", "server", "host-key-fingerprint", "uploads", "config-file",
+		"strategy", "ignore", "ignore-from", "max-deletes", "delete",
+		"concurrency", "sftp-request-concurrency", "retries", "timeout",
+		"stall-timeout", "sync-fast-path", "skip-unchanged", "manifest-name",
+		"dir-mode", "file-mode", "preserve-times",
+		"proxy-server", "proxy-port", "proxy-username",
+		"proxy-host-key-fingerprint", "proxy-known-hosts",
 	}
 	for _, name := range wantInputs {
 		if _, ok := action.Inputs[name]; !ok {
 			t.Errorf("input %q is missing", name)
+		}
+	}
+
+	// Only run-wide switches may declare defaults: the runner exports
+	// declared defaults unconditionally, so a default on any mode-specific
+	// input would wrongly trip the config-mode mutual-exclusion check (the
+	// class of bug behind #62), and one on a tombstone would fail every run.
+	allowedDefaults := map[string]bool{"dry-run": true, "log-level": true}
+	for name, input := range action.Inputs {
+		if input.Default != "" && !allowedDefaults[name] {
+			t.Errorf("input %q declares default %q; only dry-run and log-level may have defaults", name, input.Default)
 		}
 	}
 

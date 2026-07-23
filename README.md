@@ -3,30 +3,52 @@
 [![CI](https://github.com/eiserv/easySFTP/actions/workflows/ci.yml/badge.svg)](https://github.com/eiserv/easySFTP/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Fast, secure and simple SFTP uploads for GitHub Actions.**
+**Fast, secure and boring SFTP deploys for GitHub Actions.**
 
-Deploy your build output to any SFTP server, from a three-line workflow step
-up to fully configured multi-target deployments.
+easySFTP uploads your build output to any SFTP server. The common case is a
+few self-explanatory lines; complex, professional setups stay fully
+configurable through one optional config file.
 
-- ⚡ **Fast**: release tags use a prebuilt, checksum-verified Go binary by
-  default, and files are transferred in parallel with concurrent SFTP write
-  requests per file.
-- 🔒 **Secure**: optional host key pinning verifies the server's identity;
-  atomic per-file uploads never leave half-written files; credentials are only
-  ever read from environment variables.
-- 🧩 **Simple, but configurable**: sensible defaults for the simple case;
-  gitignore-style excludes, sync/clean strategies, delete guards, dry runs,
-  retries and outputs for the complex ones.
-- 🖥️ **Cross-platform**: native amd64 and arm64 binaries for Linux, macOS and
-  Windows, with no Docker required.
+## Quick start
+
+Add two secrets to your repository (`SFTP_USERNAME`, `SFTP_PASSWORD`), pin the
+server's host key, and deploy a directory:
+
+```yaml
+- name: Deploy via SFTP
+  uses: eiserv/easySFTP@v3
+  with:
+    host: sftp.example.com
+    username: ${{ secrets.SFTP_USERNAME }}
+    password: ${{ secrets.SFTP_PASSWORD }}
+    host-key: ${{ secrets.SFTP_HOST_KEY }}
+    source: dist
+    target: /var/www/html
+```
+
+That's the whole thing. You only need to understand four things: where the
+server is, how to authenticate, what to upload, and where to put it.
+
+Get the host key once with `ssh-keyscan sftp.example.com | ssh-keygen -lf -`
+and store the `SHA256:...` line(s) as the `SFTP_HOST_KEY` secret. (Without it,
+the deploy fails rather than trusting an unverified server; you can opt out
+with `allow-any-host-key: true`, but that allows man-in-the-middle attacks.)
+
+> **Not just simple deploys.** easySFTP is boring on purpose for the common
+> case, but complex and professional setups are fully supported through an
+> optional [config file](#need-more-multiple-deployments-and-advanced-control):
+> multiple deployment targets, per-target modes, proxy/bastion connections,
+> delete guards, advanced excludes, permissions, retries and timeouts,
+> performance tuning, and sync-manifest configuration. Start inline; add a
+> config file when you actually need one.
 
 ## Table of contents
 
-- [Why easySFTP?](#why-easysftp)
 - [Quick start](#quick-start)
+- [Why easySFTP?](#why-easysftp)
 - [Inputs & outputs](#inputs--outputs)
-- [Strategies](#strategies)
-- [Config file for multiple targets](#config-file-for-multiple-targets)
+- [Deployment modes](#deployment-modes)
+- [Need more? Multiple deployments and advanced control](#need-more-multiple-deployments-and-advanced-control)
 - [Security](#security)
 - [Documentation](#documentation)
 - [Versioning](#versioning)
@@ -55,7 +77,7 @@ job:
 | Skip unchanged files | yes (SHA256 manifest) | no | yes (state file) | partial (rsync) | yes (MD5 hashes) |
 | Delete removed files | yes (tracked, via sync) | yes (full wipe) | yes | yes (full wipe) | yes (tracked) |
 | Delete safety guards | yes (root refusal, max_deletes) | no | no | no | no |
-| Multiple targets / strategies | yes (config file) | multiple mappings | single directory | single directory | single directory |
+| Multiple targets / modes | yes (config file) | multiple mappings | single directory | single directory | single directory |
 | Dry run | yes | no | yes | no | no |
 | Actively maintained | yes | last release 2024 | yes | yes | yes |
 
@@ -80,51 +102,33 @@ no-longer-maintained [Dylan700/sftp-upload-action][dylan]:
 [wlixcc]: https://github.com/wlixcc/SFTP-Deploy-Action
 [wang]: https://github.com/wangyucode/sftp-upload-action
 
-## Quick start
-
-```yaml
-- name: Deploy via SFTP
-  uses: eiserv/easySFTP@v2
-  with:
-    server: sftp.example.com
-    username: ${{ secrets.SFTP_USERNAME }}
-    password: ${{ secrets.SFTP_PASSWORD }}
-    uploads: ./dist/ => /var/www/html/
-```
-
-That's it. Everything else is optional. More recipes (key auth, multi-target
-deploys, PR previews, `.sftpignore`) live in [docs/examples.md](docs/examples.md).
-
-Upgrading from v1? The only breaking change is that `delete: true` became
-`strategy: clean`; everything else works unchanged.
-
 ## Inputs & outputs
 
-The most used inputs:
+Inline mode uses a small, self-explanatory set of inputs:
 
 | Input | Default | Description |
 |---|---|---|
-| `build-mode` | `prebuilt` | `prebuilt` downloads and verifies the release binary; `source` installs Go and compiles this checkout. |
-| `server` / `port` / `username` | - / `22` / - | Where and as whom to connect. |
+| `host` / `port` / `username` | - / `22` / - | Where and as whom to connect. |
 | `password` / `private-key` / `passphrase` | - | Authentication, at least one of password/key. **Use secrets.** |
-| `host-key-fingerprint` | - | Pin the server's SHA256 host key(s). **Strongly recommended.** |
-| `uploads` | - | One `local => remote` mapping per line; directories are recursive. |
-| `strategy` | `overlay` | How the remote side is reconciled: `overlay`, `sync` or `clean`. |
-| `ignore` / `ignore-from` | - | Gitignore-style excludes (inline / from a file). |
+| `host-key` / `known-hosts` | - | Pin the server's host key. **Required** (or opt out with `allow-any-host-key`). |
+| `source` / `target` | - | Local path to upload, and where it goes on the server. |
+| `mode` | `overlay` | How the remote side is reconciled: `overlay`, `sync` or `clean`. |
+| `exclude` | - | Gitignore-style excludes, one per line. |
+| `config` | - | Path to a YAML config file (replaces all inline connection/deployment inputs). |
 | `dry-run` | `false` | Log what would happen, change nothing. |
-| `concurrency` / `retries` / `timeout` | `4` / `2` / `30` | Parallelism, per-file retries, connection timeout (s). |
+| `log-level` | `normal` | `normal`, `verbose` (per-file lines) or `debug` (exclude decisions). |
 
 Outputs: `files-uploaded`, `files-deleted`, `files-skipped`, `bytes-uploaded`,
 `duration-ms`, plus a summary table in the job summary. If a transfer fails
 partway, the outputs contain the progress completed before the failure and the
 summary is marked as failed.
 
-➡ Full reference with every input, output and rule:
+➡ Full reference with every input, the config file, and every rule:
 [docs/configuration.md](docs/configuration.md)
 
-## Strategies
+## Deployment modes
 
-| Strategy | Uploads | Deletes | Use for |
+| Mode | Uploads | Deletes | Use for |
 |---|---|---|---|
 | `overlay` (default) | all files | nothing | adding/updating files, leaving everything else in place |
 | `sync` | new & changed files | files a previous sync uploaded but that are now gone locally | keeping a directory an exact mirror of your build, safely |
@@ -132,41 +136,67 @@ summary is marked as failed.
 
 `sync` is manifest-based: it only ever deletes files it uploaded itself, skips
 unchanged files by content hash, and only transfers what changed on re-deploys.
-Destructive strategies are protected by [delete guards](docs/strategies.md#delete-guards):
+Destructive modes are protected by [delete guards](docs/strategies.md#delete-guards):
 the remote root is always refused, and `max_deletes` caps how much a single run
 may delete. Preview anything with `dry-run: true`.
 
 ➡ Details, manifest semantics and guard rules: [docs/strategies.md](docs/strategies.md)
 
-## Config file for multiple targets
+## Need more? Multiple deployments and advanced control
 
-Multiple targets with different strategies? Point `config-file` at a YAML file
-(connection settings stay in inputs/secrets):
+Point `config` at a YAML file. In config mode **every** non-secret setting
+lives in that one file (connection included); only credentials, `dry-run` and
+`log-level` stay in the workflow. There is no mixed mode and no precedence to
+reason about.
+
+```yaml
+- uses: eiserv/easySFTP@v3
+  with:
+    config: .github/easysftp.yml
+    private-key: ${{ secrets.SFTP_PRIVATE_KEY }}
+```
 
 ```yaml
 # .github/easysftp.yml
-version: 1
-guards:
-  max_deletes: 200
-targets:
-  - local: ./dist/
-    remote: /var/www/html/
-    strategy: sync
-  - local: ./docs/
-    remote: /var/www/docs/
-    strategy: clean
+version: 3
+connection:
+  host: sftp.example.com
+  username: deploy
+  host_key: |
+    SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8
+defaults:
+  mode: sync
+  exclude:
+    - "*.map"
+safety:
+  max_deletes: 500
+deployments:
+  website:
+    source: dist
+    target: /var/www/html
+  documentation:
+    source: docs/build
+    target: /var/www/docs
+    mode: clean
 ```
 
-A JSON Schema for editor autocomplete/validation is bundled. See
-[docs/configuration.md](docs/configuration.md#the-yaml-config-file) and the
+The config file supports named deployments, per-target modes and excludes,
+proxy/bastion connections, delete guards, permissions, retries/timeouts,
+performance tuning and sync-manifest settings. A JSON Schema for editor
+autocomplete/validation is bundled. See
+[docs/configuration.md](docs/configuration.md#the-config-file) and the
 commented [example config](docs/easysftp.example.yml).
+
+**Upgrading from v2?** The inputs were renamed and the advanced knobs moved
+into the config file. See the [v3 migration guide](docs/migration-v3.md).
 
 ## Security
 
 Two rules cover most of it:
 
-1. **Pin the host key.** Without `host-key-fingerprint`, any server is
-   accepted. Set it so a man-in-the-middle fails the deploy instead:
+1. **Pin the host key.** `host-key` is required in v3: without it (and without
+   the explicit `allow-any-host-key` opt-out), the deploy fails instead of
+   trusting an unverified server. Get the fingerprints with:
 
    ```console
    $ ssh-keyscan sftp.example.com | ssh-keygen -lf -
@@ -180,45 +210,38 @@ Vulnerability reports: [SECURITY.md](SECURITY.md)
 
 ## Documentation
 
+Structured from quick start to full reference:
+
 | | |
 |---|---|
-| [Configuration reference](docs/configuration.md) | All inputs, outputs, mappings, ignore rules, config file. |
-| [Strategies](docs/strategies.md) | `overlay`/`sync`/`clean`, manifest, delete guards, dry runs. |
+| [Configuration reference](docs/configuration.md) | Quick start, common config, multiple/advanced deployments, the config file, full reference. |
+| [Deployment modes](docs/strategies.md) | `overlay`/`sync`/`clean`, manifest, delete guards, dry runs. |
 | [Examples & use cases](docs/examples.md) | Copy-paste recipes for common deployments. |
 | [Security guide](docs/security.md) | Host key pinning, credentials, supply chain. |
 | [Troubleshooting & FAQ](docs/troubleshooting.md) | Common errors and fixes. |
+| [v3 migration guide](docs/migration-v3.md) | Moving a v2 (or v1) setup to v3. |
 
 ## Versioning
 
 easySFTP follows [Semantic Versioning](https://semver.org):
 
 ```yaml
-uses: eiserv/easySFTP@v2        # latest 2.x, recommended, gets fixes & features
-uses: eiserv/easySFTP@v2.0.0    # exact, immutable pin
+uses: eiserv/easySFTP@v3        # latest 3.x, recommended, gets fixes & features
+uses: eiserv/easySFTP@v3.0.0    # exact, immutable pin
 ```
 
-`v2`, `v2.0` and `v2.0.0` use the exact version recorded in
+`v3`, `v3.0` and `v3.0.0` use the exact version recorded in
 `.easysftp-version` and download the corresponding asset only from this
 repository's GitHub Release. The asset's SHA-256 digest is checked against
-`checksums.txt` before it is executed. `v2`/`v2.0` are rolling tags; exact tags
+`checksums.txt` before it is executed. `v3`/`v3.0` are rolling tags; exact tags
 never move.
 
-An exact release-commit SHA is accepted after it is matched against the exact
-tag recorded in `.easysftp-version`. Development refs such as `@main`, local
-`uses: ./`, and commit SHAs that do not match that release do not silently reuse
-the last binary. Select the source fallback explicitly for those checkouts:
-
-```yaml
-- uses: eiserv/easySFTP@<commit-sha>
-  with:
-    build-mode: source
-    # connection and upload inputs...
-```
-
-Source mode installs the Go version from `go.mod` and builds that exact
-checkout with `CGO_ENABLED=0`, `-trimpath`, and stripped symbols. Releases and
-the changelog remain managed by Release Please and Conventional Commits. See
-[docs/RELEASING.md](docs/RELEASING.md).
+The build mode is selected automatically from the action ref: release tags
+(and the exact release commit SHA) download the verified prebuilt binary;
+development refs (`@main`, other commit SHAs, local `uses: ./`) build the
+checked-out source with `CGO_ENABLED=0`, `-trimpath`, and stripped symbols.
+Releases and the changelog remain managed by Release Please and Conventional
+Commits. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Contributing
 

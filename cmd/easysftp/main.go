@@ -63,8 +63,25 @@ func run() error {
 			mode, stats.FilesUploaded, stats.BytesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.Duration.Round(time.Millisecond))
 	}
 
-	reportStats(stats, mode, runErr)
+	reportStats(cfg, stats, mode, runErr)
 	return runErr
+}
+
+// hostKeyStatus describes how the run verified the server's identity, for
+// the job summary.
+func hostKeyStatus(cfg *config.Config) string {
+	status := "❌ NOT verified (allow-any-host-key)"
+	if cfg.HostKeyPinned() {
+		status = "✅ pinned"
+	}
+	if p := cfg.Proxy; p != nil {
+		proxyStatus := "❌ NOT verified (allow_any_host_key)"
+		if len(p.HostKeyFingerprints) > 0 || p.KnownHosts != "" {
+			proxyStatus = "✅ pinned"
+		}
+		status += ", proxy: " + proxyStatus
+	}
+	return status
 }
 
 func logBuildInfo() {
@@ -103,7 +120,7 @@ func buildInfoLine(info *debug.BuildInfo, version string) string {
 	return ""
 }
 
-func reportStats(stats *uploader.Stats, mode string, runErr error) {
+func reportStats(cfg *config.Config, stats *uploader.Stats, mode string, runErr error) {
 	status := "✅ Succeeded"
 	if runErr != nil {
 		status = fmt.Sprintf("❌ Failed after %d file(s), %d byte(s)", stats.FilesUploaded, stats.BytesUploaded)
@@ -115,34 +132,45 @@ func reportStats(stats *uploader.Stats, mode string, runErr error) {
 	gha.SetOutput("bytes-uploaded", fmt.Sprintf("%d", stats.BytesUploaded))
 	gha.SetOutput("duration-ms", fmt.Sprintf("%d", stats.Duration.Milliseconds()))
 
+	configSource := "inline inputs"
+	if cfg.ConfigPath != "" {
+		configSource = fmt.Sprintf("`%s` (version 3)", cfg.ConfigPath)
+	}
 	summary := fmt.Sprintf(
-		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %d |\n| Duration | %s |\n",
-		status, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.BytesUploaded, stats.Duration.Round(time.Millisecond))
-	summary += targetBreakdown(stats.Targets)
+		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Host key | %s |\n| Configuration | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %d |\n| Duration | %s |\n",
+		status, hostKeyStatus(cfg), configSource, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.BytesUploaded, stats.Duration.Round(time.Millisecond))
+	summary += deploymentBreakdown(stats.Targets)
 	gha.AppendSummary(summary)
 }
 
-// targetBreakdown renders a per-target table for multi-target deploys, or ""
-// when there is only one target (its row would just repeat the totals above).
-func targetBreakdown(targets []uploader.TargetStats) string {
-	if len(targets) < 2 {
+// deploymentBreakdown renders a per-deployment table, or "" when there is
+// only one unnamed deployment (its row would just repeat the totals above).
+func deploymentBreakdown(targets []uploader.TargetStats) string {
+	if len(targets) < 2 && (len(targets) == 0 || targets[0].Name == "") {
 		return ""
 	}
 
 	var b strings.Builder
-	b.WriteString("\n#### Per-target breakdown\n\n| Target | Strategy | Uploaded | Deleted | Skipped | Bytes |\n|---|---|---|---|---|---|\n")
+	b.WriteString("\n#### Deployments\n\n| Deployment | Source | Target | Mode | Uploaded | Deleted | Skipped | Bytes | Duration |\n|---|---|---|---|---|---|---|---|---|\n")
 
 	var totalUploaded, totalDeleted, totalSkipped int
 	var totalBytes int64
 	for _, t := range targets {
-		fmt.Fprintf(&b, "| `%s` => `%s` | %s | %d | %d | %d | %d |\n",
-			t.Local, t.Remote, t.Strategy, t.FilesUploaded, t.FilesDeleted, t.FilesSkipped, t.BytesUploaded)
+		name := t.Name
+		if name == "" {
+			name = "(inline)"
+		}
+		fmt.Fprintf(&b, "| %s | `%s` | `%s` | %s | %d | %d | %d | %d | %s |\n",
+			name, t.Local, t.Remote, t.Strategy, t.FilesUploaded, t.FilesDeleted, t.FilesSkipped, t.BytesUploaded,
+			t.Duration.Round(time.Millisecond))
 		totalUploaded += t.FilesUploaded
 		totalDeleted += t.FilesDeleted
 		totalSkipped += t.FilesSkipped
 		totalBytes += t.BytesUploaded
 	}
-	fmt.Fprintf(&b, "| **Total** | | **%d** | **%d** | **%d** | **%d** |\n",
-		totalUploaded, totalDeleted, totalSkipped, totalBytes)
+	if len(targets) > 1 {
+		fmt.Fprintf(&b, "| **Total** | | | | **%d** | **%d** | **%d** | **%d** | |\n",
+			totalUploaded, totalDeleted, totalSkipped, totalBytes)
+	}
 	return b.String()
 }

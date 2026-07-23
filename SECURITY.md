@@ -8,8 +8,8 @@ or contact the maintainer directly. You will receive a response as soon as possi
 
 ## Hardening recommendations for users
 
-- Always set the `host-key-fingerprint` input so the server's identity is verified
+- Always set the `host-key` input (or `known-hosts`) so the server's identity is verified. In v3 a run without a pinned key fails unless you explicitly opt out with `allow-any-host-key: true`, which is not recommended
 - Store all credentials (`password`, `private-key`, `passphrase`) as encrypted GitHub Actions secrets
 - Prefer key-based authentication over passwords
 - Release refs download only this repository's platform binary and verify it against the release's `checksums.txt`
-- Prebuilt mode accepts a commit SHA only if it matches the exact release tag in `.easysftp-version`; use `build-mode: source` for all other SHAs
+- The build mode is selected automatically from the action ref: release tags and the exact release commit SHA use the verified prebuilt binary; every other ref builds from source, so a stale release binary is never substituted for newer source
