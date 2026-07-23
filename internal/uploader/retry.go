@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"sync/atomic"
 	"time"
 )
 
@@ -20,7 +19,8 @@ import (
 // path (see uploadFile) so two planned transfers never race over the same
 // temporary name, even if one target's path happens to literally be
 // another's plus tmpSuffix.
-func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.FileMode, sess *session, retries int, watch *stallWatchdog, log Logger, modeWarned, timesWarned *atomic.Bool) (int64, error) {
+func uploadFileWithRetry(ctx context.Context, env *transferEnv, f fileItem, index int, mode fs.FileMode) (int64, error) {
+	sess, watch, log, retries := env.sess, env.watch, env.log, env.cfg.Retries
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
@@ -37,7 +37,7 @@ func uploadFileWithRetry(ctx context.Context, f fileItem, index int, mode fs.Fil
 			// fresh attempt starts from a clean slate; harmless when absent.
 			_ = client.Remove(fmt.Sprintf("%s%s.%d", f.remotePath, tmpSuffix, index))
 		}
-		n, err := uploadFile(ctx, f, index, mode, client, watch, log, modeWarned, timesWarned)
+		n, err := uploadFile(ctx, env, f, index, mode, client)
 		if err == nil {
 			return n, nil
 		}
