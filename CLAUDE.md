@@ -113,6 +113,14 @@ Look at how existing inputs are wired before adding a new one:
   this. The production retry path sidesteps it by removing the leftover temp
   file before a re-attempt, which also matters on real servers (stale
   handles/locks); keep that in mind before "simplifying" it away.
+- The stall watchdog is one-shot: once `monitor` fires (closes the connection,
+  sets `fired`), its goroutine exits, so `fired` stays true forever and a
+  watchdog passed to any later `session.do` protects nothing. `session.do`
+  deliberately refuses to redial once `fired` is set (a stalled server usually
+  just stalls again). `writeRecoveryManifest` is the one exception: it drops
+  the spent watchdog so `do` may spend one reconnect to record partial progress
+  before the run fails (issue #115). Keep this asymmetry in mind before routing
+  a new post-stall operation through `do`.
 - Run `go test -race ./...` before committing; uploads are parallelized
   (`errgroup` + `cfg.Concurrency`), so races are the most likely regression
   class in `internal/uploader`. `-race` needs cgo: on a machine without a C
