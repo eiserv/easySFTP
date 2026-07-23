@@ -21,6 +21,25 @@ import (
 // rename stays on one filesystem and is atomic.
 const tmpSuffix = ".easysftp-tmp"
 
+// transferEnv carries the run-wide invariants that every level of the upload
+// call chain re-threads to the next (the session, the stall watchdog, the
+// logger and the two warn-once flags). It is built once in uploadFiles and
+// passed down, so per-file positions stay short and, in particular, the two
+// adjacent *atomic.Bool flags can no longer be transposed at a call site: they
+// are named struct fields instead of interchangeable positional arguments.
+type transferEnv struct {
+	cfg   *config.Config
+	sess  *session
+	watch *stallWatchdog
+	log   Logger
+	// modeWarned is armed only when file-mode is an explicit override; a
+	// mirrored local mode (the default) stays nil and warns silently. See
+	// uploadFile.
+	modeWarned *atomic.Bool
+	// timesWarned doubles as the preserve-times switch: nil means off.
+	timesWarned *atomic.Bool
+}
+
 // uploadFiles creates the needed remote directories and uploads files in
 // parallel (or, in dry-run mode, only logs what it would do). With
 // skipUnchanged set, a file whose remote counterpart already exists with the
@@ -51,18 +70,17 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(cfg.Concurrency)
 	results := make([]int64, len(files))
+	env := &transferEnv{cfg: cfg, sess: sess, watch: watch, log: log}
 	// modeWarned is only armed when file-mode is an explicit override: a
 	// mirrored local mode (the default) stays silent on failure, as before.
-	var modeWarned *atomic.Bool
 	if cfg.FileMode != nil {
-		modeWarned = new(atomic.Bool)
+		env.modeWarned = new(atomic.Bool)
 	}
 	// timesWarned doubles as the preserve-times switch: nil means off. The
 	// user explicitly asked for preserved times, so a refusing server warns
 	// (once per run); staying silent would defeat the point of the input.
-	var timesWarned *atomic.Bool
 	if cfg.PreserveTimes {
-		timesWarned = new(atomic.Bool)
+		env.timesWarned = new(atomic.Bool)
 	}
 
 	for i, f := range files {
@@ -96,7 +114,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 			if cfg.FileMode != nil {
 				mode = *cfg.FileMode
 			}
-			n, err := uploadFileWithRetry(ctx, f, i, mode, sess, cfg.Retries, watch, log, modeWarned, timesWarned)
+			n, err := uploadFileWithRetry(ctx, env, f, i, mode)
 			if err != nil {
 				return err
 			}
@@ -122,7 +140,8 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 // temporary sibling and, only once that fully succeeds, renames it over the
 // target. Any failure removes the temporary file so a broken or partial upload
 // never replaces the live file and no debris is left behind.
-func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, client *sftp.Client, watch *stallWatchdog, log Logger, modeWarned, timesWarned *atomic.Bool) (int64, error) {
+func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mode fs.FileMode, client *sftp.Client) (int64, error) {
+	watch, log := env.watch, env.log
 	// Active per attempt (not around the whole retry loop) so retry backoff
 	// sleeps do not count as transfer silence.
 	if watch != nil {
@@ -164,7 +183,7 @@ func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, cl
 	// override when set. Some servers reject SETSTAT; an explicit override
 	// warns once per run so the user knows it isn't taking effect, but a
 	// mirrored local mode stays silent as before.
-	if cerr := client.Chmod(tmpPath, mode); cerr != nil && modeWarned != nil && !modeWarned.Swap(true) {
+	if cerr := client.Chmod(tmpPath, mode); cerr != nil && env.modeWarned != nil && !env.modeWarned.Swap(true) {
 		log.Warningf("could not set file-mode %04o on %s (server may reject SETSTAT); not warning again this run: %v", mode, f.remotePath, cerr)
 	}
 
@@ -176,9 +195,9 @@ func uploadFile(ctx context.Context, f fileItem, index int, mode fs.FileMode, cl
 	// preserve-times (timesWarned non-nil): keep the local modification time
 	// instead of "now". After the rename, so the request targets the final
 	// path; a failure warns once per run and never fails the deploy.
-	if timesWarned != nil {
+	if env.timesWarned != nil {
 		mtime := time.Unix(f.mtime, 0)
-		if cerr := client.Chtimes(f.remotePath, mtime, mtime); cerr != nil && !timesWarned.Swap(true) {
+		if cerr := client.Chtimes(f.remotePath, mtime, mtime); cerr != nil && !env.timesWarned.Swap(true) {
 			log.Warningf("could not preserve the modification time on %s (server may reject SETSTAT); not warning again this run: %v", f.remotePath, cerr)
 		}
 	}
