@@ -5,6 +5,13 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2](https://github.com/eiserv/easySFTP/compare/v2.2.1...v2.2.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* **sync:** write the recovery manifest after a stall-timeout failure ([#118](https://github.com/eiserv/easySFTP/issues/118)) ([591685a](https://github.com/eiserv/easySFTP/commit/591685a90e958f80540f9c4281bd43b8fd45e693))
+
 ## [2.2.1](https://github.com/eiserv/easySFTP/compare/v2.2.0...v2.2.1) (2026-07-22)
 
 
