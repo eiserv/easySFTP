@@ -10,7 +10,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### ⚠ BREAKING CHANGES
 
-* v3 configuration model (inline vs config file, no mixed mode) ([#124](https://github.com/eiserv/easySFTP/issues/124))
+- server was renamed to host, uploads was replaced by source + target, strategy is now mode, ignore is now exclude, host-key-fingerprint is now host-key, config-file is now config.
+- Multiple upload mappings require a config file; inline mode supports exactly one deployment.
+- All advanced/tuning inputs (concurrency, retries, timeout, stall-timeout, sftp-request-concurrency, sync-fast-path, skip-unchanged, manifest-name, dir-mode, file-mode, preserve-times, max-deletes) moved into the config file.
+- All proxy/bastion connection inputs moved into the config file (connection.proxy); only the proxy credentials remain inputs.
+- The config file format changed: version: 3, connection settings live in the file, and targets became named deployments.
+- Host key verification is required. A run without host-key / known-hosts fails unless allow-any-host-key: true is set explicitly (v2 printed a warning and accepted any key).
+- build-mode was removed; the build mode is selected automatically from the action ref (release tags download the verified prebuilt binary, development refs build from source).
+- The default log no longer prints one line per file; per-file output moved to log-level: verbose (see [Logging changes](https://eiserv.github.io/easySFTP/docs.html#migration-v3/logging-changes)).
+- The delete tombstone input from v1 was finally removed.
 
 ### Features
 
