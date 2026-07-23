@@ -3,12 +3,15 @@
 How to run easySFTP safely. See also the project's
 [security policy](../SECURITY.md) for reporting vulnerabilities.
 
-## Pin the host key (strongly recommended)
+## Pin the host key (required)
 
-Without `host-key-fingerprint` or `known-hosts`, easySFTP prints a warning
-and accepts **any** host key. Convenient for a first test, but vulnerable to
-man-in-the-middle attacks. Pin your server's keys once, in whichever format
-you already have:
+In v3, host key verification is **required**: a run without `host-key` or
+`known-hosts` fails, instead of silently trusting whatever key the server
+presents (v2 only warned). To connect anyway without verification, you must
+opt out explicitly with `allow-any-host-key: true` (in the config file:
+`connection.allow_any_host_key: true`), which still logs a warning on every
+run and leaves you open to man-in-the-middle attacks. Pinning is the safe
+default; do it once, in whichever format you already have:
 
 **Option A: `known-hosts`** takes raw OpenSSH `known_hosts` lines, exactly
 what `ssh-keyscan` prints (or the server's lines from your own
@@ -28,7 +31,7 @@ known-hosts: ${{ secrets.SFTP_KNOWN_HOSTS }}
 Hashed entries (`|1|...`) and `[host]:port` entries for non-standard ports
 (what `ssh-keyscan -p 2222` prints) work too.
 
-**Option B: `host-key-fingerprint`** takes SHA256 fingerprints, one per line:
+**Option B: `host-key`** takes SHA256 fingerprints, one per line:
 
 ```console
 $ ssh-keyscan sftp.example.com | ssh-keygen -lf -
@@ -38,7 +41,7 @@ $ ssh-keyscan sftp.example.com | ssh-keygen -lf -
 ```
 
 ```yaml
-host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINTS }}
+host-key: ${{ secrets.SFTP_HOST_KEY }}
 ```
 
 Either way, the connection is accepted if the server presents a key matching
@@ -91,17 +94,26 @@ Apache (vhost or `.htaccess`):
 </Files>
 ```
 
-If you use a custom `manifest-name`, adjust the path/name accordingly.
+If you use a custom `sync.manifest` name, adjust the path/name accordingly.
 
-**Give it an unguessable name** with the `manifest-name` input, e.g. a random
-suffix stored as a repository secret:
+**Give it an unguessable name** with the `sync.manifest` config field, e.g. a
+random suffix:
 
 ```yaml
-- uses: eiserv/easySFTP@v2
-  with:
-    # ...
-    strategy: sync
-    manifest-name: ${{ secrets.EASYSFTP_MANIFEST_NAME }}  # e.g. .manifest-c4f81b52.json
+# .github/easysftp.yml
+version: 3
+connection:
+  host: sftp.example.com
+  username: deploy
+  host_key: |
+    SHA256:...
+deployments:
+  website:
+    source: ./dist/
+    target: /var/www/html/
+    mode: sync
+sync:
+  manifest: .manifest-c4f81b52.json
 ```
 
 This mitigates casual discovery, but the file is still served if its name
@@ -119,28 +131,19 @@ behind; delete the old file manually.
 
 ## Supply-chain safety
 
-- Release refs use `build-mode: prebuilt` by default. The launcher validates
-  `.easysftp-version`, maps only the supported OS/architecture pairs, downloads
-  only the matching binary and `checksums.txt` from
+- Release refs download a verified prebuilt binary automatically. The launcher
+  validates `.easysftp-version`, maps only the supported OS/architecture pairs,
+  downloads only the matching binary and `checksums.txt` from
   `eiserv/easySFTP`'s exact GitHub Release, and verifies SHA-256 before
   execution. Release downloads may follow GitHub's HTTPS redirect to its own
   release-asset CDN; no third-party download source is configured.
-- Pin the action to a major tag for convenience (`eiserv/easySFTP@v2`) or to
-  the full commit SHA of an exact release. Prebuilt mode verifies that a SHA is
-  the commit behind the version file's release tag. For any development SHA,
-  explicitly build that checkout from source so a stale release binary can
-  never be substituted:
-
-  ```yaml
-  - uses: eiserv/easySFTP@<commit-sha>
-    with:
-      build-mode: source
-  ```
-
-- Exact version tags (`v1.2.3`) are immutable once published; `v1` and `v1.2`
+- Pin the action to a major tag for convenience (`eiserv/easySFTP@v3`) or to
+  the full commit SHA of an exact release; both use the verified prebuilt
+  binary. Any development ref (`@main`, a non-release commit SHA, or local
+  `uses: ./`) builds the checked-out source from scratch instead, so a stale
+  release binary can never be substituted. The build mode is selected
+  automatically from the ref; there is no `build-mode` input to get wrong.
+- Exact version tags (`v3.0.0`) are immutable once published; `v3` and `v3.0`
   are rolling tags, see [RELEASING.md](RELEASING.md#tag-policy).
-- `build-mode: source` installs Go and compiles the selected action checkout.
-  Use it for `@main`, local actions, non-release commit SHAs, or source-level
-  debugging.
 - Grant the deploy job only the permissions it needs
   (`permissions: contents: read` is enough for easySFTP itself).

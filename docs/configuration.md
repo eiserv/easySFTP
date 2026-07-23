@@ -1,258 +1,333 @@
 # Configuration reference
 
-Everything easySFTP accepts: action inputs, outputs and the YAML config file.
+easySFTP has exactly two configuration modes, and never mixes them:
 
-- [Inputs](#inputs)
+1. **Inline mode** for the common single-target deploy: connection and one
+   deployment in the workflow's `with:`.
+2. **Config mode** for everything complex: `config` points at a YAML file
+   that holds every non-secret setting. Only credentials, `dry-run` and
+   `log-level` may be combined with it.
+
+Every non-secret setting has exactly one home, so there is never a precedence
+question between the workflow and the config file.
+
+- [Quick start (inline mode)](#quick-start-inline-mode)
+- [Common configuration](#common-configuration)
+- [Config mode (multiple and advanced deployments)](#config-mode-multiple-and-advanced-deployments)
+- [The config file](#the-config-file)
+- [The `source` / `target` mapping](#the-source--target-mapping)
+- [Exclude patterns](#exclude-patterns)
 - [Outputs](#outputs)
-- [The `uploads` mapping](#the-uploads-mapping)
-- [Ignore patterns](#ignore-patterns)
-- [The YAML config file](#the-yaml-config-file)
+- [Complete input reference](#complete-input-reference)
 
-## Inputs
+## Quick start (inline mode)
 
-### Connection
+```yaml
+- uses: eiserv/easySFTP@v3
+  with:
+    host: sftp.example.com
+    username: ${{ secrets.SFTP_USERNAME }}
+    password: ${{ secrets.SFTP_PASSWORD }}
+    host-key: ${{ secrets.SFTP_HOST_KEY }}
+    source: dist
+    target: /var/www/html
+```
+
+The four things you have to understand are `host` (where), `username` +
+`password`/`private-key` (who), `source` (what) and `target` (where to).
+Everything else has a sensible default.
+
+## Common configuration
+
+### Connection (inline mode)
 
 | Input | Required | Default | Description |
 |---|---|---|---|
-| `server` | ✅ | - | Hostname or IP of the SFTP server. |
+| `host` | ✅ | - | Hostname or IP of the SFTP server. |
 | `port` | | `22` | SSH port. |
 | `username` | ✅ | - | Username for authentication. |
 | `password` | ¹ | - | Password. **Use a secret.** |
 | `private-key` | ¹ | - | SSH private key (OpenSSH/PEM format). **Use a secret.** |
 | `passphrase` | | - | Passphrase of the private key, if encrypted. |
-| `host-key-fingerprint` | | - | Expected SHA256 host key fingerprint(s), one per line (`SHA256:...`). **Strongly recommended**, see [Security](security.md). |
-| `known-hosts` | | - | Expected host key(s) in OpenSSH `known_hosts` format (verbatim `ssh-keyscan` output). Alternative to `host-key-fingerprint`; a key matching either is accepted. Hashed entries and `[host]:port` lines are supported. See [Security](security.md). |
-| `timeout` | | `30` | Connection timeout in seconds. `0` disables the timeout entirely. Covers the dial and SSH handshake only; for hangs after that, see `stall-timeout`. |
-| `stall-timeout` | | `0` (off) | Abort the run when active remote operations make no progress for this many seconds. Covers file transfers and the other remote phases (remote scans, delete sweeps, sync manifest reads and writes). Catches servers that accept the connection and then hang, which would otherwise block the job until the job-level timeout (6 hours by default). On a stall the connection is closed and the run fails with a clear error. Pick a value comfortably above the longest pause a healthy transfer to your server may hit; 60 to 300 is a reasonable range. |
+| `host-key` | ² | - | Expected SHA256 host key fingerprint(s), one per line (`SHA256:...`). See [Security](security.md). |
+| `known-hosts` | ² | - | Expected host key(s) in OpenSSH `known_hosts` format (verbatim `ssh-keyscan` output). Alternative to `host-key`; a key matching either is accepted. |
+| `allow-any-host-key` | ² | `false` | Explicitly skip host key verification. **Not recommended** (allows man-in-the-middle attacks). |
 
 ¹ At least one of `password` / `private-key` is required. If both are set, the key is tried first.
+² You must set `host-key` **or** `known-hosts`, **or** explicitly opt out with `allow-any-host-key: true`. A run with none of the three fails. This is the one behavior change v3 makes on purpose; see [Security](security.md).
 
-### Jump host (bastion)
-
-If the SFTP server is only reachable through a bastion (OpenSSH's
-`ssh -J jump.example.com target`), set the `proxy-*` inputs. easySFTP then
-connects to the jump host first, with its own credentials and its own host
-key verification, and tunnels the SFTP connection to `server` through it.
-All inputs mirror the primary connection settings:
+### Deployment (inline mode)
 
 | Input | Required | Default | Description |
 |---|---|---|---|
-| `proxy-server` | ² | - | Hostname or IP of the jump host. Setting any other `proxy-*` input without this one fails the run. |
-| `proxy-port` | | `22` | SSH port of the jump host. |
-| `proxy-username` | ² | - | Username for the jump host. |
-| `proxy-password` | ³ | - | Password for the jump host. **Use a secret.** |
-| `proxy-private-key` | ³ | - | SSH private key for the jump host. **Use a secret.** |
-| `proxy-passphrase` | | - | Passphrase of the jump host key, if encrypted. |
-| `proxy-host-key-fingerprint` | | - | SHA256 fingerprint(s) of the jump host's key, one per line. **Strongly recommended.** |
-| `proxy-known-hosts` | | - | Jump host key(s) in `known_hosts` format; alternative to the fingerprint input. |
+| `source` | ✅ | - | Local path (file or directory) to upload. |
+| `target` | ✅ | - | Remote destination path. |
+| `mode` | | `overlay` | [Reconciliation mode](strategies.md): `overlay`, `sync` or `clean`. |
+| `exclude` | | - | Gitignore-style exclude patterns, one per line. `!` re-includes. |
 
-² Required when using a jump host. ³ At least one of `proxy-password` /
-`proxy-private-key` is required when `proxy-server` is set.
+### Run-wide switches (both modes)
 
-Host key verification applies to **each hop independently**: pinning the
-target but not the jump host (or vice versa) prints the unverified-host-key
-warning for the open hop. The `timeout` input covers each hop's dial. The
-`retries` reconnect logic re-establishes the whole chain (jump host and
-tunnel) when the connection drops mid-run, and the initial-connection retry
-covers either hop: a transient failure reaching the bastion is retried just
-like one reaching the target, while a host key mismatch or an authentication
-failure on either hop fails immediately.
+| Input | Default | Description |
+|---|---|---|
+| `dry-run` | `false` | Connect and log what would happen, change nothing. |
+| `log-level` | `normal` | `normal` logs connection status, one summary per deployment, warnings and errors. `verbose` additionally logs one line per uploaded/deleted/skipped file. `debug` additionally explains every exclude decision. A dry run always logs per-file lines regardless: inspecting the plan is its whole point. |
+
+These two are the only non-secret settings valid in both modes: they change
+how a run reports, not what it deploys, so they never belong to "one source of
+truth" for a deployment.
+
+## Config mode (multiple and advanced deployments)
+
+When `config` is set, all non-secret settings come from the file. The workflow
+step shrinks to the config path plus credentials:
 
 ```yaml
-- uses: eiserv/easySFTP@v2
+- uses: eiserv/easySFTP@v3
   with:
-    server: sftp.internal.example.com
-    username: ${{ secrets.SFTP_USERNAME }}
+    config: .github/easysftp.yml
     private-key: ${{ secrets.SFTP_PRIVATE_KEY }}
-    host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
-    proxy-server: bastion.example.com
-    proxy-username: ${{ secrets.JUMP_USERNAME }}
-    proxy-private-key: ${{ secrets.JUMP_PRIVATE_KEY }}
-    proxy-host-key-fingerprint: ${{ secrets.JUMP_HOST_KEY_FINGERPRINT }}
-    uploads: |
-      ./dist/ => /var/www/html/
+    # optional, only for a jump host:
+    # proxy-private-key: ${{ secrets.JUMP_PRIVATE_KEY }}
 ```
 
-### What to upload
+Setting any inline connection/deployment input (`host`, `port`, `username`,
+`host-key`, `known-hosts`, `allow-any-host-key`, `source`, `target`, `mode`,
+`exclude`) alongside `config` fails the run: there is no mixed mode.
 
-| Input | Required | Default | Description |
-|---|---|---|---|
-| `uploads` | ² | - | One `local => remote` mapping per line. Directories are uploaded recursively; single files are supported too. |
-| `config-file` | | - | Path to a [YAML config file](#the-yaml-config-file) with per-target strategies and delete guards. Mutually exclusive with `uploads`/`strategy`/`ignore`/`ignore-from`/`max-deletes`. |
-| `strategy` | | `overlay` | [Reconciliation strategy](strategies.md): `overlay`, `sync` or `clean`. |
-| `ignore` | | - | Gitignore-style exclude patterns, one per line. `!` re-includes. |
-| `ignore-from` | | - | Path to a file with exclude patterns (e.g. `.sftpignore`). |
-| `max-deletes` | | `0` | Abort a `sync`/`clean` run that would delete more files than this (`0` = unlimited). See [delete guards](strategies.md#delete-guards). |
+The only inputs that combine with `config` are the credentials (`password`,
+`private-key`, `passphrase`, and the `proxy-*` credential counterparts) and
+the run-wide switches (`dry-run`, `log-level`).
 
-² Required unless `config-file` is set.
+## The config file
 
-> **Removed in v2:** the `delete` input is gone; use `strategy: clean`.
-> Passing `delete: true` now fails the run with a migration hint instead of
-> silently falling back to `overlay`. The declaration disappears in v3.
-
-### Behavior
-
-| Input | Required | Default | Description |
-|---|---|---|---|
-| `build-mode` | | `prebuilt` | `prebuilt` downloads the platform-specific release binary and verifies its SHA-256 digest. `source` installs Go and compiles the selected action checkout. |
-| `dry-run` | | `false` | Connect and log what would happen, change nothing. |
-| `log-level` | | `normal` | `normal` logs one line per uploaded/deleted file. `quiet` suppresses per-file lines (connection info, per-target summaries, warnings and errors remain), keeping the log readable on huge deploys. `verbose` additionally explains every ignore decision (which pattern excluded which file). A dry run always logs per-file lines regardless: inspecting the plan is its whole point. |
-| `concurrency` | | `4` | Number of files uploaded in parallel. Also bounds the worker pool that hashes local files for the `sync` strategy. |
-| `sftp-request-concurrency` | | `16` | Advanced. Maximum in-flight SFTP requests *per file*: pipelining within one file's transfer, independent of `concurrency` (which controls how many files transfer at once). The two multiply: with the defaults, a single large file can have up to 16 requests in flight, and up to `concurrency` files transfer at a time. Lower it for a small or resource-constrained server; raise it for more throughput per file on a fast link to a capable server. |
-| `sync-fast-path` | | `false` | For the `sync` strategy, reuse a file's manifest hash instead of re-reading it when size and modification time still match. See [the sync-fast-path trade-off](strategies.md#sync-fast-path-skip-re-hashing-unchanged-files). |
-| `skip-unchanged` | | `false` | For the `overlay` strategy, skip uploading a file when the remote file already exists with the same size (one stat per file). Deliberately coarse but manifest-free; see [the skip-unchanged trade-off](strategies.md#skip-unchanged-skip-same-size-files). Ignored (with a warning) by `sync` and `clean`. |
-| `manifest-name` | | `.easysftp-manifest.json` | File name of the `sync` strategy's per-target manifest. Must be a bare file name (no path). An unguessable name mitigates [the manifest being publicly downloadable](security.md#the-sync-manifest-in-web-roots) from web roots. Changing it mid-life starts a fresh manifest and leaves the old file behind on the server. |
-| `retries` | | `2` | Retries per file on transient upload errors (exponential backoff). Also covers the initial connection: a transient dial failure (DNS hiccup, restarting sshd) is retried with the same backoff, while host key mismatches and authentication failures fail immediately. Additionally bounds how often a connection that drops mid-run is redialed: when a remote operation fails because the connection died (an upload, but also a remote scan, a delete or a sync manifest read/write), easySFTP reconnects (up to `retries` times per run) and retries the operation against the fresh connection. Completed files stay completed. `0` disables all of these. |
-| `dir-mode` | | - | Octal permission (e.g. `755`) applied to every remote directory the run creates or touches, instead of whatever the server's umask produces. |
-| `file-mode` | | - | Octal permission (e.g. `644`) applied to every uploaded file, instead of mirroring the local file's permission bits. |
-| `preserve-times` | | `false` | Keep each uploaded file's local modification time on the server instead of "now". Useful when the server derives `Last-Modified`/ETag headers from mtimes or server-side tooling compares timestamps. Best-effort like the modes: a refusing server produces one warning per run, not a failure. Does not interact with the `sync` strategy's change detection, which compares content hashes, never remote timestamps. Note that a fresh `actions/checkout` stamps every file with the checkout time; combine with e.g. `git-restore-mtime` if the original times matter. |
-
-`dir-mode` and `file-mode` are best-effort: some servers reject the chmod
-(`SETSTAT`) request outright. A failure produces one warning per run, not a
-failed deploy, so a restrictive server doesn't turn an otherwise-successful
-deploy red. On shared hosting where the web server runs as a different user,
-these are useful to force freshly created directories/files to a mode the web
-server can actually read (see [troubleshooting.md](troubleshooting.md)).
-
-Like `retries` or `concurrency`, these are run-wide behavior settings, not
-per-target deployment shape; they apply the same way with or without
-`config-file` and have no per-target override.
-
-Prebuilt binaries support Linux, macOS, and Windows on both x64 and arm64
-GitHub-hosted runners. Release refs `@vX`, `@vX.Y`, and `@vX.Y.Z` resolve via
-the exact version in `.easysftp-version`. A commit SHA is accepted in prebuilt
-mode only when it is the commit behind that exact release tag. Development
-refs (`@main`, other commit SHAs, and local `uses: ./`) require
-`build-mode: source`; prebuilt mode fails clearly instead of running an older
-release.
-
-## Outputs
-
-| Output | Description |
-|---|---|
-| `files-uploaded` | Number of uploaded files (planned files in dry-run mode). |
-| `files-deleted` | Number of remote files removed by the `clean`/`sync` strategy. |
-| `files-skipped` | Number of unchanged files skipped (by the `sync` strategy, or by `overlay` with `skip-unchanged`). |
-| `bytes-uploaded` | Total bytes transferred (planned bytes in dry-run mode). |
-| `duration-ms` | Total runtime in milliseconds. |
-
-A summary table is also written to the job summary of every run. Outputs and
-the summary are populated even if a transfer fails partway: the values reflect
-the progress completed before the failure, and the summary is clearly marked
-as failed. Use `if: ${{ always() }}` when a later reporting or rollback step
-must consume these partial results. See [examples](examples.md#using-the-outputs)
-for how to consume outputs in later steps.
-
-When `uploads` (or a `config-file`) defines more than one target, the job
-summary also breaks the totals down per target (local path, remote path,
-strategy, and that target's own uploaded/deleted/skipped/bytes counts), so a
-number that looks off in the totals can be traced to the target that produced
-it. The `files-*`/`bytes-uploaded` outputs stay run-wide totals; there is no
-per-target output.
-
-## The `uploads` mapping
-
-One mapping per line, `local => remote`. Lines starting with `#` are ignored.
+A commented, ready-to-copy example lives at
+[easysftp.example.yml](easysftp.example.yml). The full structure:
 
 ```yaml
-uploads: |
-  # directory => directory (recursive)
-  ./dist/ => /var/www/html/
+# yaml-language-server: $schema=https://raw.githubusercontent.com/eiserv/easySFTP/main/schema/easysftp.schema.json
+version: 3
 
-  # single file => exact remote path (rename on the fly)
-  ./config/prod.json => /etc/app/config.json
+connection:
+  host: sftp.example.com
+  port: 22                     # optional
+  username: deploy
+  host_key: |
+    SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8
+  # known_hosts: |             # alternative to host_key
+  #   sftp.example.com ssh-ed25519 AAAA...
+  # allow_any_host_key: true   # explicit opt-out (not recommended)
+  # proxy:                     # optional jump host / bastion
+  #   host: bastion.example.com
+  #   username: jumper
+  #   host_key: |
+  #     SHA256:...
 
-  # single file => into a remote directory (note the trailing slash)
-  ./robots.txt => /var/www/html/
+defaults:
+  mode: overlay                # default mode for every deployment
+  exclude:
+    - "*.map"
+
+deployments:                   # at least one named deployment
+  website:
+    source: dist
+    target: /var/www/html
+    mode: sync
+    exclude:
+      - node_modules/
+  documentation:
+    source: docs/build
+    target: /var/www/docs
+    mode: clean
+
+safety:
+  max_deletes: 500             # 0 = unlimited
+
+advanced:
+  retries: 2
+  timeout: 30
+  stall_timeout: 0
+  concurrency: auto            # or a number
+  request_concurrency: auto
+  skip_unchanged: false
+
+permissions:
+  files: "0644"
+  directories: "0755"
+  preserve_times: false
+
+sync:
+  fast_path: false
+  manifest: .easysftp-manifest.json
 ```
 
-Rules:
+### Sections
 
-- **Directories** are uploaded recursively. Remote directories are created automatically.
-- **Single files** map onto the exact remote path, unless the remote side ends
-  with `/`, which means "into this directory" keeping the original file name.
-- Single files only support the `overlay` strategy (`sync`/`clean` reconcile a
+| Section | Required | Description |
+|---|---|---|
+| `version` | ✅ | Must be `3`. |
+| `connection` | ✅ | Where and as whom to connect. Credentials are **not** here; they stay inputs. |
+| `defaults` | | `mode` and `exclude` defaults applied to every deployment. |
+| `deployments` | ✅ | A **map** of named deployments (at least one). The name appears in logs and the job summary. |
+| `safety` | | `max_deletes` (0 = unlimited); see [delete guards](strategies.md#delete-guards). |
+| `advanced` | | Transfer tuning; the defaults suit most deploys. |
+| `permissions` | | Remote file/dir modes and `preserve_times` (all best-effort). |
+| `sync` | | The sync mode's manifest name and fast-path. |
+
+#### `connection`
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `host` | ✅ | - | Hostname or IP of the SFTP server. |
+| `port` | | `22` | SSH port. |
+| `username` | ✅ | - | Username for authentication. |
+| `host_key` | ³ | - | SHA256 fingerprint(s), one per line. |
+| `known_hosts` | ³ | - | `known_hosts`-format host key(s); alternative to `host_key`. |
+| `allow_any_host_key` | ³ | `false` | Explicit opt-out of host key verification. |
+| `proxy` | | - | Optional jump host; same fields (`host`, `port`, `username`, `host_key`, `known_hosts`, `allow_any_host_key`). |
+
+³ As in inline mode, exactly one of `host_key`/`known_hosts`/`allow_any_host_key` is required, per hop.
+
+#### `deployments.<name>`
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `source` | ✅ | - | Local file or directory to upload. |
+| `target` | ✅ | - | Remote path. |
+| `mode` | | `defaults.mode` | Per-deployment mode override. |
+| `exclude` | | - | Per-deployment excludes, additive to `defaults.exclude`. |
+
+#### `advanced`
+
+| Field | Default | Description |
+|---|---|---|
+| `retries` | `2` | Retries per file on transient errors, and the reconnect budget for dropped connections. `0` disables. |
+| `timeout` | `30` | Connection timeout in seconds. `0` disables. |
+| `stall_timeout` | `0` (off) | Abort when active remote operations make no progress for this many seconds. |
+| `concurrency` | `auto` (4) | Files uploaded in parallel. Also bounds the sync hashing worker pool. `auto` uses the built-in default. |
+| `request_concurrency` | `auto` (16) | Max in-flight SFTP requests per file (pipelining within one transfer). |
+| `skip_unchanged` | `false` | For `overlay`, skip a file whose remote counterpart has the same size (coarse; `sync` compares content hashes). |
+
+#### `permissions`
+
+| Field | Default | Description |
+|---|---|---|
+| `files` | mirror local | Octal permission (e.g. `"0644"`) for every uploaded file. |
+| `directories` | server umask | Octal permission (e.g. `"0755"`) for every remote directory the run creates or touches. |
+| `preserve_times` | `false` | Keep each uploaded file's local modification time on the server. |
+
+All three are best-effort: a server that rejects the `SETSTAT` request
+produces one warning per run, not a failure.
+
+#### `sync`
+
+| Field | Default | Description |
+|---|---|---|
+| `fast_path` | `false` | Reuse a file's manifest hash when size+mtime still match (rsync-style quick check). See [strategies](strategies.md#syncfast_path-skip-re-hashing-unchanged-files). |
+| `manifest` | `.easysftp-manifest.json` | Manifest file name (bare, no path). An unguessable name mitigates [the manifest being publicly downloadable](security.md#the-sync-manifest-in-web-roots). |
+
+### Validation
+
+Unknown keys are rejected with a location and a suggestion:
+
+```text
+config ".github/easysftp.yml": unknown option "concurency" at "advanced.concurency"; did you mean "concurrency"?
+```
+
+A `version: 1` file (or a `targets` list) is rejected with a pointer to the
+[migration guide](migration-v3.md). The bundled
+[JSON Schema](../schema/easysftp.schema.json) gives the same validation live
+in editors that honor the `# yaml-language-server` modeline.
+
+## The `source` / `target` mapping
+
+In inline mode, `source` is one local path and `target` its remote
+destination:
+
+- **Directories** are uploaded recursively. Remote directories are created
+  automatically.
+- **Single files** map onto the exact remote path, unless `target` ends with
+  `/`, which means "into this directory" keeping the original file name.
+- Single files only support the `overlay` mode (`sync`/`clean` reconcile a
   directory tree and are rejected for single-file targets).
 - Symlinks, sockets and other non-regular files are skipped.
 
-## Ignore patterns
+```yaml
+    source: ./config/prod.json
+    target: /etc/app/config.json     # rename on the fly
+```
 
-`ignore` (inline) and `ignore-from` (a file, e.g. `.sftpignore`) use
+For more than one mapping, use a config file with multiple named
+[deployments](#deploymentsname).
+
+## Exclude patterns
+
+`exclude` (inline, one pattern per line) and `defaults.exclude` /
+per-deployment `exclude` (config file) use
 [gitignore syntax](https://git-scm.com/docs/gitignore):
 
 ```yaml
-ignore: |
+exclude: |
   *.map
   *.log
   node_modules/
   !important.log
 ```
 
-- Patterns are matched against the path **relative to the local root** of each target.
+- Patterns are matched against the path **relative to the local root** of each
+  deployment.
 - `!pattern` re-includes files excluded by an earlier pattern.
-- `ignore` and `ignore-from` are additive; in the config file, per-target
-  `ignore` lists add to the global one.
+- In the config file, per-deployment `exclude` lists add to `defaults.exclude`.
 - An ignored directory (e.g. `node_modules/`) is skipped without being walked
   at all, so huge excluded trees cost nothing during planning. This pruning is
   automatically disabled as soon as any pattern is a `!` re-include, because a
   re-include may point below an ignored directory; results are identical either
   way, only planning speed differs.
 
-## The YAML config file
+## Outputs
 
-For multiple targets with different strategies, point `config-file` at a YAML
-file. Connection settings (server, credentials, host key) always stay in the
-action inputs. **Never put credentials in this file**.
+| Output | Description |
+|---|---|
+| `files-uploaded` | Number of uploaded files (planned files in dry-run mode). |
+| `files-deleted` | Number of remote files removed by the `clean`/`sync` mode. |
+| `files-skipped` | Number of unchanged files skipped (by `sync`, or by `overlay` with `advanced.skip_unchanged`). |
+| `bytes-uploaded` | Total bytes transferred (planned bytes in dry-run mode). |
+| `duration-ms` | Total runtime in milliseconds. |
 
-```yaml
-- uses: eiserv/easySFTP@v2
-  with:
-    server: sftp.example.com
-    username: ${{ secrets.SFTP_USERNAME }}
-    private-key: ${{ secrets.SFTP_PRIVATE_KEY }}
-    host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
-    config-file: .github/easysftp.yml
-```
+A summary is also written to the job summary of every run: status, host-key
+verification status, the configuration source (inline or the config path), the
+run totals, and, when there is more than one deployment (or one named
+deployment), a per-deployment breakdown with each deployment's name, source,
+target, mode and its own counts. Outputs and the summary are populated even if
+a transfer fails partway; the values reflect progress before the failure and
+the summary is marked as failed. Use `if: ${{ always() }}` when a later
+reporting or rollback step must consume these partial results. See
+[examples](examples.md#using-the-outputs).
 
-```yaml
-# .github/easysftp.yml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/eiserv/easySFTP/main/schema/easysftp.schema.json
-version: 1
-strategy: overlay          # default for all targets
-ignore:
-  - "*.map"
-guards:
-  max_deletes: 200         # 0 = unlimited
-targets:
-  - local: ./dist/
-    remote: /var/www/html/
-    strategy: sync
-  - local: ./docs/
-    remote: /var/www/docs/
-    strategy: clean
-```
+The `files-*`/`bytes-uploaded` outputs stay run-wide totals; there is no
+per-deployment output.
 
-### Fields
+## Complete input reference
 
-| Field | Required | Default | Description |
-|---|---|---|---|
-| `version` | ✅ | - | Config format version. Must be `1`. |
-| `strategy` | | `overlay` | Default strategy for all targets. |
-| `ignore` | | - | Global gitignore-style excludes, applied to every target. |
-| `guards.max_deletes` | | `0` | Abort a run that would delete more files than this (0 = unlimited). See [delete guards](strategies.md#delete-guards). |
-| `targets` | ✅ | - | List of upload targets (at least one). |
-| `targets[].local` | ✅ | - | Local file or directory. |
-| `targets[].remote` | ✅ | - | Remote path. |
-| `targets[].strategy` | | global | Per-target strategy override. |
-| `targets[].ignore` | | - | Per-target excludes, additive to the global list. |
+Every action input, for reference. In v3 the action surface is deliberately
+small; the advanced knobs moved into the config file (see
+[the config file](#the-config-file)).
 
-Unknown keys are rejected with an error (they are never silently ignored), and
-`config-file` cannot be combined with the `uploads`, `strategy`, `ignore`,
-`ignore-from` or `max-deletes` inputs.
+| Input | Mode | Description |
+|---|---|---|
+| `host`, `port`, `username` | inline | Connection target. |
+| `password`, `private-key`, `passphrase` | both | Credentials (always from secrets). |
+| `host-key`, `known-hosts`, `allow-any-host-key` | inline | Host key verification. |
+| `source`, `target`, `mode`, `exclude` | inline | The single deployment. |
+| `config` | config | Path to the version-3 config file. |
+| `proxy-password`, `proxy-private-key`, `proxy-passphrase` | config | Jump-host credentials (the rest of the proxy config is in the file). |
+| `dry-run`, `log-level` | both | Run-wide switches. |
 
-### Editor support
-
-The `# yaml-language-server` modeline at the top of the file enables
-autocomplete and validation in editors from the bundled
-[JSON Schema](../schema/easysftp.schema.json). A fully commented example lives
-at [easysftp.example.yml](easysftp.example.yml).
+Removed v2 inputs (`server`, `uploads`, `strategy`, `ignore`, `ignore-from`,
+`config-file`, `host-key-fingerprint`, `max-deletes`, `concurrency`,
+`sftp-request-concurrency`, `retries`, `timeout`, `stall-timeout`,
+`sync-fast-path`, `skip-unchanged`, `manifest-name`, `dir-mode`, `file-mode`,
+`preserve-times`, the `proxy-server`/`proxy-port`/`proxy-username`/
+`proxy-host-key-fingerprint`/`proxy-known-hosts` connection inputs,
+`build-mode`, and the `delete` tombstone) still fail loudly with a migration
+hint rather than being silently ignored. See the
+[migration guide](migration-v3.md) for the full mapping.

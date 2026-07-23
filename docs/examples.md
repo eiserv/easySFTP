@@ -5,13 +5,13 @@ stored as [encrypted secrets](https://docs.github.com/en/actions/security-guides
 
 - [Deploy a static site](#deploy-a-static-site)
 - [Mirror a build with sync](#mirror-a-build-with-sync)
-- [Multiple targets with a config file](#multiple-targets-with-a-config-file)
+- [Multiple deployments with a config file](#multiple-deployments-with-a-config-file)
 - [Key-based authentication](#key-based-authentication)
 - [Deploy through a jump host (bastion)](#deploy-through-a-jump-host-bastion)
 - [Upload a single file (with rename)](#upload-a-single-file-with-rename)
 - [Preview a deploy in pull requests](#preview-a-deploy-in-pull-requests)
 - [Using the outputs](#using-the-outputs)
-- [Excludes via .sftpignore](#excludes-via-sftpignore)
+- [Excludes](#excludes)
 - [Windows and macOS runners](#windows-and-macos-runners)
 
 ## Deploy a static site
@@ -32,13 +32,14 @@ jobs:
       - run: npm ci && npm run build
 
       - name: Deploy via SFTP
-        uses: eiserv/easySFTP@v2
+        uses: eiserv/easySFTP@v3
         with:
-          server: sftp.example.com
+          host: sftp.example.com
           username: ${{ secrets.SFTP_USERNAME }}
           password: ${{ secrets.SFTP_PASSWORD }}
-          host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
-          uploads: ./dist/ => /var/www/html/
+          host-key: ${{ secrets.SFTP_HOST_KEY }}
+          source: ./dist/
+          target: /var/www/html/
 ```
 
 ## Mirror a build with sync
@@ -49,97 +50,128 @@ only files easySFTP itself uploaded ([manifest-based](strategies.md#sync), so
 user uploads and server-generated files survive):
 
 ```yaml
-- uses: eiserv/easySFTP@v2
+- uses: eiserv/easySFTP@v3
   with:
-    server: sftp.example.com
+    host: sftp.example.com
     username: ${{ secrets.SFTP_USERNAME }}
     password: ${{ secrets.SFTP_PASSWORD }}
-    host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
-    uploads: ./dist/ => /var/www/html/
-    strategy: sync
+    host-key: ${{ secrets.SFTP_HOST_KEY }}
+    source: ./dist/
+    target: /var/www/html/
+    mode: sync
 ```
 
-## Multiple targets with a config file
+## Multiple deployments with a config file
 
-Different directories, different strategies, one connection:
+Different directories, different modes, one connection. In config mode every
+non-secret setting lives in the file; the workflow step carries only the
+config path and credentials:
 
 ```yaml
-- uses: eiserv/easySFTP@v2
+- uses: eiserv/easySFTP@v3
   with:
-    server: sftp.example.com
-    username: ${{ secrets.SFTP_USERNAME }}
+    config: .github/easysftp.yml
     private-key: ${{ secrets.SFTP_PRIVATE_KEY }}
-    host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
-    config-file: .github/easysftp.yml
 ```
 
 ```yaml
 # .github/easysftp.yml
-version: 1
-strategy: overlay
-ignore:
-  - "*.map"
-guards:
+version: 3
+connection:
+  host: sftp.example.com
+  username: deploy
+  host_key: |
+    SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8
+defaults:
+  mode: overlay
+  exclude:
+    - "*.map"
+safety:
   max_deletes: 200
-targets:
-  - local: ./dist/
-    remote: /var/www/html/
-    strategy: sync
-  - local: ./docs/
-    remote: /var/www/docs/
-    strategy: clean
-  - local: ./robots.txt
-    remote: /var/www/html/robots.txt
+deployments:
+  website:
+    source: ./dist/
+    target: /var/www/html/
+    mode: sync
+  documentation:
+    source: ./docs/
+    target: /var/www/docs/
+    mode: clean
+  robots:
+    source: ./robots.txt
+    target: /var/www/html/robots.txt
 ```
 
-Full field reference: [configuration.md](configuration.md#the-yaml-config-file).
+Full field reference: [configuration.md](configuration.md#the-config-file).
 
 ## Key-based authentication
 
 Preferred over passwords, see the [security guide](security.md#credentials):
 
 ```yaml
-- uses: eiserv/easySFTP@v2
+- uses: eiserv/easySFTP@v3
   with:
-    server: sftp.example.com
+    host: sftp.example.com
     username: ${{ secrets.SFTP_USERNAME }}
     private-key: ${{ secrets.SFTP_PRIVATE_KEY }}
     passphrase: ${{ secrets.SFTP_PASSPHRASE }}   # only if the key is encrypted
-    host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
-    uploads: ./dist/ => /var/www/html/
+    host-key: ${{ secrets.SFTP_HOST_KEY }}
+    source: ./dist/
+    target: /var/www/html/
 ```
 
 ## Deploy through a jump host (bastion)
 
 For servers that are not reachable from the public internet, connect through
-a bastion like OpenSSH's `ProxyJump`. Each hop has its own credentials and
-its own host key verification (see
-[configuration](configuration.md#jump-host-bastion)):
+a bastion like OpenSSH's `ProxyJump`. In v3 the jump host's connection lives
+in the config file (`connection.proxy`); only its credentials stay inputs.
+Each hop has its own credentials and its own host key verification (see
+[configuration](configuration.md#connection)):
 
 ```yaml
-- uses: eiserv/easySFTP@v2
+- uses: eiserv/easySFTP@v3
   with:
-    server: sftp.internal.example.com
-    username: ${{ secrets.SFTP_USERNAME }}
+    config: .github/easysftp.yml
     private-key: ${{ secrets.SFTP_PRIVATE_KEY }}
-    host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
-    proxy-server: bastion.example.com
-    proxy-username: ${{ secrets.JUMP_USERNAME }}
     proxy-private-key: ${{ secrets.JUMP_PRIVATE_KEY }}
-    proxy-host-key-fingerprint: ${{ secrets.JUMP_HOST_KEY_FINGERPRINT }}
-    uploads: ./dist/ => /var/www/html/
+```
+
+```yaml
+# .github/easysftp.yml
+version: 3
+connection:
+  host: sftp.internal.example.com
+  username: deploy
+  host_key: |
+    SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8
+  proxy:
+    host: bastion.example.com
+    username: jumper
+    host_key: |
+      SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM
+deployments:
+  website:
+    source: ./dist/
+    target: /var/www/html/
 ```
 
 ## Upload a single file (with rename)
 
 A single file maps onto the exact remote path, so you can rename on the fly.
-A trailing `/` on the remote side means "into this directory" instead:
+A trailing `/` on the target means "into this directory" instead:
 
 ```yaml
-uploads: |
-  ./config/prod.json => /etc/app/config.json
-  ./robots.txt => /var/www/html/
+- uses: eiserv/easySFTP@v3
+  with:
+    host: sftp.example.com
+    username: ${{ secrets.SFTP_USERNAME }}
+    password: ${{ secrets.SFTP_PASSWORD }}
+    host-key: ${{ secrets.SFTP_HOST_KEY }}
+    source: ./config/prod.json
+    target: /etc/app/config.json
 ```
+
+For more than one file, use a config file with multiple named deployments.
 
 ## Preview a deploy in pull requests
 
@@ -158,14 +190,15 @@ jobs:
       - run: npm ci && npm run build
 
       - name: What would deploy?
-        uses: eiserv/easySFTP@v2
+        uses: eiserv/easySFTP@v3
         with:
-          server: sftp.example.com
+          host: sftp.example.com
           username: ${{ secrets.SFTP_USERNAME }}
           password: ${{ secrets.SFTP_PASSWORD }}
-          host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
-          uploads: ./dist/ => /var/www/html/
-          strategy: sync
+          host-key: ${{ secrets.SFTP_HOST_KEY }}
+          source: ./dist/
+          target: /var/www/html/
+          mode: sync
           dry-run: true
 ```
 
@@ -176,7 +209,7 @@ Give the step an `id` and read the outputs in later steps:
 ```yaml
 - name: Deploy via SFTP
   id: deploy
-  uses: eiserv/easySFTP@v2
+  uses: eiserv/easySFTP@v3
   with:
     # ...
 
@@ -188,24 +221,36 @@ Give the step an `id` and read the outputs in later steps:
     echo "${{ steps.deploy.outputs.bytes-uploaded }} bytes in ${{ steps.deploy.outputs.duration-ms }} ms"
 ```
 
-## Excludes via .sftpignore
+## Excludes
 
-Keep the exclude list out of the workflow file:
+Keep noise out of the upload. Inline, one pattern per line:
 
 ```yaml
-- uses: eiserv/easySFTP@v2
+- uses: eiserv/easySFTP@v3
   with:
     # ...
-    uploads: ./dist/ => /var/www/html/
-    ignore-from: .sftpignore
+    source: ./dist/
+    target: /var/www/html/
+    exclude: |
+      *.map
+      *.log
+      node_modules/
+      !keep-this.log
 ```
 
-```gitignore
-# .sftpignore, gitignore syntax
-*.map
-*.log
-node_modules/
-!keep-this.log
+In a config file, split them into a global `defaults.exclude` and
+per-deployment `exclude` lists (they add up):
+
+```yaml
+defaults:
+  exclude:
+    - "*.map"
+deployments:
+  website:
+    source: ./dist/
+    target: /var/www/html/
+    exclude:
+      - node_modules/
 ```
 
 ## Windows and macOS runners
@@ -219,11 +264,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: eiserv/easySFTP@v2
+      - uses: eiserv/easySFTP@v3
         with:
-          server: sftp.example.com
+          host: sftp.example.com
           username: ${{ secrets.SFTP_USERNAME }}
           password: ${{ secrets.SFTP_PASSWORD }}
-          host-key-fingerprint: ${{ secrets.SFTP_HOST_KEY_FINGERPRINT }}
-          uploads: .\build\ => /var/www/html/
+          host-key: ${{ secrets.SFTP_HOST_KEY }}
+          source: .\build\
+          target: /var/www/html/
 ```

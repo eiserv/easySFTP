@@ -6,12 +6,21 @@ with the log of a `dry-run: true` run.
 
 ## Action startup problems
 
-### `prebuilt mode requires a release tag ref ... Use build-mode: source`
+### `the '<x>' input was ... in easySFTP v3`
 
-Prebuilt mode accepts `@vX`, `@vX.Y`, `@vX.Y.Z`, or the full commit SHA behind
-that exact release. For `@main`, other commit SHAs, or local `uses: ./`, add
-`build-mode: source`. This avoids silently running the last published binary
-for newer source code.
+You are passing a v2 input that was renamed or moved in v3 (e.g. `server`,
+`uploads`, `strategy`, `ignore`, `host-key-fingerprint`, `config-file`, or an
+advanced/proxy input). The error names the v3 replacement; the full mapping is
+in the [migration guide](migration-v3.md).
+
+### The build takes longer than expected on `@main` or a commit SHA
+
+The build mode is chosen automatically from the action ref. Release tags
+(`@v3`, `@v3.0`, `@v3.0.0`) and the exact release commit SHA download the
+verified prebuilt binary; every other ref (`@main`, other commit SHAs, local
+`uses: ./`) builds from source, which installs Go first. This is intended: it
+avoids silently running the last published binary for newer source code. There
+is no `build-mode` input in v3; setting it fails with a migration hint.
 
 ### `SHA-256 mismatch` or `checksums.txt has no SHA-256 entry`
 
@@ -25,12 +34,12 @@ release; do not bypass checksum verification.
 
 The runner cannot reach the server.
 
-- Check `server` and `port`.
+- Check `host` and `port`.
 - Many hosters firewall SSH to allowlisted IPs. GitHub-hosted runners use
   [changing IP ranges](https://docs.github.com/en/actions/using-github-hosted-runners/about-github-hosted-runners#ip-addresses),
   so an IP allowlist usually requires a self-hosted runner or a relaxed rule.
-- Raise `timeout` (default 30 s) if the server is just slow to accept
-  connections.
+- Raise the timeout (`advanced.timeout` in the config file, default 30 s) if
+  the server is just slow to accept connections.
 
 ### A large deploy dies partway through with an EOF or "connection lost"
 
@@ -65,7 +74,16 @@ The server presented a key that matches none of your pinned fingerprints.
 - You can pin multiple fingerprints (one per line); the connection is accepted
   if any matches.
 
-### `host-key-fingerprint must be a SHA256 fingerprint like 'SHA256:...'`
+### `the identity of <host> cannot be verified: no host-key or known-hosts configured`
+
+New in v3: a run without a pinned host key now fails instead of warning and
+connecting anyway. Set `host-key` (SHA256 fingerprints) or `known-hosts`
+(`ssh-keyscan` output). To connect without verification anyway (**not
+recommended**, allows man-in-the-middle attacks), set `allow-any-host-key:
+true`. In the config file the fields are `connection.host_key`,
+`connection.known_hosts` and `connection.allow_any_host_key`.
+
+### `host-key must be a SHA256 fingerprint like 'SHA256:...'`
 
 Pass the fingerprint (`SHA256:nThbg...`), not the raw `ssh-keyscan` line and
 not an MD5 fingerprint. Get the right format with:
@@ -87,9 +105,10 @@ relative to the chroot: `/upload/...`, not `/home/user/upload/...`.
 Directories created by the run get whatever the server's umask produces, and
 uploaded files mirror their local permission bits. On shared hosting where the
 web server runs as a different user than your SFTP account, that default can
-produce directories the web server can't read. Set `dir-mode` (and, if needed,
-`file-mode`) to force a known-good permission, e.g. `dir-mode: "755"` and
-`file-mode: "644"`. Both are best-effort; see [configuration.md](configuration.md#behavior).
+produce directories the web server can't read. Set `permissions.directories`
+(and, if needed, `permissions.files`) in the config file to force a known-good
+permission, e.g. `directories: "0755"` and `files: "0644"`. Both are
+best-effort; see [configuration.md](configuration.md#permissions).
 
 ### `replacing "<path>": ...` or leftover `.easysftp-tmp` files
 
@@ -130,8 +149,8 @@ No warning is logged when there is nothing to skip.
 
 `sync` only deletes files listed in its manifest: files it uploaded itself.
 Files that were already on the server before your first sync are never
-touched. Run `strategy: clean` once for a fresh start, then continue with
-`sync`. See [strategies](strategies.md#sync).
+touched. Run `mode: clean` once for a fresh start, then continue with
+`sync`. See [deployment modes](strategies.md#sync).
 
 ### What is `.easysftp-manifest.json` on my server?
 
@@ -140,7 +159,7 @@ hashes) the last sync uploaded. Leave it in place. Without it, the next sync
 re-uploads everything and deletes nothing. It is excluded from uploads and
 never deleted by `sync` itself.
 
-### `refusing a destructive strategy on remote root`
+### `refusing a destructive mode on remote root`
 
 `sync` and `clean` refuse to operate on `/` (or `.`) as the remote target,
 always. Deploy into a specific subdirectory instead. This guard cannot be
@@ -148,30 +167,38 @@ disabled; see [delete guards](strategies.md#delete-guards).
 
 ### `refusing to delete N files: exceeds guards.max_deletes`
 
-Your run would delete more files than `guards.max_deletes` allows. Inspect the
+Your run would delete more files than `safety.max_deletes` allows. Inspect the
 plan with `dry-run: true`; if the deletions are intended, raise (or remove)
 the limit in the config file.
 
 ## Configuration errors
 
-### `when 'config-file' is set, put targets/strategy/ignore/guards in the file`
+### `when 'config' is set, all non-secret settings come from the config file`
 
-`config-file` replaces the `uploads`, `strategy`, `ignore` and `ignore-from`
-inputs. Remove them from the step. Connection inputs stay.
+You set `config` and also an inline connection/deployment input (like `host`,
+`source`, `target`, `mode` or `exclude`). v3 has no mixed mode: remove the
+inline input, or drop `config` and configure everything inline. Only
+credentials, `dry-run` and `log-level` may be combined with `config`.
 
-### `the 'delete' input was removed in v2; use 'strategy: clean' instead`
+### `easySFTP could not determine what to deploy`
 
-Replace `delete: true` with `strategy: clean` in your step. The inputs are
-equivalent; `delete` only remains declared so that this error fires instead of
-the run silently degrading to the `overlay` default.
+Inline mode needs both `source` and `target`. Add them, or switch to a config
+file (`config`) for multiple deployments; the error spells out both fixes.
 
-### `strategy "sync" requires a directory, but local path ... is a single file`
+### `unknown option "<x>" at "<path>"; did you mean "<y>"?`
+
+The config file rejects unknown keys instead of silently ignoring them,
+usually a typo. The error gives the location and, when close enough, a
+suggestion. Enable [editor validation](configuration.md#validation) via the
+JSON Schema to catch these while typing.
+
+### `'version' must be 3` / a v1 config file is rejected
+
+v3 changed the config file format (named deployments, connection in the file).
+Convert your `version: 1` file following the
+[migration guide](migration-v3.md#migrating-a-v1-config-file).
+
+### `mode "sync" requires a directory, but local path ... is a single file`
 
 `sync` and `clean` reconcile a directory tree; for single files use `overlay`
 (the default).
-
-### `config-file "..." is not valid: field <x> not found`
-
-The config file rejects unknown keys instead of silently ignoring them,
-usually a typo. Enable [editor validation](configuration.md#editor-support)
-via the JSON Schema to catch these while typing.

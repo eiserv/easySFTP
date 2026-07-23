@@ -1,84 +1,157 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// writeConfig writes a YAML config file into a temp dir and returns its path.
-func writeConfig(t *testing.T, body string) string {
+// loadFile runs a config file's content through the loader against a fresh
+// config with the run-wide defaults, returning the error.
+func loadFile(t *testing.T, content string) (*Config, error) {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "easysftp.yml")
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
+	cfg := &Config{
+		Concurrency:            defaultConcurrency,
+		SftpRequestConcurrency: defaultRequestConcurrency,
+		Retries:                defaultRetries,
+		ManifestName:           DefaultManifestName,
 	}
-	return p
+	err := loadConfigFile(cfg, writeConfig(t, content))
+	return cfg, err
 }
 
-func TestLoadConfigFile(t *testing.T) {
-	setBaseEnv(t)
-	t.Setenv("EASYSFTP_UPLOADS", "") // provided by the file instead
-	t.Setenv("EASYSFTP_CONFIG_FILE", writeConfig(t, `
-version: 1
-strategy: sync
-ignore:
-  - "*.map"
-guards:
-  max_deletes: 5
-targets:
-  - local: ./dist/
-    remote: /var/www/html/
-    ignore:
-      - node_modules/
-  - local: ./docs/
-    remote: /var/www/docs/
-    strategy: clean
-`))
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Uploads) != 2 {
-		t.Fatalf("expected 2 targets, got %d", len(cfg.Uploads))
-	}
-	if cfg.Uploads[0].Strategy != StrategySync {
-		t.Errorf("target 0 should inherit sync, got %q", cfg.Uploads[0].Strategy)
-	}
-	if cfg.Uploads[1].Strategy != StrategyClean {
-		t.Errorf("target 1 should override to clean, got %q", cfg.Uploads[1].Strategy)
-	}
-	if cfg.Guards.MaxDeletes != 5 {
-		t.Errorf("expected max_deletes 5, got %d", cfg.Guards.MaxDeletes)
-	}
-	if len(cfg.Uploads[0].Ignore) != 1 || cfg.Uploads[0].Ignore[0] != "node_modules/" {
-		t.Errorf("unexpected target ignore: %v", cfg.Uploads[0].Ignore)
-	}
-	if len(cfg.IgnoreLines) != 1 || cfg.IgnoreLines[0] != "*.map" {
-		t.Errorf("unexpected global ignore: %v", cfg.IgnoreLines)
-	}
-}
-
-func TestConfigFileErrors(t *testing.T) {
+func TestConfigFileUnknownKeySuggestions(t *testing.T) {
 	cases := []struct {
-		name, body, wantErr string
+		name    string
+		content string
+		wantErr []string
 	}{
-		{"wrong version", "version: 2\ntargets:\n  - {local: a, remote: /b}", "'version' must be 1"},
-		{"unknown key", "version: 1\nstartegy: sync\ntargets:\n  - {local: a, remote: /b}", "not valid"},
-		{"bad strategy", "version: 1\nstrategy: mirror\ntargets:\n  - {local: a, remote: /b}", "overlay, sync or clean"},
-		{"bad target strategy", "version: 1\ntargets:\n  - {local: a, remote: /b, strategy: nope}", "overlay, sync or clean"},
-		{"no targets", "version: 1\ntargets: []", "at least one entry"},
-		{"missing remote", "version: 1\ntargets:\n  - {local: a}", "both 'local' and 'remote'"},
-		{"negative max_deletes", "version: 1\nguards: {max_deletes: -1}\ntargets:\n  - {local: a, remote: /b}", "max_deletes"},
+		{
+			"typo in advanced",
+			`version: 3
+connection:
+  host: h
+  username: u
+deployments:
+  web:
+    source: a
+    target: /b
+advanced:
+  concurency: 8
+`,
+			[]string{`unknown option "concurency" at "advanced.concurency"`, `did you mean "concurrency"?`},
+		},
+		{
+			"typo at top level",
+			"version: 3\nconection:\n  host: h\n",
+			[]string{`unknown option "conection"`, `did you mean "connection"?`},
+		},
+		{
+			"typo in a deployment",
+			`version: 3
+connection:
+  host: h
+  username: u
+deployments:
+  website:
+    source: a
+    taget: /b
+`,
+			[]string{`unknown option "taget" at "deployments.website.taget"`, `did you mean "target"?`},
+		},
+		{
+			"typo in proxy",
+			`version: 3
+connection:
+  host: h
+  proxy:
+    hostt: b
+`,
+			[]string{`unknown option "hostt" at "connection.proxy.hostt"`, `did you mean "host"?`},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			setBaseEnv(t)
-			t.Setenv("EASYSFTP_UPLOADS", "")
-			t.Setenv("EASYSFTP_CONFIG_FILE", writeConfig(t, tc.body))
-			_, err := Load()
+			_, err := loadFile(t, tc.content)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			for _, want := range tc.wantErr {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error should contain %q, got:\n%v", want, err)
+				}
+			}
+		})
+	}
+	t.Run("no suggestion for a distant name", func(t *testing.T) {
+		_, err := loadFile(t, "version: 3\nbanana: true\n")
+		if err == nil || !strings.Contains(err.Error(), `unknown option "banana"`) {
+			t.Fatalf("expected an unknown-option error, got %v", err)
+		}
+		if strings.Contains(err.Error(), "did you mean") {
+			t.Fatalf("expected no suggestion for a distant key, got %v", err)
+		}
+	})
+}
+
+func TestConfigFileVersionValidation(t *testing.T) {
+	t.Run("missing version", func(t *testing.T) {
+		_, err := loadFile(t, "connection:\n  host: h\n")
+		if err == nil || !strings.Contains(err.Error(), "'version' must be 3") {
+			t.Fatalf("expected a version error, got %v", err)
+		}
+	})
+	t.Run("v1 config is rejected with a migration hint", func(t *testing.T) {
+		_, err := loadFile(t, "version: 1\nconnection:\n  host: h\n")
+		if err == nil || !strings.Contains(err.Error(), "migration-v3") {
+			t.Fatalf("expected a v1 migration hint, got %v", err)
+		}
+	})
+}
+
+func TestConfigFileV1TargetsListIsRejected(t *testing.T) {
+	// A v1 file's 'targets' list fails the unknown-key check with a hint at
+	// the closest v3 concept.
+	_, err := loadFile(t, "version: 3\ntargets:\n  - local: ./dist/\n    remote: /www/\n")
+	if err == nil || !strings.Contains(err.Error(), `unknown option "targets"`) {
+		t.Fatalf("expected an unknown-option error for v1 'targets', got %v", err)
+	}
+}
+
+func TestConfigFileDeploymentsListIsRejected(t *testing.T) {
+	_, err := loadFile(t, `version: 3
+connection:
+  host: h
+  username: u
+deployments:
+  - source: ./dist/
+    target: /www/
+`)
+	if err == nil || !strings.Contains(err.Error(), "map of named deployments") {
+		t.Fatalf("expected a named-deployments error for a list, got %v", err)
+	}
+}
+
+func TestConfigFileValidation(t *testing.T) {
+	base := "version: 3\nconnection:\n  host: h\n  username: u\n"
+	deployment := "deployments:\n  web:\n    source: a\n    target: /b\n"
+	cases := []struct {
+		name    string
+		content string
+		wantErr string
+	}{
+		{"no deployments", base, "'deployments' must contain at least one named deployment"},
+		{"missing target", base + "deployments:\n  web:\n    source: ./dist/\n", "both 'source' and 'target' are required"},
+		{"bad mode", base + "deployments:\n  web:\n    source: a\n    target: /b\n    mode: mirror\n", "'mode' must be overlay, sync or clean"},
+		{"bad default mode", base + "defaults:\n  mode: mirror\n" + deployment, "'defaults.mode' must be overlay, sync or clean"},
+		{"duplicate deployment", base + "deployments:\n  web:\n    source: a\n    target: /b\n  web:\n    source: c\n    target: /d\n", "defined twice"},
+		{"proxy without host", "version: 3\nconnection:\n  host: h\n  username: u\n  proxy:\n    username: j\n" + deployment, "'connection.proxy.host' is required"},
+		{"bad manifest name", base + deployment + "sync:\n  manifest: sub/m.json\n", "sync.manifest must be a bare file name"},
+		{"bad permissions", base + deployment + "permissions:\n  files: \"999\"\n", "invalid permissions.files"},
+		{"bad concurrency value", base + deployment + "advanced:\n  concurrency: fast\n", "must be a number or \"auto\""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadFile(t, tc.content)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
@@ -86,39 +159,48 @@ func TestConfigFileErrors(t *testing.T) {
 	}
 }
 
-func TestConfigFileRejectsMixingWithInputs(t *testing.T) {
-	setBaseEnv(t) // sets EASYSFTP_UPLOADS
-	t.Setenv("EASYSFTP_CONFIG_FILE", writeConfig(t, "version: 1\ntargets:\n  - {local: a, remote: /b}"))
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "config-file") {
-		t.Fatalf("expected mixing error, got %v", err)
-	}
-}
-
-func TestStrategyInput(t *testing.T) {
-	setBaseEnv(t)
-	t.Setenv("EASYSFTP_STRATEGY", "sync")
-	cfg, err := Load()
+func TestConfigFileDeploymentOrderIsPreserved(t *testing.T) {
+	cfg, err := loadFile(t, `version: 3
+connection:
+  host: h
+  username: u
+deployments:
+  zeta:
+    source: a
+    target: /a
+  alpha:
+    source: b
+    target: /b
+  mid:
+    source: c
+    target: /c
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Uploads[0].Strategy != StrategySync {
-		t.Errorf("expected sync strategy, got %q", cfg.Uploads[0].Strategy)
+	got := []string{cfg.Uploads[0].Name, cfg.Uploads[1].Name, cfg.Uploads[2].Name}
+	want := []string{"zeta", "alpha", "mid"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("deployment order not preserved: got %v, want %v", got, want)
+		}
 	}
 }
 
-func TestDeleteInputIsRejected(t *testing.T) {
-	setBaseEnv(t)
-	t.Setenv("EASYSFTP_DELETE", "true")
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "strategy: clean") {
-		t.Fatalf("expected the delete tombstone error, got %v", err)
+func TestEditDistance(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"abc", "abc", 0},
+		{"concurency", "concurrency", 1},
+		{"taget", "target", 1},
+		{"banana", "version", 7},
 	}
-}
-
-func TestDeleteFalseIsAccepted(t *testing.T) {
-	setBaseEnv(t)
-	t.Setenv("EASYSFTP_DELETE", "false")
-	if _, err := Load(); err != nil {
-		t.Fatalf("delete=false must stay accepted (it is the action.yml default): %v", err)
+	for _, tc := range cases {
+		if got := editDistance(tc.a, tc.b); got != tc.want {
+			t.Errorf("editDistance(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
 	}
 }

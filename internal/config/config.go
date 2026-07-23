@@ -1,5 +1,14 @@
 // Package config loads and validates the action configuration from
 // environment variables set by action.yml, optionally from a YAML config file.
+//
+// v3 knows exactly two configuration modes and never mixes them:
+//
+//   - Inline mode: the connection and one deployment come from the action
+//     inputs (host, username, source, target, ...).
+//   - Config mode: the 'config' input points at a YAML file that holds every
+//     non-secret setting (connection, deployments, safety, advanced tuning).
+//     Only credentials (password, private-key, passphrase and their proxy-*
+//     counterparts) and run-wide switches (dry-run, log-level) remain inputs.
 package config
 
 import (
@@ -11,16 +20,16 @@ import (
 	"time"
 )
 
-// Strategy selects how a target's remote directory is reconciled with the
-// local files.
+// Strategy selects how a deployment's remote directory is reconciled with the
+// local files. Its user-facing input name in v3 is "mode".
 type Strategy string
 
 const (
 	// StrategyOverlay uploads files on top of whatever is already there and
-	// never deletes anything (the default, backwards-compatible behavior).
+	// never deletes anything (the default).
 	StrategyOverlay Strategy = "overlay"
 	// StrategySync uploads new/changed files and deletes remote files that are
-	// no longer present locally, tracked via a per-target manifest.
+	// no longer present locally, tracked via a per-deployment manifest.
 	StrategySync Strategy = "sync"
 	// StrategyClean wipes the remote target directory, then uploads.
 	StrategyClean Strategy = "clean"
@@ -38,16 +47,16 @@ func (s Strategy) valid() bool {
 type LogLevel string
 
 const (
-	// LogQuiet logs connection info, per-target summaries, warnings and
-	// errors only; per-file operation lines are suppressed (except in
-	// dry-run mode, where inspecting the plan is the whole point).
-	LogQuiet LogLevel = "quiet"
-	// LogNormal is the default: one line per planned file operation,
-	// exactly today's behavior.
+	// LogNormal is the default: connection status, one summary per
+	// deployment, warnings and errors. No per-file lines, so a 20,000-file
+	// deploy produces a readable log.
 	LogNormal LogLevel = "normal"
-	// LogVerbose additionally explains ignore decisions: which pattern
-	// excluded which file during planning.
+	// LogVerbose additionally logs one line per uploaded, deleted or skipped
+	// file (v2's "normal").
 	LogVerbose LogLevel = "verbose"
+	// LogDebug additionally explains internal decisions, most importantly
+	// which exclude pattern excluded which file during planning.
+	LogDebug LogLevel = "debug"
 )
 
 // resolveLogLevel maps the log-level input to a concrete level.
@@ -55,23 +64,36 @@ func resolveLogLevel(input string) (LogLevel, error) {
 	switch l := LogLevel(input); l {
 	case "":
 		return LogNormal, nil
-	case LogQuiet, LogNormal, LogVerbose:
+	case LogNormal, LogVerbose, LogDebug:
 		return l, nil
 	}
-	return "", fmt.Errorf("input 'log-level' must be quiet, normal or verbose, got %q", input)
+	return "", fmt.Errorf("input 'log-level' must be normal, verbose or debug, got %q", input)
 }
 
-// UploadPair maps a local path to a remote path with its own strategy.
+// UploadPair maps a local path to a remote path with its own strategy. In
+// config mode every pair carries its deployment name; inline mode's single
+// pair has an empty name.
 type UploadPair struct {
+	Name     string
 	Local    string
 	Remote   string
 	Strategy Strategy
-	Ignore   []string // target-specific ignore patterns, additive to the global ones
+	Ignore   []string // deployment-specific exclude patterns, additive to the global ones
+}
+
+// Label names the pair in logs and summaries: the deployment name from the
+// config file, or the mapping itself in inline mode.
+func (p UploadPair) Label() string {
+	if p.Name != "" {
+		return p.Name
+	}
+	return fmt.Sprintf("%s => %s", p.Local, p.Remote)
 }
 
 // Proxy holds the connection settings of an optional jump host (bastion)
-// through which the SFTP server is reached, mirroring the primary connection
-// settings. Host key verification applies to this hop independently.
+// through which the SFTP server is reached. In v3 the non-secret parts come
+// exclusively from the config file (connection.proxy); the credentials come
+// from the proxy-password / proxy-private-key / proxy-passphrase inputs.
 type Proxy struct {
 	Server              string
 	Port                int
@@ -81,8 +103,11 @@ type Proxy struct {
 	Passphrase          string
 	HostKeyFingerprints []string
 	// KnownHosts holds raw OpenSSH known_hosts lines for the jump host, an
-	// alternative to fingerprints, exactly like the primary input.
+	// alternative to fingerprints.
 	KnownHosts string
+	// AllowAnyHostKey explicitly opts out of host key verification for this
+	// hop. Without pinned keys and without this opt-in, the run fails.
+	AllowAnyHostKey bool
 }
 
 // Guards holds the safety limits applied before any destructive operation.
@@ -105,6 +130,10 @@ type Config struct {
 	// output), an alternative to SHA256 fingerprints. When both are set, a
 	// key matching either is accepted.
 	KnownHosts string
+	// AllowAnyHostKey explicitly opts out of host key verification. Without
+	// pinned keys and without this opt-in, the run fails instead of talking
+	// to an unverified server.
+	AllowAnyHostKey bool
 
 	// Proxy, if non-nil, routes the connection through a jump host.
 	Proxy *Proxy
@@ -112,6 +141,10 @@ type Config struct {
 	Uploads     []UploadPair
 	IgnoreLines []string
 	Guards      Guards
+
+	// ConfigPath is the path of the loaded YAML config file, or "" in inline
+	// mode. It drives config-mode error message wording and the job summary.
+	ConfigPath string
 
 	// DirMode, if set, chmods every remote directory the run creates or
 	// touches to this permission, overriding the server's umask default.
@@ -139,8 +172,7 @@ type Config struct {
 	SkipUnchanged bool
 
 	// LogLevel controls per-file log output; see the LogLevel constants.
-	// The zero value behaves like LogNormal, so directly constructed configs
-	// keep today's behavior.
+	// The zero value behaves like LogNormal.
 	LogLevel LogLevel
 
 	// ManifestName is the file name the sync strategy uses for its manifest
@@ -159,17 +191,23 @@ type Config struct {
 // should be logged. A dry run always logs them: inspecting the plan is its
 // whole point, regardless of log-level.
 func (c *Config) LogPerFile() bool {
-	return c.LogLevel != LogQuiet || c.DryRun
+	return c.LogLevel == LogVerbose || c.LogLevel == LogDebug || c.DryRun
 }
 
-// Verbose reports whether verbose-only diagnostics (ignore decisions)
-// should be logged.
-func (c *Config) Verbose() bool {
-	return c.LogLevel == LogVerbose
+// Debug reports whether debug-only diagnostics (exclude decisions) should be
+// logged.
+func (c *Config) Debug() bool {
+	return c.LogLevel == LogDebug
 }
 
-// DefaultManifestName is the sync manifest file name used when the
-// manifest-name input is not set.
+// HostKeyPinned reports whether the primary connection verifies the server's
+// host key against pinned keys.
+func (c *Config) HostKeyPinned() bool {
+	return len(c.HostKeyFingerprints) > 0 || c.KnownHosts != ""
+}
+
+// DefaultManifestName is the sync manifest file name used when sync.manifest
+// is not configured.
 const DefaultManifestName = ".easysftp-manifest.json"
 
 // SyncManifestName returns the effective sync manifest file name, falling
@@ -183,121 +221,140 @@ func (c *Config) SyncManifestName() string {
 
 const envPrefix = "EASYSFTP_"
 
+// Run-wide defaults, applied in inline mode and overridable per config file.
+const (
+	defaultConcurrency        = 4
+	defaultRequestConcurrency = 16
+	defaultRetries            = 2
+	defaultTimeoutSec         = 30
+)
+
+// removedInput maps a v2 input's environment variable to its migration hint.
+// The inputs stay declared in action.yml (without defaults) so a workflow
+// still passing them fails loudly here instead of being silently ignored by
+// the runner.
+type removedInput struct{ env, hint string }
+
+var removedInputs = []removedInput{
+	{"SERVER", "the 'server' input was renamed to 'host'"},
+	{"HOST_KEY_FINGERPRINT", "the 'host-key-fingerprint' input was renamed to 'host-key'"},
+	{"UPLOADS", "the 'uploads' input was removed; replace a single 'local => remote' mapping with the 'source' and 'target' inputs, and move multiple mappings into a config file ('config' input)"},
+	{"CONFIG_FILE", "the 'config-file' input was renamed to 'config', and the file format changed (version: 3, named deployments, connection settings in the file)"},
+	{"STRATEGY", "the 'strategy' input was renamed to 'mode'"},
+	{"IGNORE", "the 'ignore' input was renamed to 'exclude'"},
+	{"IGNORE_FROM", "the 'ignore-from' input was removed; put the patterns in the 'exclude' input or in the config file"},
+	{"MAX_DELETES", "the 'max-deletes' input moved to 'safety.max_deletes' in the config file"},
+	{"DELETE", "the 'delete' input was removed in v2 already; use 'mode: clean'"},
+	{"CONCURRENCY", "the 'concurrency' input moved to 'advanced.concurrency' in the config file"},
+	{"SFTP_REQUEST_CONCURRENCY", "the 'sftp-request-concurrency' input moved to 'advanced.request_concurrency' in the config file"},
+	{"RETRIES", "the 'retries' input moved to 'advanced.retries' in the config file"},
+	{"TIMEOUT", "the 'timeout' input moved to 'advanced.timeout' in the config file"},
+	{"STALL_TIMEOUT", "the 'stall-timeout' input moved to 'advanced.stall_timeout' in the config file"},
+	{"SYNC_FAST_PATH", "the 'sync-fast-path' input moved to 'sync.fast_path' in the config file"},
+	{"MANIFEST_NAME", "the 'manifest-name' input moved to 'sync.manifest' in the config file"},
+	{"SKIP_UNCHANGED", "the 'skip-unchanged' input moved to 'advanced.skip_unchanged' in the config file"},
+	{"DIR_MODE", "the 'dir-mode' input moved to 'permissions.directories' in the config file"},
+	{"FILE_MODE", "the 'file-mode' input moved to 'permissions.files' in the config file"},
+	{"PRESERVE_TIMES", "the 'preserve-times' input moved to 'permissions.preserve_times' in the config file"},
+	{"PROXY_SERVER", "the 'proxy-server' input moved to 'connection.proxy.host' in the config file"},
+	{"PROXY_PORT", "the 'proxy-port' input moved to 'connection.proxy.port' in the config file"},
+	{"PROXY_USERNAME", "the 'proxy-username' input moved to 'connection.proxy.username' in the config file"},
+	{"PROXY_HOST_KEY_FINGERPRINT", "the 'proxy-host-key-fingerprint' input moved to 'connection.proxy.host_key' in the config file"},
+	{"PROXY_KNOWN_HOSTS", "the 'proxy-known-hosts' input moved to 'connection.proxy.known_hosts' in the config file"},
+}
+
+// checkRemovedInputs fails the run with a migration hint when a v2 input is
+// still set.
+func checkRemovedInputs() error {
+	for _, r := range removedInputs {
+		if strings.TrimSpace(os.Getenv(envPrefix+r.env)) != "" {
+			return fmt.Errorf("%s in easySFTP v3; see docs/migration-v3.md", r.hint)
+		}
+	}
+	return nil
+}
+
+// inlineOnlyInputs are the non-secret inputs that must stay empty in config
+// mode: in v3 every non-secret setting has exactly one home, so there is no
+// override or precedence between the workflow and the config file.
+var inlineOnlyInputs = []struct{ env, input string }{
+	{"HOST", "host"},
+	{"PORT", "port"},
+	{"USERNAME", "username"},
+	{"HOST_KEY", "host-key"},
+	{"KNOWN_HOSTS", "known-hosts"},
+	{"ALLOW_ANY_HOST_KEY", "allow-any-host-key"},
+	{"SOURCE", "source"},
+	{"TARGET", "target"},
+	{"MODE", "mode"},
+	{"EXCLUDE", "exclude"},
+}
+
 // Load reads the configuration from the environment and validates it.
 func Load() (*Config, error) {
+	if err := checkRemovedInputs(); err != nil {
+		return nil, err
+	}
+
 	get := func(name string) string {
 		return strings.TrimSpace(os.Getenv(envPrefix + name))
 	}
 
 	cfg := &Config{
-		Server:              get("SERVER"),
-		Username:            get("USERNAME"),
-		Password:            os.Getenv(envPrefix + "PASSWORD"),
-		PrivateKey:          os.Getenv(envPrefix + "PRIVATE_KEY"),
-		Passphrase:          os.Getenv(envPrefix + "PASSPHRASE"),
-		HostKeyFingerprints: splitLines(os.Getenv(envPrefix + "HOST_KEY_FINGERPRINT")),
-		KnownHosts:          strings.TrimSpace(os.Getenv(envPrefix + "KNOWN_HOSTS")),
+		Password:               os.Getenv(envPrefix + "PASSWORD"),
+		PrivateKey:             os.Getenv(envPrefix + "PRIVATE_KEY"),
+		Passphrase:             os.Getenv(envPrefix + "PASSPHRASE"),
+		Concurrency:            defaultConcurrency,
+		SftpRequestConcurrency: defaultRequestConcurrency,
+		Retries:                defaultRetries,
+		Timeout:                defaultTimeoutSec * time.Second,
+		ManifestName:           DefaultManifestName,
 	}
 
 	var err error
-	if cfg.Port, err = parseInt(get("PORT"), 22); err != nil {
-		return nil, fmt.Errorf("invalid port: %w", err)
-	}
-	if cfg.Proxy, err = loadProxy(get); err != nil {
-		return nil, err
-	}
-	if cfg.Concurrency, err = parseInt(get("CONCURRENCY"), 4); err != nil {
-		return nil, fmt.Errorf("invalid concurrency: %w", err)
-	}
-	if cfg.SftpRequestConcurrency, err = parseInt(get("SFTP_REQUEST_CONCURRENCY"), 16); err != nil {
-		return nil, fmt.Errorf("invalid sftp-request-concurrency: %w", err)
-	}
-	if cfg.Retries, err = parseInt(get("RETRIES"), 2); err != nil {
-		return nil, fmt.Errorf("invalid retries: %w", err)
-	}
-	// Tombstone: 'delete' is still declared in action.yml so that a workflow
-	// passing it fails loudly here instead of silently falling back to overlay.
-	if deleted, err := parseBool(get("DELETE"), false); err != nil {
-		return nil, fmt.Errorf("invalid delete: %w", err)
-	} else if deleted {
-		return nil, fmt.Errorf("the 'delete' input was removed in v2; use 'strategy: clean' instead")
-	}
 	if cfg.DryRun, err = parseBool(get("DRY_RUN"), false); err != nil {
 		return nil, fmt.Errorf("invalid dry-run: %w", err)
-	}
-	if cfg.SyncFastPath, err = parseBool(get("SYNC_FAST_PATH"), false); err != nil {
-		return nil, fmt.Errorf("invalid sync-fast-path: %w", err)
-	}
-	if cfg.SkipUnchanged, err = parseBool(get("SKIP_UNCHANGED"), false); err != nil {
-		return nil, fmt.Errorf("invalid skip-unchanged: %w", err)
 	}
 	if cfg.LogLevel, err = resolveLogLevel(get("LOG_LEVEL")); err != nil {
 		return nil, err
 	}
-	if cfg.ManifestName, err = parseManifestName(get("MANIFEST_NAME")); err != nil {
-		return nil, err
-	}
-	if cfg.PreserveTimes, err = parseBool(get("PRESERVE_TIMES"), false); err != nil {
-		return nil, fmt.Errorf("invalid preserve-times: %w", err)
-	}
-	if cfg.DirMode, err = parseMode(get("DIR_MODE"), "dir-mode"); err != nil {
-		return nil, err
-	}
-	if cfg.FileMode, err = parseMode(get("FILE_MODE"), "file-mode"); err != nil {
-		return nil, err
-	}
 
-	timeoutSec, err := parseInt(get("TIMEOUT"), 30)
-	if err != nil {
-		return nil, fmt.Errorf("invalid timeout: %w", err)
-	}
-	cfg.Timeout = time.Duration(timeoutSec) * time.Second
+	proxyPassword := os.Getenv(envPrefix + "PROXY_PASSWORD")
+	proxyPrivateKey := os.Getenv(envPrefix + "PROXY_PRIVATE_KEY")
+	proxyPassphrase := os.Getenv(envPrefix + "PROXY_PASSPHRASE")
+	haveProxyCreds := proxyPassword != "" || strings.TrimSpace(proxyPrivateKey) != "" || proxyPassphrase != ""
 
-	stallSec, err := parseInt(get("STALL_TIMEOUT"), 0)
-	if err != nil {
-		return nil, fmt.Errorf("invalid stall-timeout: %w", err)
-	}
-	cfg.StallTimeout = time.Duration(stallSec) * time.Second
-
-	// The deployment (targets, strategy, ignore, guards) comes either from a
-	// YAML config file or from the plain action inputs, never a mix of both.
-	configFile := get("CONFIG_FILE")
-	strategyInput := get("STRATEGY")
-	uploadsInput := os.Getenv(envPrefix + "UPLOADS")
-	ignoreInput := os.Getenv(envPrefix + "IGNORE")
-	ignoreFrom := get("IGNORE_FROM")
-	maxDeletesInput := get("MAX_DELETES")
-
-	if configFile != "" {
-		if strings.TrimSpace(uploadsInput) != "" || strategyInput != "" ||
-			strings.TrimSpace(ignoreInput) != "" || ignoreFrom != "" || maxDeletesInput != "" {
-			return nil, fmt.Errorf("when 'config-file' is set, put targets/strategy/ignore/guards " +
-				"in the file; do not also set the uploads, strategy, ignore, ignore-from or max-deletes inputs")
+	if configPath := get("CONFIG"); configPath != "" {
+		var set []string
+		for _, in := range inlineOnlyInputs {
+			if strings.TrimSpace(os.Getenv(envPrefix+in.env)) != "" {
+				set = append(set, "'"+in.input+"'")
+			}
 		}
-		if err := loadConfigFile(cfg, configFile); err != nil {
+		if len(set) > 0 {
+			return nil, fmt.Errorf("when 'config' is set, all non-secret settings come from the config file; "+
+				"remove the %s input(s) from the workflow (only credentials, dry-run and log-level may be combined with a config file)",
+				strings.Join(set, ", "))
+		}
+		if err := loadConfigFile(cfg, configPath); err != nil {
 			return nil, err
+		}
+		cfg.ConfigPath = configPath
+		if cfg.Proxy != nil {
+			cfg.Proxy.Password = proxyPassword
+			cfg.Proxy.PrivateKey = proxyPrivateKey
+			cfg.Proxy.Passphrase = proxyPassphrase
+		} else if haveProxyCreds {
+			return nil, fmt.Errorf("proxy credential inputs are set but the config file defines no 'connection.proxy'; " +
+				"add the proxy connection there or remove the proxy-* inputs")
 		}
 	} else {
-		strategy, err := resolveStrategy(strategyInput)
-		if err != nil {
+		if haveProxyCreds {
+			return nil, fmt.Errorf("proxy connections are configured in the config file in easySFTP v3 " +
+				"(connection.proxy, with proxy-password / proxy-private-key as inputs); see docs/migration-v3.md")
+		}
+		if err := loadInline(cfg, get); err != nil {
 			return nil, err
-		}
-		if cfg.Uploads, err = ParseUploads(uploadsInput); err != nil {
-			return nil, err
-		}
-		for i := range cfg.Uploads {
-			cfg.Uploads[i].Strategy = strategy
-		}
-		cfg.IgnoreLines = splitLines(ignoreInput)
-		if ignoreFrom != "" {
-			data, err := os.ReadFile(ignoreFrom)
-			if err != nil {
-				return nil, fmt.Errorf("could not read ignore-from file: %w", err)
-			}
-			cfg.IgnoreLines = append(cfg.IgnoreLines, splitLines(string(data))...)
-		}
-		if cfg.Guards.MaxDeletes, err = parseInt(maxDeletesInput, 0); err != nil {
-			return nil, fmt.Errorf("invalid max-deletes: %w", err)
 		}
 	}
 
@@ -307,101 +364,82 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// loadProxy reads the optional proxy-* (jump host) inputs. Without
-// proxy-server, every other proxy input must be empty, so a typo'd or
-// half-configured bastion setup fails loudly instead of silently connecting
-// directly.
-func loadProxy(get func(string) string) (*Proxy, error) {
-	p := &Proxy{
-		Server:              get("PROXY_SERVER"),
-		Username:            get("PROXY_USERNAME"),
-		Password:            os.Getenv(envPrefix + "PROXY_PASSWORD"),
-		PrivateKey:          os.Getenv(envPrefix + "PROXY_PRIVATE_KEY"),
-		Passphrase:          os.Getenv(envPrefix + "PROXY_PASSPHRASE"),
-		HostKeyFingerprints: splitLines(os.Getenv(envPrefix + "PROXY_HOST_KEY_FINGERPRINT")),
-		KnownHosts:          strings.TrimSpace(os.Getenv(envPrefix + "PROXY_KNOWN_HOSTS")),
-	}
-	if p.Server == "" {
-		if p.Username != "" || p.Password != "" || strings.TrimSpace(p.PrivateKey) != "" ||
-			p.Passphrase != "" || len(p.HostKeyFingerprints) > 0 || p.KnownHosts != "" ||
-			get("PROXY_PORT") != "" {
-			return nil, fmt.Errorf("proxy-* inputs are set but 'proxy-server' is empty; set proxy-server or remove the other proxy inputs")
-		}
-		return nil, nil
-	}
-	var err error
-	if p.Port, err = parseInt(get("PROXY_PORT"), 22); err != nil {
-		return nil, fmt.Errorf("invalid proxy-port: %w", err)
-	}
-	return p, nil
-}
+// loadInline reads the single-deployment inline configuration from the
+// action inputs.
+func loadInline(cfg *Config, get func(string) string) error {
+	cfg.Server = get("HOST")
+	cfg.Username = get("USERNAME")
+	cfg.HostKeyFingerprints = splitLines(os.Getenv(envPrefix + "HOST_KEY"))
+	cfg.KnownHosts = strings.TrimSpace(os.Getenv(envPrefix + "KNOWN_HOSTS"))
 
-// resolveStrategy maps the strategy input to a concrete strategy.
-func resolveStrategy(input string) (Strategy, error) {
-	if input == "" {
-		return StrategyOverlay, nil
+	var err error
+	if cfg.Port, err = parseInt(get("PORT"), 22); err != nil {
+		return fmt.Errorf("invalid port: %w", err)
 	}
-	s := Strategy(input)
-	if !s.valid() {
-		return "", fmt.Errorf("input 'strategy' must be overlay, sync or clean, got %q", input)
+	if cfg.AllowAnyHostKey, err = parseBool(get("ALLOW_ANY_HOST_KEY"), false); err != nil {
+		return fmt.Errorf("invalid allow-any-host-key: %w", err)
 	}
-	return s, nil
+
+	strategy := StrategyOverlay
+	if mode := get("MODE"); mode != "" {
+		strategy = Strategy(mode)
+		if !strategy.valid() {
+			return fmt.Errorf("input 'mode' must be overlay, sync or clean, got %q", mode)
+		}
+	}
+
+	source, target := get("SOURCE"), get("TARGET")
+	if source == "" || target == "" {
+		return fmt.Errorf("easySFTP could not determine what to deploy.\n\nAdd both:\n\n  source: dist\n  target: /var/www/html\n\nFor multiple deployments, use a config file:\n\n  config: .github/easysftp.yml")
+	}
+	cfg.Uploads = []UploadPair{{Local: source, Remote: target, Strategy: strategy}}
+	cfg.IgnoreLines = splitLines(os.Getenv(envPrefix + "EXCLUDE"))
+	return nil
 }
 
 func (c *Config) validate() error {
+	// requiredIn phrases a missing required setting for the active mode.
+	requiredIn := func(input, field string) error {
+		if c.ConfigPath != "" {
+			return fmt.Errorf("config %q: '%s' is required", c.ConfigPath, field)
+		}
+		return fmt.Errorf("input '%s' is required", input)
+	}
 	switch {
 	case c.Server == "":
-		return fmt.Errorf("input 'server' is required")
+		return requiredIn("host", "connection.host")
 	case c.Username == "":
-		return fmt.Errorf("input 'username' is required")
+		return requiredIn("username", "connection.username")
 	case c.Password == "" && strings.TrimSpace(c.PrivateKey) == "":
 		return fmt.Errorf("either input 'password' or 'private-key' is required")
 	case len(c.Uploads) == 0:
-		return fmt.Errorf("input 'uploads' is required and must contain at least one 'local => remote' mapping")
+		return fmt.Errorf("no deployments configured")
 	case c.Port < 1 || c.Port > 65535:
-		return fmt.Errorf("input 'port' must be between 1 and 65535, got %d", c.Port)
+		return fmt.Errorf("port must be between 1 and 65535, got %d", c.Port)
 	case c.Concurrency < 1:
-		return fmt.Errorf("input 'concurrency' must be at least 1, got %d", c.Concurrency)
+		return fmt.Errorf("advanced.concurrency must be at least 1, got %d", c.Concurrency)
 	case c.SftpRequestConcurrency < 1:
-		return fmt.Errorf("input 'sftp-request-concurrency' must be at least 1, got %d", c.SftpRequestConcurrency)
+		return fmt.Errorf("advanced.request_concurrency must be at least 1, got %d", c.SftpRequestConcurrency)
 	case c.Retries < 0:
-		return fmt.Errorf("input 'retries' must not be negative, got %d", c.Retries)
+		return fmt.Errorf("advanced.retries must not be negative, got %d", c.Retries)
 	case c.Timeout < 0:
-		return fmt.Errorf("input 'timeout' must not be negative (use 0 to disable the timeout), got %d", int(c.Timeout/time.Second))
+		return fmt.Errorf("advanced.timeout must not be negative (use 0 to disable the timeout), got %d", int(c.Timeout/time.Second))
 	case c.StallTimeout < 0:
-		return fmt.Errorf("input 'stall-timeout' must not be negative (use 0 to disable the check), got %d", int(c.StallTimeout/time.Second))
+		return fmt.Errorf("advanced.stall_timeout must not be negative (use 0 to disable the check), got %d", int(c.StallTimeout/time.Second))
 	case c.Guards.MaxDeletes < 0:
-		return fmt.Errorf("guards.max_deletes must not be negative, got %d", c.Guards.MaxDeletes)
+		return fmt.Errorf("safety.max_deletes must not be negative, got %d", c.Guards.MaxDeletes)
 	}
 	if p := c.Proxy; p != nil {
 		switch {
 		case p.Username == "":
-			return fmt.Errorf("input 'proxy-username' is required when 'proxy-server' is set")
+			return fmt.Errorf("config %q: 'connection.proxy.username' is required", c.ConfigPath)
 		case p.Password == "" && strings.TrimSpace(p.PrivateKey) == "":
-			return fmt.Errorf("either input 'proxy-password' or 'proxy-private-key' is required when 'proxy-server' is set")
+			return fmt.Errorf("either input 'proxy-password' or 'proxy-private-key' is required when the config file defines connection.proxy")
 		case p.Port < 1 || p.Port > 65535:
-			return fmt.Errorf("input 'proxy-port' must be between 1 and 65535, got %d", p.Port)
+			return fmt.Errorf("connection.proxy.port must be between 1 and 65535, got %d", p.Port)
 		}
 	}
 	return nil
-}
-
-// ParseUploads parses the multiline "local => remote" upload mapping.
-// Empty lines and lines starting with '#' are skipped.
-func ParseUploads(s string) ([]UploadPair, error) {
-	var pairs []UploadPair
-	for _, line := range splitLines(s) {
-		parts := strings.SplitN(line, "=>", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid upload mapping %q: expected format 'local/path => remote/path'", line)
-		}
-		local, remote := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-		if local == "" || remote == "" {
-			return nil, fmt.Errorf("invalid upload mapping %q: local and remote path must not be empty", line)
-		}
-		pairs = append(pairs, UploadPair{Local: local, Remote: remote})
-	}
-	return pairs, nil
 }
 
 // splitLines splits s into trimmed, non-empty, non-comment lines.
@@ -439,7 +477,7 @@ func parseManifestName(s string) (string, error) {
 		return DefaultManifestName, nil
 	}
 	if strings.ContainsAny(s, "/\\") || s == "." || s == ".." {
-		return "", fmt.Errorf("input 'manifest-name' must be a bare file name (no path separators), got %q", s)
+		return "", fmt.Errorf("sync.manifest must be a bare file name (no path separators), got %q", s)
 	}
 	return s, nil
 }

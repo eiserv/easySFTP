@@ -85,7 +85,7 @@ func TestProxyJumpVerifiesTargetHostKey(t *testing.T) {
 	}
 }
 
-func TestProxyJumpWarnsPerUnpinnedHop(t *testing.T) {
+func TestProxyJumpUnpinnedHopRequiresOptIn(t *testing.T) {
 	target := startTestServer(t)
 	jump := startTestJumpServer(t)
 	local := t.TempDir()
@@ -97,6 +97,15 @@ func TestProxyJumpWarnsPerUnpinnedHop(t *testing.T) {
 	cfg.Proxy.HostKeyFingerprints = nil
 	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
 
+	// Without the per-hop opt-in the unpinned jump host fails the run, even
+	// though the target itself is pinned.
+	_, err := Run(context.Background(), cfg, testLogger{t})
+	if err == nil || !strings.Contains(err.Error(), "connection.proxy.host_key") {
+		t.Fatalf("expected an unverified jump-host error naming the proxy options, got %v", err)
+	}
+
+	// With the opt-in the run succeeds but still warns for the open hop.
+	cfg.Proxy.AllowAnyHostKey = true
 	log := &recordingLogger{testLogger: testLogger{t}}
 	if _, err := Run(context.Background(), cfg, log); err != nil {
 		t.Fatal(err)
@@ -104,12 +113,12 @@ func TestProxyJumpWarnsPerUnpinnedHop(t *testing.T) {
 	found := false
 	log.mu.Lock()
 	for _, w := range log.warnings {
-		if strings.Contains(w, "proxy-host-key-fingerprint") {
+		if strings.Contains(w, "connection.proxy.allow_any_host_key") {
 			found = true
 		}
 	}
 	log.mu.Unlock()
 	if !found {
-		t.Errorf("expected an unverified-host-key warning naming the proxy inputs, got %v", log.warnings)
+		t.Errorf("expected an unverified-host-key warning naming the proxy opt-in, got %v", log.warnings)
 	}
 }

@@ -105,14 +105,14 @@ jobs:
       - name: Dry run
         uses: ./
         with:
-          build-mode: source
-          server: localhost
+          host: localhost
           port: 2222
           username: demo
           password: demopass
-          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
-          uploads: ./selftest-site/ => /upload/
-          ignore: "*.log"
+          host-key: ${{ steps.hostkey.outputs.fingerprints }}
+          source: ./selftest-site/
+          target: /upload/
+          exclude: "*.log"
           dry-run: true
 
       - name: Verify dry run changed nothing
@@ -126,14 +126,14 @@ jobs:
         id: upload
         uses: ./
         with:
-          build-mode: source
-          server: localhost
+          host: localhost
           port: 2222
           username: demo
           password: demopass
-          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
-          uploads: ./selftest-site/ => /upload/
-          ignore: "*.log"
+          host-key: ${{ steps.hostkey.outputs.fingerprints }}
+          source: ./selftest-site/
+          target: /upload/
+          exclude: "*.log"
 
       - name: Verify upload
         run: |
@@ -149,68 +149,73 @@ jobs:
       - name: Plant stale remote file
         run: docker exec sftp sh -c 'echo stale > /home/demo/upload/stale.html && chown demo /home/demo/upload/stale.html'
 
-      - name: Upload with clean strategy
+      - name: Upload with clean mode
         id: clean-upload
         uses: ./
         with:
-          build-mode: source
-          server: localhost
+          host: localhost
           port: 2222
           username: demo
           password: demopass
-          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
-          uploads: ./selftest-site/ => /upload/
-          ignore: "*.log"
-          strategy: clean
+          host-key: ${{ steps.hostkey.outputs.fingerprints }}
+          source: ./selftest-site/
+          target: /upload/
+          exclude: "*.log"
+          mode: clean
 
-      - name: Verify clean strategy
+      - name: Verify clean mode
         run: |
           if docker exec sftp test -e /home/demo/upload/stale.html; then
-            echo "::error::stale file survived the clean strategy"
+            echo "::error::stale file survived the clean mode"
             exit 1
           fi
           docker exec sftp test -f /home/demo/upload/index.html
           [ "${{ steps.clean-upload.outputs.files-deleted }}" -ge 1 ]
 
-      # config-file end-to-end: unit tests set EASYSFTP_* variables directly
+      # config-mode end-to-end: unit tests set EASYSFTP_* variables directly
       # and never see action.yml's declared defaults; only a real composite
-      # run does. This is how #62 (a declared default tripping the config-file
+      # run does. This is how #62 (a declared default tripping the config
       # mutual-exclusion check) shipped despite green CI.
-      - name: Create config-file deployment
+      - name: Create config-mode deployment
         run: |
           mkdir -p selftest-docs
           echo "# docs" > selftest-docs/readme.md
-          cat > selftest-config.yml <<'EOF'
-          version: 1
-          ignore:
-            - "*.log"
-          targets:
-            - local: ./selftest-site/
-              remote: /upload/cfg-site/
-            - local: ./selftest-docs/
-              remote: /upload/cfg-docs/
-              strategy: clean
-          EOF
+          {
+            echo 'version: 3'
+            echo 'connection:'
+            echo '  host: localhost'
+            echo '  port: 2222'
+            echo '  username: demo'
+            echo '  host_key: |'
+            echo "${{ steps.hostkey.outputs.fingerprints }}" | sed 's/^/    /'
+            echo 'defaults:'
+            echo '  exclude:'
+            echo '    - "*.log"'
+            echo 'deployments:'
+            echo '  site:'
+            echo '    source: ./selftest-site/'
+            echo '    target: /upload/cfg-site/'
+            echo '  docs:'
+            echo '    source: ./selftest-docs/'
+            echo '    target: /upload/cfg-docs/'
+            echo '    mode: clean'
+          } > selftest-config.yml
+          cat selftest-config.yml
 
-      - name: Deploy via config-file
+      - name: Deploy via config file
         id: cfgfile
         uses: ./
         with:
-          build-mode: source
-          server: localhost
-          port: 2222
-          username: demo
           password: demopass
-          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
-          config-file: selftest-config.yml
+          config: selftest-config.yml
 
-      - name: Verify config-file deploy
+      - name: Verify config-mode deploy
         run: |
           docker exec sftp test -f /home/demo/upload/cfg-site/index.html
           docker exec sftp test -f /home/demo/upload/cfg-site/assets/style.css
           docker exec sftp test -f /home/demo/upload/cfg-docs/readme.md
           if docker exec sftp test -e /home/demo/upload/cfg-site/debug.log; then
-            echo "::error::config-file global ignore was not applied"
+            echo "::error::config-file default exclude was not applied"
             exit 1
           fi
           [ "${{ steps.cfgfile.outputs.files-uploaded }}" = "3" ]
@@ -221,15 +226,15 @@ jobs:
         id: sync1
         uses: ./
         with:
-          build-mode: source
-          server: localhost
+          host: localhost
           port: 2222
           username: demo
           password: demopass
-          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
-          uploads: ./selftest-site/ => /upload/sync/
-          ignore: "*.log"
-          strategy: sync
+          host-key: ${{ steps.hostkey.outputs.fingerprints }}
+          source: ./selftest-site/
+          target: /upload/sync/
+          exclude: "*.log"
+          mode: sync
 
       - name: Verify first sync wrote the manifest
         run: |
@@ -245,15 +250,15 @@ jobs:
         id: sync2
         uses: ./
         with:
-          build-mode: source
-          server: localhost
+          host: localhost
           port: 2222
           username: demo
           password: demopass
-          host-key-fingerprint: ${{ steps.hostkey.outputs.fingerprints }}
-          uploads: ./selftest-site/ => /upload/sync/
-          ignore: "*.log"
-          strategy: sync
+          host-key: ${{ steps.hostkey.outputs.fingerprints }}
+          source: ./selftest-site/
+          target: /upload/sync/
+          exclude: "*.log"
+          mode: sync
 
       - name: Verify second sync deleted the removed file and skipped the rest
         run: |
@@ -271,14 +276,54 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
-          build-mode: source
-          server: localhost
+          host: localhost
           port: 2222
           username: demo
           password: demopass
-          host-key-fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          host-key: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          source: ./selftest-site/
+          target: /upload/
+
+      - name: Verify missing host key is rejected without opt-in
+        id: nokey
+        continue-on-error: true
+        uses: ./
+        with:
+          host: localhost
+          port: 2222
+          username: demo
+          password: demopass
+          source: ./selftest-site/
+          target: /upload/
+
+      - name: Verify allow-any-host-key opt-in connects
+        id: anykey
+        uses: ./
+        with:
+          host: localhost
+          port: 2222
+          username: demo
+          password: demopass
+          allow-any-host-key: "true"
+          source: ./selftest-site/
+          target: /upload/anykey/
+          exclude: "*.log"
+          dry-run: true
+
+      - name: Verify removed v2 input fails with a migration hint
+        id: v2input
+        continue-on-error: true
+        uses: ./
+        with:
+          host: localhost
+          port: 2222
+          username: demo
+          password: demopass
+          host-key: ${{ steps.hostkey.outputs.fingerprints }}
           uploads: ./selftest-site/ => /upload/
 
-      - name: Assert wrong host key failed
+      - name: Assert the failure cases failed
         run: |
           [ "${{ steps.badkey.outcome }}" = "failure" ]
+          [ "${{ steps.nokey.outcome }}" = "failure" ]
+          [ "${{ steps.v2input.outcome }}" = "failure" ]

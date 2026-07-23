@@ -76,12 +76,12 @@ func nonDirConflict(client *sftp.Client, dir string) string {
 	return ""
 }
 
-// checkRemoteRoot refuses a destructive strategy whose target resolves to the
+// checkRemoteRoot refuses a destructive mode whose target resolves to the
 // filesystem root or an unspecific path: the one guard that is always on.
 func checkRemoteRoot(remote string) error {
 	switch normalizeRemote(remote) {
 	case "/", ".", "", "~":
-		return fmt.Errorf("refusing a destructive strategy on remote root %q; target a specific subdirectory instead", remote)
+		return fmt.Errorf("refusing a destructive mode on remote root %q; target a specific subdirectory instead", remote)
 	}
 	return nil
 }

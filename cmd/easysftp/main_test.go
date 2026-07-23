@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eiserv/easySFTP/internal/config"
 	"github.com/eiserv/easySFTP/internal/uploader"
 )
 
@@ -103,7 +104,8 @@ func TestReportStatsOnFailure(t *testing.T) {
 		BytesUploaded: 2048,
 		Duration:      1500 * time.Millisecond,
 	}
-	reportStats(stats, "uploaded", errors.New("upload failed"))
+	cfg := &config.Config{HostKeyFingerprints: []string{"SHA256:abc"}}
+	reportStats(cfg, stats, "uploaded", errors.New("upload failed"))
 
 	output, err := os.ReadFile(outputPath)
 	if err != nil {
@@ -128,6 +130,8 @@ func TestReportStatsOnFailure(t *testing.T) {
 	}
 	for _, want := range []string{
 		"| Status | ❌ Failed after 3 file(s), 2048 byte(s) |",
+		"| Host key | ✅ pinned |",
+		"| Configuration | inline inputs |",
 		"| Files uploaded | 3 |",
 		"| Files deleted | 1 |",
 		"| Files skipped (unchanged) | 4 |",
@@ -151,22 +155,24 @@ func TestReportStatsMultiTargetBreakdown(t *testing.T) {
 		BytesUploaded: 17_825_792,
 		Duration:      2*time.Minute + 13*time.Second,
 		Targets: []uploader.TargetStats{
-			{Local: "./dist/", Remote: "/var/www/html/", Strategy: "sync", FilesUploaded: 12, FilesDeleted: 3, FilesSkipped: 1988, BytesUploaded: 4_297_523},
-			{Local: "./docs/", Remote: "/var/www/docs/", Strategy: "clean", FilesUploaded: 240, FilesDeleted: 214, FilesSkipped: 0, BytesUploaded: 13_528_269},
+			{Name: "website", Local: "./dist/", Remote: "/var/www/html/", Strategy: "sync", FilesUploaded: 12, FilesDeleted: 3, FilesSkipped: 1988, BytesUploaded: 4_297_523, Duration: time.Second},
+			{Name: "documentation", Local: "./docs/", Remote: "/var/www/docs/", Strategy: "clean", FilesUploaded: 240, FilesDeleted: 214, FilesSkipped: 0, BytesUploaded: 13_528_269, Duration: 2 * time.Second},
 		},
 	}
-	reportStats(stats, "uploaded", nil)
+	cfg := &config.Config{ConfigPath: ".github/easysftp.yml", KnownHosts: "line"}
+	reportStats(cfg, stats, "uploaded", nil)
 
 	summary, err := os.ReadFile(summaryPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"#### Per-target breakdown",
-		"| Target | Strategy | Uploaded | Deleted | Skipped | Bytes |",
-		"| `./dist/` => `/var/www/html/` | sync | 12 | 3 | 1988 | 4297523 |",
-		"| `./docs/` => `/var/www/docs/` | clean | 240 | 214 | 0 | 13528269 |",
-		"| **Total** | | **252** | **217** | **1988** | **17825792** |",
+		"| Configuration | `.github/easysftp.yml` (version 3) |",
+		"#### Deployments",
+		"| Deployment | Source | Target | Mode | Uploaded | Deleted | Skipped | Bytes | Duration |",
+		"| website | `./dist/` | `/var/www/html/` | sync | 12 | 3 | 1988 | 4297523 | 1s |",
+		"| documentation | `./docs/` | `/var/www/docs/` | clean | 240 | 214 | 0 | 13528269 | 2s |",
+		"| **Total** | | | | **252** | **217** | **1988** | **17825792** | |",
 	} {
 		if !strings.Contains(string(summary), want) {
 			t.Errorf("summary does not contain %q:\n%s", want, summary)
@@ -174,20 +180,46 @@ func TestReportStatsMultiTargetBreakdown(t *testing.T) {
 	}
 }
 
-func TestReportStatsSingleTargetHasNoBreakdown(t *testing.T) {
+func TestReportStatsSingleInlineTargetHasNoBreakdown(t *testing.T) {
 	summaryPath := filepath.Join(t.TempDir(), "summary")
 	t.Setenv("GITHUB_OUTPUT", filepath.Join(t.TempDir(), "output"))
 	t.Setenv("GITHUB_STEP_SUMMARY", summaryPath)
 
-	stats := &uploader.Stats{FilesUploaded: 3, BytesUploaded: 2048, Duration: time.Second}
-	reportStats(stats, "uploaded", nil)
+	stats := &uploader.Stats{
+		FilesUploaded: 3, BytesUploaded: 2048, Duration: time.Second,
+		Targets: []uploader.TargetStats{{Local: "./dist/", Remote: "/www/", Strategy: "overlay", FilesUploaded: 3, BytesUploaded: 2048}},
+	}
+	reportStats(&config.Config{AllowAnyHostKey: true}, stats, "uploaded", nil)
 
 	summary, err := os.ReadFile(summaryPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(summary), "Per-target breakdown") {
-		t.Errorf("expected no per-target breakdown for a single target:\n%s", summary)
+	if strings.Contains(string(summary), "#### Deployments") {
+		t.Errorf("expected no per-deployment breakdown for a single inline target:\n%s", summary)
+	}
+	if !strings.Contains(string(summary), "| Host key | ❌ NOT verified (allow-any-host-key) |") {
+		t.Errorf("expected the unverified host key status in the summary:\n%s", summary)
+	}
+}
+
+func TestReportStatsSingleNamedDeploymentGetsBreakdown(t *testing.T) {
+	summaryPath := filepath.Join(t.TempDir(), "summary")
+	t.Setenv("GITHUB_OUTPUT", filepath.Join(t.TempDir(), "output"))
+	t.Setenv("GITHUB_STEP_SUMMARY", summaryPath)
+
+	stats := &uploader.Stats{
+		FilesUploaded: 3, BytesUploaded: 2048, Duration: time.Second,
+		Targets: []uploader.TargetStats{{Name: "website", Local: "./dist/", Remote: "/www/", Strategy: "sync", FilesUploaded: 3, BytesUploaded: 2048}},
+	}
+	reportStats(&config.Config{ConfigPath: "x.yml", KnownHosts: "line"}, stats, "uploaded", nil)
+
+	summary, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(summary), "| website | `./dist/` | `/www/` | sync | 3 | 0 | 0 | 2048 | 0s |") {
+		t.Errorf("expected the named deployment row in the summary:\n%s", summary)
 	}
 }
 

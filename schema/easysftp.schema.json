@@ -2,25 +2,125 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/eiserv/easySFTP/main/schema/easysftp.schema.json",
   "title": "easySFTP configuration",
-  "description": "Deployment configuration for the easySFTP GitHub Action. Connection settings (server, credentials, host key) are NOT part of this file; keep those in action inputs / secrets.",
+  "description": "Configuration file (version 3) for the easySFTP GitHub Action. Holds every non-secret setting: connection, named deployments, safety limits and advanced tuning. Credentials (password, private keys, passphrases) stay in GitHub Secrets and are passed as action inputs; never put them in this file.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "targets"],
+  "required": ["version", "connection", "deployments"],
   "properties": {
     "version": {
-      "description": "Config format version. Must be 1.",
-      "const": 1
+      "description": "Config format version. Must be 3.",
+      "const": 3
     },
-    "strategy": {
-      "$ref": "#/$defs/strategy",
-      "description": "Default strategy for all targets. Defaults to 'overlay'."
+    "connection": {
+      "description": "Where and as whom to connect. Credentials are NOT part of this file; pass them as the password / private-key / passphrase action inputs.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "username"],
+      "properties": {
+        "host": {
+          "description": "Hostname or IP address of the SFTP server.",
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "description": "SSH port. Defaults to 22.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "username": {
+          "description": "Username used for authentication.",
+          "type": "string",
+          "minLength": 1
+        },
+        "host_key": {
+          "description": "Expected SHA256 fingerprint(s) of the server's host key, one per line (format \"SHA256:...\"). Without host_key or known_hosts, the run fails unless allow_any_host_key is set.",
+          "type": "string"
+        },
+        "known_hosts": {
+          "description": "Expected host key(s) in OpenSSH known_hosts format (verbatim ssh-keyscan output). Alternative to host_key; a key matching either is accepted.",
+          "type": "string"
+        },
+        "allow_any_host_key": {
+          "description": "Explicitly skip host key verification. NOT recommended: allows man-in-the-middle attacks.",
+          "type": "boolean"
+        },
+        "proxy": {
+          "description": "Optional jump host (bastion) through which the SFTP server is reached, like OpenSSH's ProxyJump. Credentials come from the proxy-password / proxy-private-key / proxy-passphrase action inputs.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["host", "username"],
+          "properties": {
+            "host": {
+              "description": "Hostname or IP address of the jump host.",
+              "type": "string",
+              "minLength": 1
+            },
+            "port": {
+              "description": "SSH port of the jump host. Defaults to 22.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "username": {
+              "description": "Username for the jump host.",
+              "type": "string",
+              "minLength": 1
+            },
+            "host_key": {
+              "description": "SHA256 fingerprint(s) of the jump host's key, one per line. Host key verification applies to each hop independently.",
+              "type": "string"
+            },
+            "known_hosts": {
+              "description": "Jump host key(s) in known_hosts format; alternative to host_key.",
+              "type": "string"
+            },
+            "allow_any_host_key": {
+              "description": "Explicitly skip host key verification for the jump host hop. NOT recommended.",
+              "type": "boolean"
+            }
+          }
+        }
+      }
     },
-    "ignore": {
-      "description": "Global gitignore-style exclude patterns applied to every target.",
-      "type": "array",
-      "items": { "type": "string" }
+    "defaults": {
+      "description": "Defaults applied to every deployment unless overridden per deployment.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "$ref": "#/$defs/mode" },
+        "exclude": { "$ref": "#/$defs/exclude" }
+      }
     },
-    "guards": {
+    "deployments": {
+      "description": "Named deployments. Each name appears in logs and the job summary.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "target"],
+        "properties": {
+          "source": {
+            "description": "Local path (file or directory) to upload.",
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "description": "Remote destination path.",
+            "type": "string",
+            "minLength": 1
+          },
+          "mode": { "$ref": "#/$defs/mode" },
+          "exclude": {
+            "description": "Deployment-specific exclude patterns, additive to defaults.exclude.",
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "safety": {
       "description": "Safety limits applied before any deletion.",
       "type": "object",
       "additionalProperties": false,
@@ -32,42 +132,94 @@
         }
       }
     },
-    "targets": {
-      "description": "One or more local => remote deployment targets.",
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["local", "remote"],
-        "properties": {
-          "local": {
-            "description": "Local path (file or directory) to upload.",
-            "type": "string",
-            "minLength": 1
-          },
-          "remote": {
-            "description": "Remote destination path.",
-            "type": "string",
-            "minLength": 1
-          },
-          "strategy": {
-            "$ref": "#/$defs/strategy",
-            "description": "Overrides the top-level strategy for this target."
-          },
-          "ignore": {
-            "description": "Target-specific exclude patterns, additive to the global ones.",
-            "type": "array",
-            "items": { "type": "string" }
-          }
+    "advanced": {
+      "description": "Transfer tuning. The defaults suit most deployments.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "retries": {
+          "description": "Retries per file on transient errors, and the reconnect budget for dropped connections. Defaults to 2; 0 disables retries.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds. Defaults to 30; 0 disables the timeout.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "stall_timeout": {
+          "description": "Abort the run when active remote operations make no progress for this many seconds. Defaults to 0 (off).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "concurrency": {
+          "description": "Number of files uploaded in parallel, or \"auto\" for the built-in default.",
+          "$ref": "#/$defs/autoInt"
+        },
+        "request_concurrency": {
+          "description": "Maximum in-flight SFTP requests per file (pipelining within one file's transfer), or \"auto\" for the built-in default.",
+          "$ref": "#/$defs/autoInt"
+        },
+        "skip_unchanged": {
+          "description": "For overlay deployments, skip uploading a file when the remote file already exists with the same size (coarse; use mode sync for exact content comparison).",
+          "type": "boolean"
+        }
+      }
+    },
+    "permissions": {
+      "description": "Remote permission and timestamp handling. All best-effort: a server that rejects the request produces a warning, not a failure.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "description": "Octal permission (e.g. \"0644\") applied to every uploaded file instead of mirroring the local mode bits.",
+          "type": "string",
+          "pattern": "^0?[0-7]{3}$"
+        },
+        "directories": {
+          "description": "Octal permission (e.g. \"0755\") applied to every remote directory the run creates or touches.",
+          "type": "string",
+          "pattern": "^0?[0-7]{3}$"
+        },
+        "preserve_times": {
+          "description": "Keep each uploaded file's local modification time on the server instead of \"now\".",
+          "type": "boolean"
+        }
+      }
+    },
+    "sync": {
+      "description": "Settings of the sync mode's manifest.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fast_path": {
+          "description": "Reuse a file's manifest hash instead of re-reading it when size and modification time still match (rsync-style quick check; can miss same-size same-second edits).",
+          "type": "boolean"
+        },
+        "manifest": {
+          "description": "File name of the manifest kept in each sync target (default \".easysftp-manifest.json\"). Must be a bare file name, no path.",
+          "type": "string",
+          "minLength": 1
         }
       }
     }
   },
   "$defs": {
-    "strategy": {
+    "mode": {
+      "description": "How the remote target is reconciled: overlay (upload only), sync (manifest-tracked mirror) or clean (wipe, then upload).",
       "type": "string",
       "enum": ["overlay", "sync", "clean"]
+    },
+    "exclude": {
+      "description": "Gitignore-style exclude patterns.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "autoInt": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "const": "auto" }
+      ]
     }
   }
 }

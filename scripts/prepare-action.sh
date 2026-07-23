@@ -6,7 +6,10 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # shellcheck source=scripts/action-lib.sh
 source "$script_dir/action-lib.sh"
 
-mode=$(validate_build_mode "${INPUT_BUILD_MODE:-}")
+if [[ -n "${INPUT_BUILD_MODE:-}" ]]; then
+  easysftp_error "the 'build-mode' input was removed in easySFTP v3; the build mode is now selected automatically from the action ref. See docs/migration-v3.md"
+fi
+
 action_path=${ACTION_PATH:?ACTION_PATH is required}
 action_path=${action_path//\\//}
 while [[ "$action_path" == *'/./'* ]]; do
@@ -26,13 +29,17 @@ else
   binary="$work_dir/easysftp"
 fi
 
+version=$(read_release_version "$action_path/.easysftp-version")
+release_commit=''
+if [[ "${ACTION_REF:-}" =~ ^[0-9a-f]{40}$ ]]; then
+  # Best effort: an unresolvable release commit (network hiccup, unpublished
+  # tag) falls back to a source build of this exact checkout instead of
+  # failing the run or substituting a stale release binary.
+  release_commit=$(resolve_release_commit "$version" 2>/dev/null || true)
+fi
+mode=$(detect_build_mode "${ACTION_REF:-}" "$version" "$release_commit")
+
 if [[ "$mode" == 'prebuilt' ]]; then
-  version=$(read_release_version "$action_path/.easysftp-version")
-  release_commit=''
-  if [[ "${ACTION_REF:-}" =~ ^[0-9a-f]{40}$ ]]; then
-    release_commit=$(resolve_release_commit "$version")
-  fi
-  validate_release_ref "${ACTION_REF:-}" "$version" "$release_commit"
   asset=$(resolve_release_asset "${RUNNER_OS:-}" "${RUNNER_ARCH:-}")
   checksums="$work_dir/checksums.txt"
 
@@ -41,6 +48,8 @@ if [[ "$mode" == 'prebuilt' ]]; then
   verify_release_checksum "$binary" "$checksums" "$asset"
   chmod +x "$binary"
   echo "Using verified easySFTP $version release asset $asset"
+else
+  echo "Ref '${ACTION_REF:-<local>}' is not the $version release; building easySFTP from source"
 fi
 
 {

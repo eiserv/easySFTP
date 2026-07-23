@@ -34,7 +34,7 @@ jobs:
           mkdir -p _site/content
           cp -r site/. _site/
           cp docs/configuration.md docs/strategies.md docs/examples.md \
-             docs/security.md docs/troubleshooting.md _site/content/
+             docs/security.md docs/troubleshooting.md docs/migration-v3.md _site/content/
           cp CONTRIBUTING.md _site/content/contributing.md
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

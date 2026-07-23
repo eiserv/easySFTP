@@ -29,9 +29,16 @@ expect_equal() {
   fi
 }
 
-expect_equal 'prebuilt mode' 'prebuilt' "$(validate_build_mode prebuilt)"
-expect_equal 'source mode' 'source' "$(validate_build_mode source)"
-expect_failure 'invalid build mode' validate_build_mode archive
+expect_equal 'major tag detects prebuilt' 'prebuilt' "$(detect_build_mode v1 v1.2.3)"
+expect_equal 'minor tag detects prebuilt' 'prebuilt' "$(detect_build_mode v1.2 v1.2.3)"
+expect_equal 'exact tag detects prebuilt' 'prebuilt' "$(detect_build_mode v1.2.3 v1.2.3)"
+expect_equal 'branch ref detects source' 'source' "$(detect_build_mode main v1.2.3)"
+expect_equal 'empty ref detects source' 'source' "$(detect_build_mode '' v1.2.3)"
+expect_equal 'mismatched tag detects source' 'source' "$(detect_build_mode v2 v1.2.3)"
+release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+expect_equal 'release commit detects prebuilt' 'prebuilt' "$(detect_build_mode "$release_sha" v1.2.3 "$release_sha")"
+expect_equal 'other commit detects source' 'source' "$(detect_build_mode bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb v1.2.3 "$release_sha")"
+expect_equal 'commit without resolved release detects source' 'source' "$(detect_build_mode "$release_sha" v1.2.3 '')"
 
 expect_equal 'Linux x64 mapping' 'easysftp_linux_x64' "$(resolve_release_asset Linux X64)"
 expect_equal 'Linux arm64 mapping' 'easysftp_linux_arm64' "$(resolve_release_asset Linux ARM64)"
@@ -100,7 +107,6 @@ chmod +x "$tmp/bin/git"
 output_file="$tmp/prebuilt-output"
 PATH="$tmp/bin:$PATH" \
 MOCK_ASSET_DIR="$tmp/assets" \
-INPUT_BUILD_MODE=prebuilt \
 ACTION_PATH="$tmp/action" \
 ACTION_REF="$release_version" \
 RUNNER_OS=Linux \
@@ -123,7 +129,6 @@ if [[ "${RUNNER_OS:-}" == 'Windows' ]] && command -v cygpath >/dev/null 2>&1; th
   source_github_output=$(cygpath -w "$source_github_output")
   source_runner_os=Windows
 fi
-INPUT_BUILD_MODE=source \
 ACTION_PATH="$source_action_path" \
 ACTION_REF=main \
 RUNNER_OS="$source_runner_os" \
@@ -133,14 +138,21 @@ GITHUB_OUTPUT="$source_github_output" \
   bash "$repo_root/scripts/prepare-action.sh"
 expect_equal 'source preparation' 'source' "$(sed -n 's/^build-mode=//p' "$source_output")"
 
+# The build-mode input became a tombstone in v3: setting it must fail with a
+# migration hint instead of being honored or ignored.
+expect_failure 'removed build-mode input' env \
+  INPUT_BUILD_MODE=source \
+  ACTION_PATH="$source_action_path" \
+  ACTION_REF=main \
+  RUNNER_OS="$source_runner_os" \
+  RUNNER_ARCH=X64 \
+  RUNNER_TEMP="$source_runner_temp" \
+  GITHUB_OUTPUT="$tmp/tombstone-output" \
+  bash "$repo_root/scripts/prepare-action.sh"
+
 printf '%s\n' '# x-release-please-start-version' '1.2.3' '# x-release-please-end' > "$tmp/bad-version"
 expect_failure 'invalid version file' read_release_version "$tmp/bad-version"
-expect_failure 'development ref in prebuilt mode' validate_release_ref main v1.2.3
-expect_failure 'mismatched rolling tag' validate_release_ref v2 v1.2.3
-release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 expect_equal 'annotated release commit resolution' "$release_sha" "$(PATH="$tmp/bin:$PATH" resolve_release_commit v1.2.3)"
-expect_equal 'matching release commit ref' '' "$(validate_release_ref "$release_sha" v1.2.3 "$release_sha")"
-expect_failure 'unpublished commit ref' validate_release_ref bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb v1.2.3 "$release_sha"
 
 : > "$tmp/missing-checksum"
 expect_failure 'missing checksum entry' verify_release_checksum "$tmp/assets/easysftp_linux_x64" "$tmp/missing-checksum" 'easysftp_linux_x64'

@@ -48,6 +48,9 @@ func baseConfig(srv *testServer) *config.Config {
 		SftpRequestConcurrency: 16,
 		Retries:                0,
 		Timeout:                10 * time.Second,
+		// The in-process test server's host key is not pinned; opt out of
+		// verification like a directly constructed config must in v3.
+		AllowAnyHostKey: true,
 	}
 }
 
@@ -184,20 +187,20 @@ func TestMultiTargetStatsBreakdown(t *testing.T) {
 	}
 }
 
-func TestSingleTargetStatsHaveNoBreakdown(t *testing.T) {
+func TestSingleTargetStatsAreRecorded(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
 	writeTree(t, local, map[string]string{"index.html": "hi"})
 
 	cfg := baseConfig(srv)
-	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+	cfg.Uploads = []config.UploadPair{{Name: "website", Local: local, Remote: "/www"}}
 
 	stats, err := Run(context.Background(), cfg, testLogger{t})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Targets != nil {
-		t.Errorf("expected no per-target breakdown for a single target, got %+v", stats.Targets)
+	if len(stats.Targets) != 1 || stats.Targets[0].Name != "website" || stats.Targets[0].FilesUploaded != 1 {
+		t.Errorf("expected one named target entry with 1 upload, got %+v", stats.Targets)
 	}
 }
 
@@ -380,6 +383,53 @@ func TestHostKeyFingerprint(t *testing.T) {
 		_, err := Run(context.Background(), cfg, testLogger{t})
 		if err == nil || !strings.Contains(err.Error(), "SHA256") {
 			t.Fatalf("expected SHA256 format error, got %v", err)
+		}
+	})
+}
+
+func TestUnverifiedHostKeyRequiresOptIn(t *testing.T) {
+	srv := startTestServer(t)
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "x"})
+
+	t.Run("no pins and no opt-in fails", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		cfg.AllowAnyHostKey = false
+		cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+		_, err := Run(context.Background(), cfg, testLogger{t})
+		if err == nil || !strings.Contains(err.Error(), "allow-any-host-key") {
+			t.Fatalf("expected an unverified-host-key error naming the opt-in, got %v", err)
+		}
+	})
+
+	t.Run("opt-in connects but warns", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+		log := &recordingLogger{testLogger: testLogger{t}}
+		if _, err := Run(context.Background(), cfg, log); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		log.mu.Lock()
+		for _, w := range log.warnings {
+			if strings.Contains(w, "allow-any-host-key") {
+				found = true
+			}
+		}
+		log.mu.Unlock()
+		if !found {
+			t.Errorf("expected an allow-any-host-key warning, got %v", log.warnings)
+		}
+	})
+
+	t.Run("config-mode error names the config options", func(t *testing.T) {
+		cfg := baseConfig(srv)
+		cfg.AllowAnyHostKey = false
+		cfg.ConfigPath = ".github/easysftp.yml"
+		cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+		_, err := Run(context.Background(), cfg, testLogger{t})
+		if err == nil || !strings.Contains(err.Error(), "connection.allow_any_host_key") {
+			t.Fatalf("expected the config-mode option name in the error, got %v", err)
 		}
 	})
 }
@@ -785,7 +835,7 @@ func TestOverlaySkipUnchangedDryRun(t *testing.T) {
 	}
 }
 
-// skip-unchanged only applies to overlay; other strategies warn and ignore it.
+// skip_unchanged only applies to overlay; other modes warn and ignore it.
 func TestSkipUnchangedWarnsOnNonOverlay(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
@@ -801,12 +851,12 @@ func TestSkipUnchangedWarnsOnNonOverlay(t *testing.T) {
 	}
 	found := false
 	for _, w := range log.warnings {
-		if strings.Contains(w, "skip-unchanged") {
+		if strings.Contains(w, "skip_unchanged only applies to the overlay mode") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected a warning that skip-unchanged is ignored for sync, got %v", log.warnings)
+		t.Errorf("expected a warning that skip_unchanged is ignored for sync, got %v", log.warnings)
 	}
 }
 
