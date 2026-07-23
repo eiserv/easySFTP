@@ -193,9 +193,22 @@ func mergedManifest(old manifest, upload []fileItem, completed []bool, deleted [
 // is logged, not returned. It goes through sess.do so a run that failed to a
 // connection drop still records its progress on the redialed connection
 // (budget permitting).
+//
+// When the failure was a stall-timeout, sess.do would normally refuse to
+// redial (see its watch.fired short-circuit): redialing a server that stalled
+// on large transfers usually just stalls again. But the manifest is a single
+// small round-trip that will likely go through on a fresh connection even so,
+// and recording progress is exactly what saves a large deploy from
+// re-uploading everything on the retry. The watchdog has already fired (its
+// monitor goroutine has exited), so it protects nothing here anyway; dropping
+// it lets do() spend one reconnect from the shared budget for this write, then
+// the caller fails the run as before. See issue #115.
 func writeRecoveryManifest(ctx context.Context, cfg *config.Config, sess *session, watch *stallWatchdog, base string, m manifest, log Logger) {
 	if cfg.DryRun {
 		return
+	}
+	if watch != nil && watch.fired.Load() {
+		watch = nil
 	}
 	err := sess.do(ctx, watch, func(client *sftp.Client) error {
 		return writeManifest(client, base, cfg.SyncManifestName(), m)

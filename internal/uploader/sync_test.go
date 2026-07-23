@@ -589,6 +589,73 @@ func TestSyncRecoveryManifestWriteFailureIsNonFatal(t *testing.T) {
 	}
 }
 
+// A sync whose upload is killed by the stall-timeout watchdog must still
+// record its progress in the recovery manifest: sess.do refuses to redial a
+// stalled server, but the recovery write is a single small round-trip that is
+// let through on one fresh connection so the retry resumes instead of
+// re-uploading everything. See issue #115.
+func TestSyncRecoveryManifestWrittenAfterStall(t *testing.T) {
+	// The server stalls each connection after 256 KiB. A fresh connection
+	// carrying only the handshake plus the tiny manifest write stays well
+	// under that, so the recovery write goes through even though the big
+	// upload starved.
+	srv := startTestServer(t, withStallAfter(256*1024))
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "1", "b.txt": "1"})
+
+	cfg := syncConfig(srv, local)
+	cfg.Concurrency = 1            // a.txt completes before b.txt is attempted
+	cfg.SftpRequestConcurrency = 1 // makes the stall visible to the watchdog fast
+	cfg.StallTimeout = 1 * time.Second
+	cfg.Retries = 1 // one reconnect for the recovery write
+
+	// Seed the manifest with a healthy first sync (both files tiny).
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+
+	// a.txt changes small; b.txt grows past the stall point.
+	writeTree(t, local, map[string]string{"a.txt": "2", "b.txt": strings.Repeat("x", 2<<20)})
+	log := &recordingLogger{testLogger: testLogger{t}}
+	_, err := Run(context.Background(), cfg, log)
+	if err == nil || !strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("expected a transfer-stalled error, got %v", err)
+	}
+
+	// The recovery manifest was written despite the stall: a.txt carries its
+	// new hash, b.txt keeps the old one. Without the fix the write is refused
+	// and the manifest still shows a.txt's original hash.
+	hashNew, err := hashFile(filepath.Join(local, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := readRemoteManifest(t, srv)
+	if got := m.Files["a.txt"].Hash; got != hashNew {
+		t.Fatalf("recovery manifest a.txt hash = %q, want the new upload's %q (recovery write did not run after the stall)", got, hashNew)
+	}
+	found := false
+	for _, msg := range log.infos {
+		if strings.Contains(msg, "recorded partial progress") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an info that partial progress was recorded, got %v", log.infos)
+	}
+
+	// Shrink b.txt again so a resume run runs clean: a.txt is now unchanged
+	// (skipped), only b.txt re-uploads.
+	writeTree(t, local, map[string]string{"b.txt": "3"})
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FilesUploaded != 1 || stats.FilesSkipped != 1 {
+		t.Fatalf("resume run: up=%d skip=%d, want 1/1 (only b.txt re-uploaded)", stats.FilesUploaded, stats.FilesSkipped)
+	}
+}
+
 func TestSyncDryRunChangesNothing(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
