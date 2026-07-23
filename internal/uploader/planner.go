@@ -48,25 +48,37 @@ func hasNegation(lines []string) bool {
 	return false
 }
 
+// planOptions carries the ignore/walk-shaping inputs buildPlan needs beyond
+// the pair and strategy it is planning: the matcher and its two derived knobs
+// (pruneDirs, verbose) plus the effective manifest name. Grouping them keeps
+// buildPlan's signature short and, in particular, takes the easy-to-transpose
+// bool and nil-able Logger out of the positional argument list (they are named
+// fields here instead).
+//
+//   - pruneDirs: when set, a directory that itself matches the ignore patterns
+//     is skipped entirely instead of descended into, so an ignored
+//     node_modules/ with hundreds of thousands of entries costs one match
+//     instead of a full walk. Callers must clear it when the patterns contain
+//     "!" re-includes, which could re-include files below an otherwise ignored
+//     directory.
+//   - verbose: when non-nil, gets one line per ignore decision (which pattern
+//     excluded which file or directory), the detail needed to debug patterns.
+//   - manifestName: the effective sync manifest file name; a local file by that
+//     name is never uploaded, so a target's own manifest can't be clobbered.
+type planOptions struct {
+	matcher      *ignore.GitIgnore
+	pruneDirs    bool
+	verbose      Logger
+	manifestName string
+}
+
 // buildPlan walks the local side of an upload pair and computes the remote
 // file and directory layout, honoring the ignore patterns. It does not touch
 // the network, so config/path errors surface before a connection is made.
 // Content hashing for the sync strategy happens later, once connected: see
 // executeSync.
-//
-// With pruneDirs set, a directory that itself matches the ignore patterns is
-// skipped entirely instead of descended into, so an ignored node_modules/ with
-// hundreds of thousands of entries costs one match instead of a full walk.
-// Callers must clear it when the patterns contain "!" re-includes, which could
-// re-include files below an otherwise ignored directory.
-//
-// verbose, when non-nil, gets one line per ignore decision (which pattern
-// excluded which file or directory), the level of detail needed to debug
-// ignore patterns.
-//
-// manifestName is the effective sync manifest file name; a local file by that
-// name is never uploaded, so a target's own manifest can't be clobbered.
-func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore.GitIgnore, pruneDirs bool, verbose Logger, manifestName string) (plan, error) {
+func buildPlan(pair config.UploadPair, strategy config.Strategy, opts planOptions) (plan, error) {
+	matcher, verbose := opts.matcher, opts.verbose
 	p := plan{pair: pair, strategy: strategy}
 	remoteBase := normalizeRemote(pair.Remote)
 
@@ -117,7 +129,7 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
 			// The trailing slash lets directory-only patterns ("dist/") match.
-			if pruneDirs && rel != "." {
+			if opts.pruneDirs && rel != "." {
 				if matched, pat := matcher.MatchesPathHow(rel + "/"); matched {
 					if verbose != nil {
 						verbose.Infof("skip %s/ and everything below it (ignore pattern %q)", rel, pat.Line)
@@ -127,7 +139,7 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, matcher *ignore
 			}
 			return nil
 		}
-		if rel == manifestName {
+		if rel == opts.manifestName {
 			return nil
 		}
 		if matched, pat := matcher.MatchesPathHow(rel); matched {

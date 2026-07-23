@@ -78,7 +78,12 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		if cfg.Verbose() {
 			verbose = log
 		}
-		p, err := buildPlan(pair, st, matcher, !hasNegation(lines), verbose, cfg.SyncManifestName())
+		p, err := buildPlan(pair, st, planOptions{
+			matcher:      matcher,
+			pruneDirs:    !hasNegation(lines),
+			verbose:      verbose,
+			manifestName: cfg.SyncManifestName(),
+		})
 		if err != nil {
 			return stats, err
 		}
