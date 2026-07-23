@@ -5,6 +5,17 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0](https://github.com/eiserv/easySFTP/compare/v2.2.2...v3.0.0) (2026-07-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* v3 configuration model (inline vs config file, no mixed mode) ([#124](https://github.com/eiserv/easySFTP/issues/124))
+
+### Features
+
+* v3 configuration model (inline vs config file, no mixed mode) ([#124](https://github.com/eiserv/easySFTP/issues/124)) ([2887530](https://github.com/eiserv/easySFTP/commit/2887530782498233207a4d54ec445ecc75b86e37)), closes [#123](https://github.com/eiserv/easySFTP/issues/123)
+
 ## [2.2.2](https://github.com/eiserv/easySFTP/compare/v2.2.1...v2.2.2) (2026-07-23)
 
 
