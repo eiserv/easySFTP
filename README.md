@@ -180,7 +180,7 @@ deployments:
     mode: clean
 ```
 
-The config file supports named deployments, per-target modes and excludes,
+The config file supports named deployments, per-deployment modes and excludes,
 proxy/bastion connections, delete guards, permissions, retries/timeouts,
 performance tuning and sync-manifest settings. A JSON Schema for editor
 autocomplete/validation is bundled. See

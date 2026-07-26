@@ -40,13 +40,13 @@ type Stats struct {
 	BytesUploaded int64
 	Duration      time.Duration
 
-	// Targets breaks the totals above down per deployment, in plan order.
-	Targets []TargetStats
+	// Deployments breaks the totals above down per deployment, in plan order.
+	Deployments []DeploymentStats
 }
 
-// TargetStats summarizes what a run did (or would do) for a single
+// DeploymentStats summarizes what a run did (or would do) for a single
 // deployment, so the job summary can break a deploy down per deployment.
-type TargetStats struct {
+type DeploymentStats struct {
 	Name          string // deployment name from the config file; "" inline
 	Local         string
 	Remote        string
@@ -117,10 +117,10 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		planStart := time.Now()
 		err := executePlan(ctx, cfg, sess, p, stats, watch, log)
 		// Recorded from the before/after delta (not threaded through
-		// executePlan) so a target's partial progress on failure is
+		// executePlan) so a deployment's partial progress on failure is
 		// still captured, matching the totals' own partial-progress
 		// behavior.
-		ts := TargetStats{
+		ds := DeploymentStats{
 			Name:          p.pair.Name,
 			Local:         p.pair.Local,
 			Remote:        p.pair.Remote,
@@ -131,9 +131,9 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 			BytesUploaded: stats.BytesUploaded - before.BytesUploaded,
 			Duration:      time.Since(planStart),
 		}
-		stats.Targets = append(stats.Targets, ts)
+		stats.Deployments = append(stats.Deployments, ds)
 		if err == nil {
-			logDeploymentSummary(cfg, p.pair, ts, log)
+			logDeploymentSummary(cfg, p.pair, ds, log)
 		}
 		if err != nil {
 			if watch != nil && watch.fired.Load() {
@@ -148,15 +148,15 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 
 // logDeploymentSummary logs the compact one-line result of a completed
 // deployment, the core of the default (non-verbose) log output.
-func logDeploymentSummary(cfg *config.Config, pair config.UploadPair, ts TargetStats, log Logger) {
+func logDeploymentSummary(cfg *config.Config, pair config.UploadPair, ds DeploymentStats, log Logger) {
 	if cfg.DryRun {
 		log.Infof("deployment %s: %d file(s) to upload (%s), %d to delete, %d unchanged (dry-run)",
-			pair.Label(), ts.FilesUploaded, HumanSize(ts.BytesUploaded), ts.FilesDeleted, ts.FilesSkipped)
+			pair.Label(), ds.FilesUploaded, HumanSize(ds.BytesUploaded), ds.FilesDeleted, ds.FilesSkipped)
 		return
 	}
 	log.Infof("deployment %s: uploaded %d file(s) (%s), deleted %d, skipped %d unchanged, took %s",
-		pair.Label(), ts.FilesUploaded, HumanSize(ts.BytesUploaded), ts.FilesDeleted, ts.FilesSkipped,
-		ts.Duration.Round(time.Millisecond))
+		pair.Label(), ds.FilesUploaded, HumanSize(ds.BytesUploaded), ds.FilesDeleted, ds.FilesSkipped,
+		ds.Duration.Round(time.Millisecond))
 }
 
 // executePlan performs (or previews) one plan according to its strategy.

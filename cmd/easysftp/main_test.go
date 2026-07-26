@@ -164,7 +164,7 @@ func TestReportStatsOnFailure(t *testing.T) {
 	}
 }
 
-func TestReportStatsMultiTargetBreakdown(t *testing.T) {
+func TestReportStatsMultiDeploymentBreakdown(t *testing.T) {
 	summaryPath := filepath.Join(t.TempDir(), "summary")
 	t.Setenv("GITHUB_OUTPUT", filepath.Join(t.TempDir(), "output"))
 	t.Setenv("GITHUB_STEP_SUMMARY", summaryPath)
@@ -175,7 +175,7 @@ func TestReportStatsMultiTargetBreakdown(t *testing.T) {
 		FilesSkipped:  1988,
 		BytesUploaded: 17_825_792,
 		Duration:      2*time.Minute + 13*time.Second,
-		Targets: []uploader.TargetStats{
+		Deployments: []uploader.DeploymentStats{
 			{Name: "website", Local: "./dist/", Remote: "/var/www/html/", Strategy: "sync", FilesUploaded: 12, FilesDeleted: 3, FilesSkipped: 1988, BytesUploaded: 4_297_523, Duration: time.Second},
 			{Name: "documentation", Local: "./docs/", Remote: "/var/www/docs/", Strategy: "clean", FilesUploaded: 240, FilesDeleted: 214, FilesSkipped: 0, BytesUploaded: 13_528_269, Duration: 2 * time.Second},
 		},
@@ -201,14 +201,14 @@ func TestReportStatsMultiTargetBreakdown(t *testing.T) {
 	}
 }
 
-func TestReportStatsSingleInlineTargetHasNoBreakdown(t *testing.T) {
+func TestReportStatsSingleInlineDeploymentHasNoBreakdown(t *testing.T) {
 	summaryPath := filepath.Join(t.TempDir(), "summary")
 	t.Setenv("GITHUB_OUTPUT", filepath.Join(t.TempDir(), "output"))
 	t.Setenv("GITHUB_STEP_SUMMARY", summaryPath)
 
 	stats := &uploader.Stats{
 		FilesUploaded: 3, BytesUploaded: 2048, Duration: time.Second,
-		Targets: []uploader.TargetStats{{Local: "./dist/", Remote: "/www/", Strategy: "overlay", FilesUploaded: 3, BytesUploaded: 2048}},
+		Deployments: []uploader.DeploymentStats{{Local: "./dist/", Remote: "/www/", Strategy: "overlay", FilesUploaded: 3, BytesUploaded: 2048}},
 	}
 	reportStats(&config.Config{AllowAnyHostKey: true}, stats, "uploaded", nil)
 
@@ -217,7 +217,7 @@ func TestReportStatsSingleInlineTargetHasNoBreakdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(summary), "#### Deployments") {
-		t.Errorf("expected no per-deployment breakdown for a single inline target:\n%s", summary)
+		t.Errorf("expected no per-deployment breakdown for a single inline deployment:\n%s", summary)
 	}
 	if !strings.Contains(string(summary), "| Host key | ❌ NOT verified (allow-any-host-key) |") {
 		t.Errorf("expected the unverified host key status in the summary:\n%s", summary)
@@ -231,7 +231,7 @@ func TestReportStatsSingleNamedDeploymentGetsBreakdown(t *testing.T) {
 
 	stats := &uploader.Stats{
 		FilesUploaded: 3, BytesUploaded: 2048, Duration: time.Second,
-		Targets: []uploader.TargetStats{{Name: "website", Local: "./dist/", Remote: "/www/", Strategy: "sync", FilesUploaded: 3, BytesUploaded: 2048}},
+		Deployments: []uploader.DeploymentStats{{Name: "website", Local: "./dist/", Remote: "/www/", Strategy: "sync", FilesUploaded: 3, BytesUploaded: 2048}},
 	}
 	reportStats(&config.Config{ConfigPath: "x.yml", KnownHosts: "line"}, stats, "uploaded", nil)
 

@@ -164,14 +164,14 @@ func reportStats(cfg *config.Config, stats *uploader.Stats, mode string, runErr 
 	summary := fmt.Sprintf(
 		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Host key | %s |\n| Configuration | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %s |\n| Duration | %s |\n",
 		status, hostKeyStatus(cfg), configSource, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, humanBytes(stats.BytesUploaded), stats.Duration.Round(time.Millisecond))
-	summary += deploymentBreakdown(stats.Targets)
+	summary += deploymentBreakdown(stats.Deployments)
 	gha.AppendSummary(summary)
 }
 
 // deploymentBreakdown renders a per-deployment table, or "" when there is
 // only one unnamed deployment (its row would just repeat the totals above).
-func deploymentBreakdown(targets []uploader.TargetStats) string {
-	if len(targets) < 2 && (len(targets) == 0 || targets[0].Name == "") {
+func deploymentBreakdown(deployments []uploader.DeploymentStats) string {
+	if len(deployments) < 2 && (len(deployments) == 0 || deployments[0].Name == "") {
 		return ""
 	}
 
@@ -183,20 +183,20 @@ func deploymentBreakdown(targets []uploader.TargetStats) string {
 
 	var totalUploaded, totalDeleted, totalSkipped int
 	var totalBytes int64
-	for _, t := range targets {
-		name := t.Name
+	for _, d := range deployments {
+		name := d.Name
 		if name == "" {
 			name = "(inline)"
 		}
 		fmt.Fprintf(&b, "| %s | `%s` | `%s` | %s | %d | %d | %d | %s | %s |\n",
-			name, t.Local, t.Remote, t.Strategy, t.FilesUploaded, t.FilesDeleted, t.FilesSkipped,
-			uploader.HumanSize(t.BytesUploaded), t.Duration.Round(time.Millisecond))
-		totalUploaded += t.FilesUploaded
-		totalDeleted += t.FilesDeleted
-		totalSkipped += t.FilesSkipped
-		totalBytes += t.BytesUploaded
+			name, d.Local, d.Remote, d.Strategy, d.FilesUploaded, d.FilesDeleted, d.FilesSkipped,
+			uploader.HumanSize(d.BytesUploaded), d.Duration.Round(time.Millisecond))
+		totalUploaded += d.FilesUploaded
+		totalDeleted += d.FilesDeleted
+		totalSkipped += d.FilesSkipped
+		totalBytes += d.BytesUploaded
 	}
-	if len(targets) > 1 {
+	if len(deployments) > 1 {
 		fmt.Fprintf(&b, "| **Total** | | | | **%d** | **%d** | **%d** | **%s** | |\n",
 			totalUploaded, totalDeleted, totalSkipped, uploader.HumanSize(totalBytes))
 	}

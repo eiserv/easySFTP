@@ -136,7 +136,7 @@ in the meantime and shifted its plan position.
 ### Ignored files are uploaded anyway / patterns don't match
 
 - Patterns match against the path **relative to the local root of each
-  target**, not the repository root.
+  deployment**, not the repository root.
 - Directory patterns need a trailing slash (`node_modules/`), just like
   gitignore.
 - Test your patterns cheaply with `dry-run: true`.
@@ -147,8 +147,8 @@ Symlinks, sockets and other non-regular files are skipped by design. SFTP
 uploads regular file content. If your build output contains symlinks (e.g.
 pnpm's `node_modules`), upload a bundled/dereferenced build instead.
 
-When a target has any non-regular files, the log shows one aggregated
-warning per target (not one per file), e.g.:
+When a deployment has any non-regular files, the log shows one aggregated
+warning per deployment (not one per file), e.g.:
 
 ```
 ::warning::skipped 37 non-regular file(s) (symlinks, sockets, …) under ./dist/: SFTP uploads regular files only
