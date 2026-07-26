@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest a way to make SFTP deploys more usable, configurable or robust
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        easySFTP stays in the SFTP-deploy niche: connect, plan, upload,
+        optionally delete/sync. Build steps, other protocols and general CI
+        orchestration are out of scope by design.
+
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Use case
+      description: >-
+        What are you trying to do, and what stops you today? Describe the
+        problem before the solution, it often has a simpler answer than the
+        one you had in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >-
+        What the input, config-file field or behavior would look like. A YAML
+        snippet of how you would use it is ideal.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Workarounds you tried, or why an existing option does not fit.
+    validations:
+      required: false

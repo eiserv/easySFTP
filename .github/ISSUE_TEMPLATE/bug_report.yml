@@ -1,0 +1,87 @@
+name: Bug report
+description: Something went wrong during a deploy
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Please check
+        [docs/troubleshooting.md](https://github.com/eiserv/easySFTP/blob/main/docs/troubleshooting.md)
+        first, it covers the most common failures (host key mismatch,
+        permissions, ignored files, chrooted paths).
+
+        **Never paste secrets.** Redact hosts, usernames, keys and passwords.
+
+  - type: input
+    id: version
+    attributes:
+      label: easySFTP version
+      description: The ref you use in `uses:`, e.g. `v3`, `v3.2.0` or a commit SHA.
+      placeholder: v3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runner
+    attributes:
+      label: Runner OS
+      options:
+        - ubuntu-latest
+        - windows-latest
+        - macos-latest
+        - self-hosted
+        - other (say which below)
+    validations:
+      required: true
+
+  - type: input
+    id: server
+    attributes:
+      label: SFTP server
+      description: >-
+        Software and/or provider, if you know it (OpenSSH, ProFTPD, cPanel,
+        Hetzner Storage Box, Synology, ...). Many quirks are server-specific.
+      placeholder: OpenSSH 9.2 on Debian / shared hosting at ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow step
+      description: >-
+        The `uses:`/`with:` block (or your config file), secrets redacted. This
+        is rendered as YAML, no backticks needed.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs. actual
+      description: What you expected to happen, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: >-
+        The relevant part of the job log, secrets redacted. For planning
+        problems (wrong files, wrong paths, unexpected deletes), a re-run with
+        `dry-run: true` is usually the most useful log. For more detail, set
+        `log-level: debug`, or enable runner debug logging by adding an
+        `ACTIONS_STEP_DEBUG` repository secret set to `true`.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Other context, workarounds you tried, when it last worked.
+    validations:
+      required: false

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / help with a deploy
+    url: https://github.com/eiserv/easySFTP/discussions/categories/q-a
+    about: Not sure whether it is a bug? Ask in Q&A.
+  - name: Troubleshooting guide
+    url: https://github.com/eiserv/easySFTP/blob/main/docs/troubleshooting.md
+    about: Host key mismatches, permissions, ignored files, chrooted paths.
+  - name: Report a security vulnerability
+    url: https://github.com/eiserv/easySFTP/security/policy
+    about: Please do not open a public issue for security problems.
