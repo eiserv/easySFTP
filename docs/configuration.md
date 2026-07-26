@@ -211,13 +211,23 @@ sync:
 
 | Field | Default | Description |
 |---|---|---|
-| `files` | mirror local | Octal permission (e.g. `"0644"`) for every uploaded file. |
+| `files` | mirror local | Octal permission (e.g. `"0644"`) for every uploaded file. On Windows runners there are no local bits to mirror; see the note below. |
 | `directories` | server umask | Octal permission (e.g. `"0755"`) for every remote directory the run creates or touches. |
 | `preserve_times` | `false` | Keep each uploaded file's local modification time on the server. |
 
 All three are best-effort: a server that rejects the `SETSTAT` request
 produces one warning per deployment (not one per file, and not a failure), so
 a multi-deployment run shows which deployments are affected.
+
+> **Windows runners:** Windows has no POSIX permission bits, so "mirror local"
+> has nothing to mirror. Go reports `0666` for every writable file and `0444`
+> for read-only ones (and loses the executable bit), which is what the run
+> then requests on the server. The same deploy from `windows-latest` therefore
+> uploads world-writable `666` files where `ubuntu-latest` would upload `644`,
+> which some web servers reject and security scans flag. Set `files: "0644"`
+> (and `directories: "0755"`) explicitly when you deploy from a Windows
+> runner. Both live in the config file, so a Windows deploy that needs them
+> uses `config:` rather than the inline inputs.
 
 #### `sync`
 

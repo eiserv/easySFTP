@@ -110,6 +110,12 @@ produce directories the web server can't read. Set `permissions.directories`
 permission, e.g. `directories: "0755"` and `files: "0644"`. Both are
 best-effort; see [configuration.md](configuration.md#permissions).
 
+Deploying from a **Windows runner** makes this more likely: Windows has no
+POSIX permission bits, so the mirrored local mode is `0666` for every writable
+file (`0444` for read-only ones), and your files land world-writable. Setting
+`permissions.files` explicitly is the fix, and is worth doing even when the
+deploy appears to work.
+
 ### `replacing "<path>": ...` or leftover `.easysftp-tmp` files
 
 easySFTP uploads to a temporary sibling file (named `<path>.easysftp-tmp.<n>`)
