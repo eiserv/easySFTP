@@ -5,6 +5,13 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0](https://github.com/eiserv/easySFTP/compare/v3.1.0...v3.2.0) (2026-07-26)
+
+
+### Features
+
+* settable file-mode, dir-mode and preserve-times inline ([#136](https://github.com/eiserv/easySFTP/issues/136)) ([5187a44](https://github.com/eiserv/easySFTP/commit/5187a44dba5627f8ee2ba27cc918258d636e642c)), closes [#133](https://github.com/eiserv/easySFTP/issues/133)
+
 ## [3.1.0](https://github.com/eiserv/easySFTP/compare/v3.0.0...v3.1.0) (2026-07-26)
 
 
