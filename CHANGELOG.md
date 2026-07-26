@@ -5,6 +5,26 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0](https://github.com/eiserv/easySFTP/compare/v3.0.0...v3.1.0) (2026-07-26)
+
+
+### Features
+
+* human-readable sizes in the job summary and final log line ([#129](https://github.com/eiserv/easySFTP/issues/129)) ([f1b62af](https://github.com/eiserv/easySFTP/commit/f1b62af8c1c31f26f72d527d432145473770ab66)), closes [#16](https://github.com/eiserv/easySFTP/issues/16)
+
+
+### Bug Fixes
+
+* scope SETSTAT warn-once messages to the deployment, not the run ([#128](https://github.com/eiserv/easySFTP/issues/128)) ([96e0b0e](https://github.com/eiserv/easySFTP/commit/96e0b0e362224e7fb24a3a79c2975bdbc0dd902c)), closes [#121](https://github.com/eiserv/easySFTP/issues/121)
+
+
+### Documentation
+
+* bump actions/checkout to v7 in examples ([#127](https://github.com/eiserv/easySFTP/issues/127)) ([e8f82d2](https://github.com/eiserv/easySFTP/commit/e8f82d287e170949a1e56fa7f73d740d9b16870b))
+* note that Windows runners have no local permission bits to mirror ([#132](https://github.com/eiserv/easySFTP/issues/132)) ([5c7c602](https://github.com/eiserv/easySFTP/commit/5c7c60249cea003f5f97411ba540e2ace8ec9b2d)), closes [#109](https://github.com/eiserv/easySFTP/issues/109)
+* refresh CLAUDE.md for the v3 configuration model ([#135](https://github.com/eiserv/easySFTP/issues/135)) ([013b737](https://github.com/eiserv/easySFTP/commit/013b7378d6e8f69742c8e4f544286881438bf89f))
+* Revise CHANGELOG for v3 configuration updates ([cae9255](https://github.com/eiserv/easySFTP/commit/cae92554131f388530bdf6c1df079e9893fbe898))
+
 ## [3.0.0](https://github.com/eiserv/easySFTP/compare/v2.2.2...v3.0.0) (2026-07-23)
 
 
