@@ -139,6 +139,7 @@ jobs:
           source: ./selftest-site/
           target: /upload/
           exclude: "*.log"
+          file-mode: "0640"
 
       - name: Verify upload
         run: |
@@ -146,6 +147,11 @@ jobs:
           docker exec sftp test -f /home/demo/upload/assets/style.css
           if docker exec sftp test -e /home/demo/upload/debug.log; then
             echo "::error::ignored file was uploaded"
+            exit 1
+          fi
+          mode=$(docker exec sftp stat -c '%a' /home/demo/upload/index.html)
+          if [ "$mode" != "640" ]; then
+            echo "::error::file-mode input was not applied (got $mode, want 640)"
             exit 1
           fi
           [ "${{ steps.upload.outputs.files-uploaded }}" = "2" ]

@@ -56,8 +56,12 @@ non-secret setting, including the connection. Only credentials, `dry-run` and
   exactly one deployment.
 - All advanced/tuning inputs (`concurrency`, `retries`, `timeout`,
   `stall-timeout`, `sftp-request-concurrency`, `sync-fast-path`,
-  `skip-unchanged`, `manifest-name`, `dir-mode`, `file-mode`,
-  `preserve-times`, `max-deletes`) moved into the config file.
+  `skip-unchanged`, `manifest-name`, `max-deletes`) moved into the config
+  file.
+- `dir-mode`, `file-mode` and `preserve-times` are unchanged inline inputs
+  (they were briefly config-file-only in v3.0 and v3.1); in config mode they
+  are `permissions.directories`, `permissions.files` and
+  `permissions.preserve_times`.
 - All proxy/bastion connection inputs moved into the config file
   (`connection.proxy`); only the proxy credentials remain inputs.
 - The config file format changed: `version: 3`, connection settings live in
@@ -101,9 +105,9 @@ reconnects, outputs, and the job summary outputs' names.
 | `skip-unchanged` | `advanced.skip_unchanged` in the config file |
 | `sync-fast-path` | `sync.fast_path` in the config file |
 | `manifest-name` | `sync.manifest` in the config file |
-| `dir-mode` | `permissions.directories` in the config file |
-| `file-mode` | `permissions.files` in the config file |
-| `preserve-times` | `permissions.preserve_times` in the config file |
+| `dir-mode` | unchanged inline; `permissions.directories` in a config file |
+| `file-mode` | unchanged inline; `permissions.files` in a config file |
+| `preserve-times` | unchanged inline; `permissions.preserve_times` in a config file |
 | `proxy-server` | `connection.proxy.host` in the config file |
 | `proxy-port` | `connection.proxy.port` in the config file |
 | `proxy-username` | `connection.proxy.username` in the config file |
@@ -244,9 +248,6 @@ Advanced inputs moved into structured config sections. A v2 step like:
     stall-timeout: 120
     concurrency: 8
     sftp-request-concurrency: 8
-    dir-mode: "755"
-    file-mode: "644"
-    preserve-times: "true"
     manifest-name: .deploy-manifest.json
     sync-fast-path: "true"
     max-deletes: 500
@@ -261,10 +262,6 @@ advanced:
   stall_timeout: 120
   concurrency: 8
   request_concurrency: 8
-permissions:
-  directories: "0755"
-  files: "0644"
-  preserve_times: true
 sync:
   manifest: .deploy-manifest.json
   fast_path: true
@@ -274,7 +271,9 @@ safety:
 
 If you tuned these in a single-target v2 workflow, you now need a (small)
 config file; the automatic defaults cover the common case without any of
-them.
+them. The exception is the `permissions` block: `dir-mode`, `file-mode` and
+`preserve-times` also stayed inline inputs, so a workflow that only sets
+those needs no config file at all.
 
 ## Migrating a jump host (bastion) setup
 

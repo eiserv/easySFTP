@@ -65,6 +65,21 @@ Everything else has a sensible default.
 | `mode` | | `overlay` | [Reconciliation mode](strategies.md): `overlay`, `sync` or `clean`. |
 | `exclude` | | - | Gitignore-style exclude patterns, one per line. `!` re-includes. |
 
+### Permissions (inline mode)
+
+| Input | Default | Description |
+|---|---|---|
+| `file-mode` | mirror local | Octal permission (e.g. `"0644"`) for every uploaded file. |
+| `dir-mode` | server umask | Octal permission (e.g. `"0755"`) for every remote directory the run creates or touches. |
+| `preserve-times` | `false` | Keep each uploaded file's local modification time on the server. |
+
+All three are best-effort: a server that rejects the `SETSTAT` request
+produces one warning per deployment, not a failure. Their config-mode
+equivalents are [`permissions.*`](#permissions); like every other non-secret
+setting they belong to exactly one mode, so setting them alongside `config`
+fails the run. Set at least `file-mode: "0644"` when you deploy from a
+Windows runner (see the [note below](#permissions)).
+
 ### Run-wide switches (both modes)
 
 | Input | Default | Description |
@@ -90,9 +105,10 @@ step shrinks to the config path plus credentials:
     # proxy-private-key: ${{ secrets.JUMP_PRIVATE_KEY }}
 ```
 
-Setting any inline connection/deployment input (`host`, `port`, `username`,
-`host-key`, `known-hosts`, `allow-any-host-key`, `source`, `target`, `mode`,
-`exclude`) alongside `config` fails the run: there is no mixed mode.
+Setting any inline connection/deployment/permission input (`host`, `port`,
+`username`, `host-key`, `known-hosts`, `allow-any-host-key`, `source`,
+`target`, `mode`, `exclude`, `file-mode`, `dir-mode`, `preserve-times`)
+alongside `config` fails the run: there is no mixed mode.
 
 The only inputs that combine with `config` are the credentials (`password`,
 `private-key`, `passphrase`, and the `proxy-*` credential counterparts) and
@@ -217,7 +233,9 @@ sync:
 
 All three are best-effort: a server that rejects the `SETSTAT` request
 produces one warning per deployment (not one per file, and not a failure), so
-a multi-deployment run shows which deployments are affected.
+a multi-deployment run shows which deployments are affected. In inline mode
+the same three settings are the `file-mode`, `dir-mode` and `preserve-times`
+[inputs](#permissions-inline-mode).
 
 > **Windows runners:** Windows has no POSIX permission bits, so "mirror local"
 > has nothing to mirror. Go reports `0666` for every writable file and `0444`
@@ -226,8 +244,8 @@ a multi-deployment run shows which deployments are affected.
 > uploads world-writable `666` files where `ubuntu-latest` would upload `644`,
 > which some web servers reject and security scans flag. Set `files: "0644"`
 > (and `directories: "0755"`) explicitly when you deploy from a Windows
-> runner. Both live in the config file, so a Windows deploy that needs them
-> uses `config:` rather than the inline inputs.
+> runner, or the equivalent `file-mode` / `dir-mode` inputs if you deploy
+> inline.
 
 #### `sync`
 
@@ -331,6 +349,7 @@ small; the advanced knobs moved into the config file (see
 | `password`, `private-key`, `passphrase` | both | Credentials (always from secrets). |
 | `host-key`, `known-hosts`, `allow-any-host-key` | inline | Host key verification. |
 | `source`, `target`, `mode`, `exclude` | inline | The single deployment. |
+| `file-mode`, `dir-mode`, `preserve-times` | inline | Remote permissions and timestamps (`permissions.*` in config mode). |
 | `config` | config | Path to the version-3 config file. |
 | `proxy-password`, `proxy-private-key`, `proxy-passphrase` | config | Jump-host credentials (the rest of the proxy config is in the file). |
 | `dry-run`, `log-level` | both | Run-wide switches. |
@@ -338,8 +357,8 @@ small; the advanced knobs moved into the config file (see
 Removed v2 inputs (`server`, `uploads`, `strategy`, `ignore`, `ignore-from`,
 `config-file`, `host-key-fingerprint`, `max-deletes`, `concurrency`,
 `sftp-request-concurrency`, `retries`, `timeout`, `stall-timeout`,
-`sync-fast-path`, `skip-unchanged`, `manifest-name`, `dir-mode`, `file-mode`,
-`preserve-times`, the `proxy-server`/`proxy-port`/`proxy-username`/
+`sync-fast-path`, `skip-unchanged`, `manifest-name`,
+the `proxy-server`/`proxy-port`/`proxy-username`/
 `proxy-host-key-fingerprint`/`proxy-known-hosts` connection inputs,
 `build-mode`, and the `delete` tombstone) still fail loudly with a migration
 hint rather than being silently ignored. See the

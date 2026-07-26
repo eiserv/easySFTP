@@ -67,6 +67,7 @@ func TestActionMetadata(t *testing.T) {
 		"host", "port", "username", "password", "private-key", "passphrase",
 		"host-key", "known-hosts", "allow-any-host-key",
 		"source", "target", "mode", "exclude", "config",
+		"file-mode", "dir-mode", "preserve-times",
 		"proxy-password", "proxy-private-key", "proxy-passphrase",
 		"dry-run", "log-level",
 		// removed-input tombstones (fail with a migration hint when set)
@@ -74,7 +75,6 @@ func TestActionMetadata(t *testing.T) {
 		"strategy", "ignore", "ignore-from", "max-deletes", "delete",
 		"concurrency", "sftp-request-concurrency", "retries", "timeout",
 		"stall-timeout", "sync-fast-path", "skip-unchanged", "manifest-name",
-		"dir-mode", "file-mode", "preserve-times",
 		"proxy-server", "proxy-port", "proxy-username",
 		"proxy-host-key-fingerprint", "proxy-known-hosts",
 	}

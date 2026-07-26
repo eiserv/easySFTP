@@ -105,16 +105,23 @@ relative to the chroot: `/upload/...`, not `/home/user/upload/...`.
 Directories created by the run get whatever the server's umask produces, and
 uploaded files mirror their local permission bits. On shared hosting where the
 web server runs as a different user than your SFTP account, that default can
-produce directories the web server can't read. Set `permissions.directories`
-(and, if needed, `permissions.files`) in the config file to force a known-good
-permission, e.g. `directories: "0755"` and `files: "0644"`. Both are
-best-effort; see [configuration.md](configuration.md#permissions).
+produce directories the web server can't read. Force a known-good permission
+with the `dir-mode` and `file-mode` inputs:
+
+```yaml
+    dir-mode: "0755"
+    file-mode: "0644"
+```
+
+In config mode the same settings are `permissions.directories` and
+`permissions.files`. Both are best-effort; see
+[configuration.md](configuration.md#permissions-inline-mode).
 
 Deploying from a **Windows runner** makes this more likely: Windows has no
 POSIX permission bits, so the mirrored local mode is `0666` for every writable
 file (`0444` for read-only ones), and your files land world-writable. Setting
-`permissions.files` explicitly is the fix, and is worth doing even when the
-deploy appears to work.
+`file-mode` explicitly is the fix, and is worth doing even when the deploy
+appears to work.
 
 ### `replacing "<path>": ...` or leftover `.easysftp-tmp` files
 

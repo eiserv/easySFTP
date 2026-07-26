@@ -20,6 +20,7 @@ var v3EnvVars = []string{
 	"HOST", "PORT", "USERNAME", "PASSWORD", "PRIVATE_KEY", "PASSPHRASE",
 	"HOST_KEY", "KNOWN_HOSTS", "ALLOW_ANY_HOST_KEY",
 	"SOURCE", "TARGET", "MODE", "EXCLUDE", "CONFIG",
+	"FILE_MODE", "DIR_MODE", "PRESERVE_TIMES",
 	"DRY_RUN", "LOG_LEVEL",
 	"PROXY_PASSWORD", "PROXY_PRIVATE_KEY", "PROXY_PASSPHRASE",
 	// removed-input tombstones
@@ -27,7 +28,6 @@ var v3EnvVars = []string{
 	"IGNORE", "IGNORE_FROM", "MAX_DELETES", "DELETE",
 	"CONCURRENCY", "SFTP_REQUEST_CONCURRENCY", "RETRIES", "TIMEOUT", "STALL_TIMEOUT",
 	"SYNC_FAST_PATH", "MANIFEST_NAME", "SKIP_UNCHANGED",
-	"DIR_MODE", "FILE_MODE", "PRESERVE_TIMES",
 	"PROXY_SERVER", "PROXY_PORT", "PROXY_USERNAME",
 	"PROXY_HOST_KEY_FINGERPRINT", "PROXY_KNOWN_HOSTS",
 }
@@ -127,6 +127,37 @@ func TestLoadInlineModeAndExclude(t *testing.T) {
 	}
 }
 
+// TestLoadInlinePermissions covers issue #133: the permission knobs are
+// settable inline, so a Windows deploy does not need a whole config file for
+// one "file-mode: 0644".
+func TestLoadInlinePermissions(t *testing.T) {
+	setBaseEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FileMode != nil || cfg.DirMode != nil || cfg.PreserveTimes {
+		t.Errorf("expected unset permissions by default, got files=%v dirs=%v times=%v",
+			cfg.FileMode, cfg.DirMode, cfg.PreserveTimes)
+	}
+
+	t.Setenv("EASYSFTP_FILE_MODE", "0644")
+	t.Setenv("EASYSFTP_DIR_MODE", "755")
+	t.Setenv("EASYSFTP_PRESERVE_TIMES", "true")
+	if cfg, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FileMode == nil || *cfg.FileMode != 0o644 {
+		t.Errorf("expected file mode 0644, got %v", cfg.FileMode)
+	}
+	if cfg.DirMode == nil || *cfg.DirMode != 0o755 {
+		t.Errorf("expected dir mode 0755, got %v", cfg.DirMode)
+	}
+	if !cfg.PreserveTimes {
+		t.Error("expected PreserveTimes to be true")
+	}
+}
+
 func TestLoadInlineValidation(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -143,6 +174,9 @@ func TestLoadInlineValidation(t *testing.T) {
 		{"bad dry-run", map[string]string{"EASYSFTP_DRY_RUN": "yes-please"}, "invalid dry-run"},
 		{"bad allow-any-host-key", map[string]string{"EASYSFTP_ALLOW_ANY_HOST_KEY": "maybe"}, "invalid allow-any-host-key"},
 		{"bad log-level", map[string]string{"EASYSFTP_LOG_LEVEL": "quiet"}, "'log-level' must be normal, verbose or debug"},
+		{"bad file-mode", map[string]string{"EASYSFTP_FILE_MODE": "rw-r--r--"}, "invalid input 'file-mode'"},
+		{"bad dir-mode", map[string]string{"EASYSFTP_DIR_MODE": "0999"}, "invalid input 'dir-mode'"},
+		{"bad preserve-times", map[string]string{"EASYSFTP_PRESERVE_TIMES": "sometimes"}, "invalid preserve-times"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -194,9 +228,6 @@ func TestLoadRemovedInputsFailWithMigrationHint(t *testing.T) {
 		{"SYNC_FAST_PATH", "sync.fast_path"},
 		{"MANIFEST_NAME", "sync.manifest"},
 		{"SKIP_UNCHANGED", "advanced.skip_unchanged"},
-		{"DIR_MODE", "permissions.directories"},
-		{"FILE_MODE", "permissions.files"},
-		{"PRESERVE_TIMES", "permissions.preserve_times"},
 		{"PROXY_SERVER", "connection.proxy.host"},
 		{"PROXY_PORT", "connection.proxy.port"},
 		{"PROXY_USERNAME", "connection.proxy.username"},
@@ -401,6 +432,9 @@ func TestLoadConfigModeRejectsInlineInputs(t *testing.T) {
 		{"EASYSFTP_ALLOW_ANY_HOST_KEY", "allow-any-host-key"},
 		{"EASYSFTP_USERNAME", "username"},
 		{"EASYSFTP_PORT", "port"},
+		{"EASYSFTP_FILE_MODE", "file-mode"},
+		{"EASYSFTP_DIR_MODE", "dir-mode"},
+		{"EASYSFTP_PRESERVE_TIMES", "preserve-times"},
 	} {
 		t.Run(in.name, func(t *testing.T) {
 			setConfigModeEnv(t, minimalConfigFile)

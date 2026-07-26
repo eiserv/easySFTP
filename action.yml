@@ -90,6 +90,29 @@ inputs:
       "node_modules/"). Prefix with "!" to re-include files.
     required: false
 
+  # --- Permissions (inline mode) ---
+  file-mode:
+    description: >-
+      Octal permission (e.g. "0644") applied to every uploaded file, instead
+      of mirroring the local file's bits. Worth setting on Windows runners,
+      which have no POSIX bits to mirror and otherwise upload world-writable
+      files. Best-effort: a server that rejects the chmod warns, it does not
+      fail the run. In config mode this is permissions.files.
+    required: false
+  dir-mode:
+    description: >-
+      Octal permission (e.g. "0755") applied to every remote directory the
+      run creates or touches, instead of leaving the server's umask default.
+      Best-effort, like file-mode. In config mode this is
+      permissions.directories.
+    required: false
+  preserve-times:
+    description: >-
+      Set to "true" to keep each uploaded file's local modification time on
+      the server instead of "now". Best-effort, like file-mode. In config
+      mode this is permissions.preserve_times.
+    required: false
+
   # --- Config mode ---
   config:
     description: >-
@@ -195,15 +218,6 @@ inputs:
   manifest-name:
     description: "Removed in v3: moved to 'sync.manifest' in the config file. See docs/migration-v3.md."
     required: false
-  dir-mode:
-    description: "Removed in v3: moved to 'permissions.directories' in the config file. See docs/migration-v3.md."
-    required: false
-  file-mode:
-    description: "Removed in v3: moved to 'permissions.files' in the config file. See docs/migration-v3.md."
-    required: false
-  preserve-times:
-    description: "Removed in v3: moved to 'permissions.preserve_times' in the config file. See docs/migration-v3.md."
-    required: false
   proxy-server:
     description: "Removed in v3: moved to 'connection.proxy.host' in the config file. See docs/migration-v3.md."
     required: false
@@ -290,6 +304,9 @@ runs:
         EASYSFTP_TARGET: ${{ inputs.target }}
         EASYSFTP_MODE: ${{ inputs.mode }}
         EASYSFTP_EXCLUDE: ${{ inputs.exclude }}
+        EASYSFTP_FILE_MODE: ${{ inputs.file-mode }}
+        EASYSFTP_DIR_MODE: ${{ inputs.dir-mode }}
+        EASYSFTP_PRESERVE_TIMES: ${{ inputs.preserve-times }}
         EASYSFTP_CONFIG: ${{ inputs.config }}
         EASYSFTP_PROXY_PASSWORD: ${{ inputs.proxy-password }}
         EASYSFTP_PROXY_PRIVATE_KEY: ${{ inputs.proxy-private-key }}
@@ -314,9 +331,6 @@ runs:
         EASYSFTP_SYNC_FAST_PATH: ${{ inputs.sync-fast-path }}
         EASYSFTP_SKIP_UNCHANGED: ${{ inputs.skip-unchanged }}
         EASYSFTP_MANIFEST_NAME: ${{ inputs.manifest-name }}
-        EASYSFTP_DIR_MODE: ${{ inputs.dir-mode }}
-        EASYSFTP_FILE_MODE: ${{ inputs.file-mode }}
-        EASYSFTP_PRESERVE_TIMES: ${{ inputs.preserve-times }}
         EASYSFTP_PROXY_SERVER: ${{ inputs.proxy-server }}
         EASYSFTP_PROXY_PORT: ${{ inputs.proxy-port }}
         EASYSFTP_PROXY_USERNAME: ${{ inputs.proxy-username }}

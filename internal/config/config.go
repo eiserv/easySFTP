@@ -253,9 +253,6 @@ var removedInputs = []removedInput{
 	{"SYNC_FAST_PATH", "the 'sync-fast-path' input moved to 'sync.fast_path' in the config file"},
 	{"MANIFEST_NAME", "the 'manifest-name' input moved to 'sync.manifest' in the config file"},
 	{"SKIP_UNCHANGED", "the 'skip-unchanged' input moved to 'advanced.skip_unchanged' in the config file"},
-	{"DIR_MODE", "the 'dir-mode' input moved to 'permissions.directories' in the config file"},
-	{"FILE_MODE", "the 'file-mode' input moved to 'permissions.files' in the config file"},
-	{"PRESERVE_TIMES", "the 'preserve-times' input moved to 'permissions.preserve_times' in the config file"},
 	{"PROXY_SERVER", "the 'proxy-server' input moved to 'connection.proxy.host' in the config file"},
 	{"PROXY_PORT", "the 'proxy-port' input moved to 'connection.proxy.port' in the config file"},
 	{"PROXY_USERNAME", "the 'proxy-username' input moved to 'connection.proxy.username' in the config file"},
@@ -288,6 +285,9 @@ var inlineOnlyInputs = []struct{ env, input string }{
 	{"TARGET", "target"},
 	{"MODE", "mode"},
 	{"EXCLUDE", "exclude"},
+	{"FILE_MODE", "file-mode"},
+	{"DIR_MODE", "dir-mode"},
+	{"PRESERVE_TIMES", "preserve-times"},
 }
 
 // Load reads the configuration from the environment and validates it.
@@ -378,6 +378,15 @@ func loadInline(cfg *Config, get func(string) string) error {
 	}
 	if cfg.AllowAnyHostKey, err = parseBool(get("ALLOW_ANY_HOST_KEY"), false); err != nil {
 		return fmt.Errorf("invalid allow-any-host-key: %w", err)
+	}
+	if cfg.FileMode, err = parseMode(get("FILE_MODE"), "input 'file-mode'"); err != nil {
+		return err
+	}
+	if cfg.DirMode, err = parseMode(get("DIR_MODE"), "input 'dir-mode'"); err != nil {
+		return err
+	}
+	if cfg.PreserveTimes, err = parseBool(get("PRESERVE_TIMES"), false); err != nil {
+		return fmt.Errorf("invalid preserve-times: %w", err)
 	}
 
 	strategy := StrategyOverlay

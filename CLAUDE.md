@@ -49,9 +49,10 @@ messages).
 The complete v3 input surface is:
 
 1. **Inline mode**: `host`, `port`, `username`, `host-key`, `known-hosts`,
-   `allow-any-host-key`, `source`, `target`, `mode`, `exclude`. Setting any of
-   these together with `config` fails the run (the check at the top of
-   `config.Load()`): there is no mixed mode.
+   `allow-any-host-key`, `source`, `target`, `mode`, `exclude`, `file-mode`,
+   `dir-mode`, `preserve-times`. Setting any of these together with `config`
+   fails the run (the check at the top of `config.Load()`): there is no mixed
+   mode.
    **Never give these inputs a `default:` in `action.yml`**: the runner
    exports declared defaults unconditionally, so the mutual-exclusion check
    sees them as "user-set" and rejects every config-file run; that's how
@@ -66,10 +67,14 @@ The complete v3 input surface is:
    change how a run authenticates or reports, never what it deploys.
 
 So a new knob is normally a config-file field, not an input. Adding it as an
-input means arguing why it belongs in category 3. Note the cost of that
-choice: today a user who wants one permission bit set has to convert their
-whole deploy to a config file (issue #133). Per-deployment granularity is a
-separate, later decision; don't build it speculatively.
+input means arguing why it belongs in category 1 or 3.
+
+`file-mode` / `dir-mode` / `preserve-times` are the worked example (issue
+#133): they are category 1, mirrored by `permissions.*` in category 2, so a
+Windows deploy that needs `file-mode: "0644"` does not have to convert its
+whole workflow into a config file. Each setting still has exactly one home
+*per mode*, which is what keeps "no precedence question" true. Per-deployment
+granularity is a separate, later decision; don't build it speculatively.
 
 ## Testing quirks
 
