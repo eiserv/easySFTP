@@ -94,6 +94,10 @@ this. The prefix decides the release bump
 - Behavior changes are covered by tests and documented (README / `docs/` /
   `action.yml` input descriptions).
 - No new dependencies unless truly needed.
+- Anything CI pulls from outside the repo is pinned by hash: actions by their
+  full commit SHA, container images by `@sha256:` digest (with the readable
+  tag kept as a trailing comment). Dependabot does not touch inline
+  `docker run` digests, so those are bumped by hand.
 - Errors are wrapped with context (`fmt.Errorf("...: %w", err)`), log output
   goes through the `Logger`/`gha` helpers.
 - Destructive-path changes (anything that deletes remote files) keep the

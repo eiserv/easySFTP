@@ -73,8 +73,13 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Start SFTP server
+        # Pinned by digest, like every action in this repo: a mutable tag lets
+        # a retag (compromised or merely broken) flow straight into CI, and
+        # makes the self-test fail without a change here. Dependabot does not
+        # update inline "docker run" digests, so this is updated by hand with:
+        #   docker buildx imagetools inspect atmoz/sftp:alpine
         run: |
-          docker run -d --name sftp -p 2222:22 atmoz/sftp:alpine demo:demopass:::upload
+          docker run -d --name sftp -p 2222:22 atmoz/sftp@sha256:a6cb3eb29202ca7f57e73bb7e527286e66e0e822fff65609207c7e0ef2d135a3 demo:demopass:::upload # atmoz/sftp:alpine
           for i in $(seq 1 30); do
             nc -z localhost 2222 && exit 0
             sleep 1
