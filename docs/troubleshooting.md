@@ -4,6 +4,10 @@ Common errors, what they mean and how to fix them. If your problem is not
 listed, [open an issue](https://github.com/eiserv/easySFTP/issues), ideally
 with the log of a `dry-run: true` run.
 
+Ports, chrooted paths and "SSH has to be enabled first" are usually not
+errors but provider quirks: see [Provider notes](providers.md), which also
+explains how to find your own port, path and host key in three commands.
+
 ## Action startup problems
 
 ### `the '<x>' input was ... in easySFTP v3`
