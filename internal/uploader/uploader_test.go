@@ -632,6 +632,53 @@ func TestFileModeFailureWarnsOnceNotPerFile(t *testing.T) {
 	}
 }
 
+// The two SETSTAT warn-once flags live in transferEnv, which is built per
+// deployment, so a multi-deployment run warns once per affected deployment and
+// the message says so instead of promising run-wide suppression (issue #121).
+func TestSetstatWarningsAreScopedPerDeployment(t *testing.T) {
+	srv := startTestServer(t, withFailSetstat())
+	first, second := t.TempDir(), t.TempDir()
+	writeTree(t, first, map[string]string{"a.txt": "1", "b.txt": "2"})
+	writeTree(t, second, map[string]string{"c.txt": "3", "d.txt": "4"})
+
+	mode := fs.FileMode(0o600)
+	cfg := baseConfig(srv)
+	cfg.FileMode = &mode
+	cfg.PreserveTimes = true
+	cfg.Uploads = []config.UploadPair{
+		{Name: "one", Local: first, Remote: "/www/one"},
+		{Name: "two", Local: second, Remote: "/www/two"},
+	}
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	if _, err := Run(context.Background(), cfg, log); err != nil {
+		t.Fatalf("rejected SETSTAT requests must not fail the run: %v", err)
+	}
+
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	counts := map[string]int{}
+	for _, w := range log.warnings {
+		switch {
+		case strings.Contains(w, "file-mode"):
+			counts["file-mode"]++
+		case strings.Contains(w, "preserve the modification time"):
+			counts["preserve-times"]++
+		default:
+			continue
+		}
+		if !strings.Contains(w, "not warning again for this deployment") {
+			t.Errorf("warning must scope its suppression promise to the deployment, got: %s", w)
+		}
+	}
+	for _, kind := range []string{"file-mode", "preserve-times"} {
+		if counts[kind] != len(cfg.Uploads) {
+			t.Errorf("expected %d %s warning(s) (one per deployment), got %d: %v",
+				len(cfg.Uploads), kind, counts[kind], log.warnings)
+		}
+	}
+}
+
 func TestDefaultModeMirrorsLocalBitsSilentlyOnFailure(t *testing.T) {
 	srv := startTestServer(t, withFailSetstat())
 	local := t.TempDir()

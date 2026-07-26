@@ -216,7 +216,8 @@ sync:
 | `preserve_times` | `false` | Keep each uploaded file's local modification time on the server. |
 
 All three are best-effort: a server that rejects the `SETSTAT` request
-produces one warning per run, not a failure.
+produces one warning per deployment (not one per file, and not a failure), so
+a multi-deployment run shows which deployments are affected.
 
 #### `sync`
 

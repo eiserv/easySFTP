@@ -21,12 +21,18 @@ import (
 // rename stays on one filesystem and is atomic.
 const tmpSuffix = ".easysftp-tmp"
 
-// transferEnv carries the run-wide invariants that every level of the upload
-// call chain re-threads to the next (the session, the stall watchdog, the
-// logger and the two warn-once flags). It is built once in uploadFiles and
-// passed down, so per-file positions stay short and, in particular, the two
-// adjacent *atomic.Bool flags can no longer be transposed at a call site: they
-// are named struct fields instead of interchangeable positional arguments.
+// transferEnv carries the invariants that every level of the upload call chain
+// re-threads to the next (the session, the stall watchdog, the logger and the
+// two warn-once flags). It is built once in uploadFiles and passed down, so
+// per-file positions stay short and, in particular, the two adjacent
+// *atomic.Bool flags can no longer be transposed at a call site: they are
+// named struct fields instead of interchangeable positional arguments.
+//
+// uploadFiles runs once per deployment, so the two warn-once flags are scoped
+// to a deployment, not to the whole run: a multi-deployment run against a
+// server that rejects SETSTAT warns once per affected deployment, which is
+// what tells the user how far the problem reaches. The warning texts say so
+// (see issue #121).
 type transferEnv struct {
 	cfg   *config.Config
 	sess  *session
@@ -78,7 +84,8 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 	}
 	// timesWarned doubles as the preserve-times switch: nil means off. The
 	// user explicitly asked for preserved times, so a refusing server warns
-	// (once per run); staying silent would defeat the point of the input.
+	// (once per deployment); staying silent would defeat the point of the
+	// input.
 	if cfg.PreserveTimes {
 		env.timesWarned = new(atomic.Bool)
 	}
@@ -181,10 +188,10 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 
 	// Best effort: mirrors the local permission bits, or the file-mode
 	// override when set. Some servers reject SETSTAT; an explicit override
-	// warns once per run so the user knows it isn't taking effect, but a
-	// mirrored local mode stays silent as before.
+	// warns once per deployment so the user knows it isn't taking effect, but
+	// a mirrored local mode stays silent as before.
 	if cerr := client.Chmod(tmpPath, mode); cerr != nil && env.modeWarned != nil && !env.modeWarned.Swap(true) {
-		log.Warningf("could not set file-mode %04o on %s (server may reject SETSTAT); not warning again this run: %v", mode, f.remotePath, cerr)
+		log.Warningf("could not set file-mode %04o on %s (server may reject SETSTAT); not warning again for this deployment: %v", mode, f.remotePath, cerr)
 	}
 
 	if err := renameReplace(client, tmpPath, f.remotePath); err != nil {
@@ -194,11 +201,11 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 
 	// preserve-times (timesWarned non-nil): keep the local modification time
 	// instead of "now". After the rename, so the request targets the final
-	// path; a failure warns once per run and never fails the deploy.
+	// path; a failure warns once per deployment and never fails the deploy.
 	if env.timesWarned != nil {
 		mtime := time.Unix(f.mtime, 0)
 		if cerr := client.Chtimes(f.remotePath, mtime, mtime); cerr != nil && !env.timesWarned.Swap(true) {
-			log.Warningf("could not preserve the modification time on %s (server may reject SETSTAT); not warning again this run: %v", f.remotePath, cerr)
+			log.Warningf("could not preserve the modification time on %s (server may reject SETSTAT); not warning again for this deployment: %v", f.remotePath, cerr)
 		}
 	}
 	return n, nil

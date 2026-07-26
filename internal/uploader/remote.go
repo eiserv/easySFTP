@@ -34,7 +34,9 @@ func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, 
 		warned := false
 		for _, dir := range dirs {
 			if err := client.Chmod(dir, dirMode.Perm()); err != nil && !warned {
-				log.Warningf("could not set dir-mode %04o on %s (server may reject SETSTAT); not warning again this run: %v", dirMode.Perm(), dir, err)
+				// Scoped to this pass (one per deployment), like the file-mode
+				// and preserve-times warnings in transfer.go; see issue #121.
+				log.Warningf("could not set dir-mode %04o on %s (server may reject SETSTAT); not warning again for this deployment: %v", dirMode.Perm(), dir, err)
 				warned = true
 			}
 			watch.tick()
