@@ -108,7 +108,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 				}
 			}
 			if cfg.LogPerFile() {
-				log.Infof("%supload %s => %s (%s)", verb, f.localPath, f.remotePath, humanSize(f.size))
+				log.Infof("%supload %s => %s (%s)", verb, f.localPath, f.remotePath, HumanSize(f.size))
 			}
 			if cfg.DryRun {
 				// Report the planned byte count so bytes-uploaded matches the

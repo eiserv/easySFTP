@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -59,8 +60,8 @@ func run() error {
 		mode = "would upload (dry-run)"
 	}
 	if runErr == nil {
-		gha.Infof("done: %s %d file(s), %d byte(s), deleted %d file(s), skipped %d unchanged, took %s",
-			mode, stats.FilesUploaded, stats.BytesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.Duration.Round(time.Millisecond))
+		gha.Infof("done: %s %d file(s), %s, deleted %d file(s), skipped %d unchanged, took %s",
+			mode, stats.FilesUploaded, humanBytes(stats.BytesUploaded), stats.FilesDeleted, stats.FilesSkipped, stats.Duration.Round(time.Millisecond))
 	}
 
 	reportStats(cfg, stats, mode, runErr)
@@ -120,10 +121,34 @@ func buildInfoLine(info *debug.BuildInfo, version string) string {
 	return ""
 }
 
+// humanBytes renders a byte count readably without losing the exact figure,
+// e.g. "70.0 MiB (73,400,320 bytes)". Job summaries get copy-pasted into
+// reports, so the precise number stays available (issue #16). Below one KiB
+// the raw count is already readable and stands alone.
+func humanBytes(n int64) string {
+	if n < 1024 {
+		return uploader.HumanSize(n)
+	}
+	return fmt.Sprintf("%s (%s bytes)", uploader.HumanSize(n), groupDigits(n))
+}
+
+// groupDigits inserts thousands separators: 73400320 -> "73,400,320".
+func groupDigits(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	var b strings.Builder
+	for i := range len(s) {
+		if i > 0 && (len(s)-i)%3 == 0 && s[i-1] != '-' {
+			b.WriteByte(',')
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
 func reportStats(cfg *config.Config, stats *uploader.Stats, mode string, runErr error) {
 	status := "✅ Succeeded"
 	if runErr != nil {
-		status = fmt.Sprintf("❌ Failed after %d file(s), %d byte(s)", stats.FilesUploaded, stats.BytesUploaded)
+		status = fmt.Sprintf("❌ Failed after %d file(s), %s", stats.FilesUploaded, humanBytes(stats.BytesUploaded))
 	}
 
 	gha.SetOutput("files-uploaded", fmt.Sprintf("%d", stats.FilesUploaded))
@@ -137,8 +162,8 @@ func reportStats(cfg *config.Config, stats *uploader.Stats, mode string, runErr 
 		configSource = fmt.Sprintf("`%s` (version 3)", cfg.ConfigPath)
 	}
 	summary := fmt.Sprintf(
-		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Host key | %s |\n| Configuration | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %d |\n| Duration | %s |\n",
-		status, hostKeyStatus(cfg), configSource, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, stats.BytesUploaded, stats.Duration.Round(time.Millisecond))
+		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Host key | %s |\n| Configuration | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %s |\n| Duration | %s |\n",
+		status, hostKeyStatus(cfg), configSource, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, humanBytes(stats.BytesUploaded), stats.Duration.Round(time.Millisecond))
 	summary += deploymentBreakdown(stats.Targets)
 	gha.AppendSummary(summary)
 }
@@ -151,7 +176,10 @@ func deploymentBreakdown(targets []uploader.TargetStats) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("\n#### Deployments\n\n| Deployment | Source | Target | Mode | Uploaded | Deleted | Skipped | Bytes | Duration |\n|---|---|---|---|---|---|---|---|---|\n")
+	// The per-deployment rows use the compact size only: the exact byte count
+	// belongs in the totals above, and repeating it in every row would make
+	// the table unreadably wide.
+	b.WriteString("\n#### Deployments\n\n| Deployment | Source | Target | Mode | Uploaded | Deleted | Skipped | Size | Duration |\n|---|---|---|---|---|---|---|---|---|\n")
 
 	var totalUploaded, totalDeleted, totalSkipped int
 	var totalBytes int64
@@ -160,17 +188,17 @@ func deploymentBreakdown(targets []uploader.TargetStats) string {
 		if name == "" {
 			name = "(inline)"
 		}
-		fmt.Fprintf(&b, "| %s | `%s` | `%s` | %s | %d | %d | %d | %d | %s |\n",
-			name, t.Local, t.Remote, t.Strategy, t.FilesUploaded, t.FilesDeleted, t.FilesSkipped, t.BytesUploaded,
-			t.Duration.Round(time.Millisecond))
+		fmt.Fprintf(&b, "| %s | `%s` | `%s` | %s | %d | %d | %d | %s | %s |\n",
+			name, t.Local, t.Remote, t.Strategy, t.FilesUploaded, t.FilesDeleted, t.FilesSkipped,
+			uploader.HumanSize(t.BytesUploaded), t.Duration.Round(time.Millisecond))
 		totalUploaded += t.FilesUploaded
 		totalDeleted += t.FilesDeleted
 		totalSkipped += t.FilesSkipped
 		totalBytes += t.BytesUploaded
 	}
 	if len(targets) > 1 {
-		fmt.Fprintf(&b, "| **Total** | | | | **%d** | **%d** | **%d** | **%d** | |\n",
-			totalUploaded, totalDeleted, totalSkipped, totalBytes)
+		fmt.Fprintf(&b, "| **Total** | | | | **%d** | **%d** | **%d** | **%s** | |\n",
+			totalUploaded, totalDeleted, totalSkipped, uploader.HumanSize(totalBytes))
 	}
 	return b.String()
 }

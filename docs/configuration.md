@@ -305,7 +305,9 @@ reporting or rollback step must consume these partial results. See
 [examples](examples.md#using-the-outputs).
 
 The `files-*`/`bytes-uploaded` outputs stay run-wide totals; there is no
-per-deployment output.
+per-deployment output. Sizes are rendered for humans in the summary and the
+log (`70.0 MiB (73,400,320 bytes)`, and just `70.0 MiB` in the per-deployment
+table); the `bytes-uploaded` output stays a plain integer for machines.
 
 ## Complete input reference
 

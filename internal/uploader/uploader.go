@@ -151,11 +151,11 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 func logDeploymentSummary(cfg *config.Config, pair config.UploadPair, ts TargetStats, log Logger) {
 	if cfg.DryRun {
 		log.Infof("deployment %s: %d file(s) to upload (%s), %d to delete, %d unchanged (dry-run)",
-			pair.Label(), ts.FilesUploaded, humanSize(ts.BytesUploaded), ts.FilesDeleted, ts.FilesSkipped)
+			pair.Label(), ts.FilesUploaded, HumanSize(ts.BytesUploaded), ts.FilesDeleted, ts.FilesSkipped)
 		return
 	}
 	log.Infof("deployment %s: uploaded %d file(s) (%s), deleted %d, skipped %d unchanged, took %s",
-		pair.Label(), ts.FilesUploaded, humanSize(ts.BytesUploaded), ts.FilesDeleted, ts.FilesSkipped,
+		pair.Label(), ts.FilesUploaded, HumanSize(ts.BytesUploaded), ts.FilesDeleted, ts.FilesSkipped,
 		ts.Duration.Round(time.Millisecond))
 }
 
@@ -248,7 +248,10 @@ func planVerb(cfg *config.Config) string {
 	return ""
 }
 
-func humanSize(n int64) string {
+// HumanSize renders a byte count in IEC units, e.g. "70.0 MiB". Exported so
+// the job summary in cmd/easysftp formats sizes exactly like the per-file log
+// lines do (issue #16).
+func HumanSize(n int64) string {
 	const unit = 1024
 	if n < unit {
 		return fmt.Sprintf("%d B", n)
