@@ -110,8 +110,11 @@ type Proxy struct {
 	AllowAnyHostKey bool
 }
 
-// Guards holds the safety limits applied before any destructive operation.
-type Guards struct {
+// Safety holds the safety limits applied before any destructive operation.
+// The field and type names mirror the config file's "safety" section on
+// purpose: a name that drifts from the YAML key leaks into error messages
+// and sends users to a key that does not exist (issue #140).
+type Safety struct {
 	// MaxDeletes refuses a run that would delete more than this many files.
 	// 0 means unlimited. The refusal to delete the remote root is always on.
 	MaxDeletes int
@@ -140,7 +143,7 @@ type Config struct {
 
 	Uploads     []UploadPair
 	IgnoreLines []string
-	Guards      Guards
+	Safety      Safety
 
 	// ConfigPath is the path of the loaded YAML config file, or "" in inline
 	// mode. It drives config-mode error message wording and the job summary.
@@ -435,8 +438,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("advanced.timeout must not be negative (use 0 to disable the timeout), got %d", int(c.Timeout/time.Second))
 	case c.StallTimeout < 0:
 		return fmt.Errorf("advanced.stall_timeout must not be negative (use 0 to disable the check), got %d", int(c.StallTimeout/time.Second))
-	case c.Guards.MaxDeletes < 0:
-		return fmt.Errorf("safety.max_deletes must not be negative, got %d", c.Guards.MaxDeletes)
+	case c.Safety.MaxDeletes < 0:
+		return fmt.Errorf("safety.max_deletes must not be negative, got %d", c.Safety.MaxDeletes)
 	}
 	if p := c.Proxy; p != nil {
 		switch {

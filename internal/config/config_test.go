@@ -91,8 +91,8 @@ func TestLoadInlineDefaults(t *testing.T) {
 	if cfg.Timeout != 30*time.Second {
 		t.Errorf("expected 30s default timeout, got %s", cfg.Timeout)
 	}
-	if cfg.Guards.MaxDeletes != 0 {
-		t.Errorf("expected unlimited max deletes by default, got %d", cfg.Guards.MaxDeletes)
+	if cfg.Safety.MaxDeletes != 0 {
+		t.Errorf("expected unlimited max deletes by default, got %d", cfg.Safety.MaxDeletes)
 	}
 	if cfg.ManifestName != DefaultManifestName {
 		t.Errorf("expected default manifest name %q, got %q", DefaultManifestName, cfg.ManifestName)
@@ -345,8 +345,8 @@ sync:
 	if len(cfg.IgnoreLines) != 1 || cfg.IgnoreLines[0] != "*.map" {
 		t.Errorf("unexpected global excludes: %v", cfg.IgnoreLines)
 	}
-	if cfg.Guards.MaxDeletes != 500 {
-		t.Errorf("expected max_deletes 500, got %d", cfg.Guards.MaxDeletes)
+	if cfg.Safety.MaxDeletes != 500 {
+		t.Errorf("expected max_deletes 500, got %d", cfg.Safety.MaxDeletes)
 	}
 	if cfg.Retries != 4 || cfg.Timeout != 60*time.Second || cfg.StallTimeout != 120*time.Second ||
 		cfg.Concurrency != 8 || cfg.SftpRequestConcurrency != 4 || !cfg.SkipUnchanged {
@@ -367,7 +367,7 @@ func TestLoadConfigModeDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.SftpRequestConcurrency != 16 || cfg.Retries != 2 ||
-		cfg.Timeout != 30*time.Second || cfg.StallTimeout != 0 || cfg.Guards.MaxDeletes != 0 {
+		cfg.Timeout != 30*time.Second || cfg.StallTimeout != 0 || cfg.Safety.MaxDeletes != 0 {
 		t.Errorf("unexpected config-mode defaults: %+v", cfg)
 	}
 	if cfg.Uploads[0].Strategy != StrategyOverlay {

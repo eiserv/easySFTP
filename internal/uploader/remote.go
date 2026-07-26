@@ -90,8 +90,8 @@ func checkRemoteRoot(remote string) error {
 
 // checkMaxDeletes enforces the guards.max_deletes limit (0 means unlimited).
 func checkMaxDeletes(n int, cfg *config.Config) error {
-	if cfg.Guards.MaxDeletes > 0 && n > cfg.Guards.MaxDeletes {
-		return fmt.Errorf("refusing to delete %d files: exceeds guards.max_deletes=%d (raise the limit, or run with dry-run to inspect the plan)", n, cfg.Guards.MaxDeletes)
+	if cfg.Safety.MaxDeletes > 0 && n > cfg.Safety.MaxDeletes {
+		return fmt.Errorf("refusing to delete %d files: exceeds safety.max_deletes=%d (raise the limit in the config file, or run with dry-run to inspect the plan)", n, cfg.Safety.MaxDeletes)
 	}
 	return nil
 }

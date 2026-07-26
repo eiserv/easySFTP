@@ -156,11 +156,14 @@ func TestSyncMaxDeletesGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := syncConfig(srv, local)
-	cfg.Guards.MaxDeletes = 1
+	cfg.Safety.MaxDeletes = 1
 
 	_, err := Run(context.Background(), cfg, testLogger{t})
-	if err == nil || !strings.Contains(err.Error(), "max_deletes") {
-		t.Fatalf("expected max_deletes guard error, got %v", err)
+	// The key must be spelled exactly as the config file spells it: the
+	// message tells the user what to raise, so a wrong key sends them to a
+	// field the strict parser then rejects (issue #140).
+	if err == nil || !strings.Contains(err.Error(), "safety.max_deletes") {
+		t.Fatalf("expected a safety.max_deletes guard error, got %v", err)
 	}
 	// Nothing was deleted because the guard fires before any removal.
 	if !remoteExists(t, srv, "/www/b.txt") {

@@ -334,7 +334,7 @@ func applyYAML(cfg *Config, yc *yamlConfig) error {
 	}
 
 	// Safety, advanced tuning, permissions, sync.
-	cfg.Guards.MaxDeletes = yc.Safety.MaxDeletes
+	cfg.Safety.MaxDeletes = yc.Safety.MaxDeletes
 	if yc.Advanced.Retries != nil {
 		cfg.Retries = *yc.Advanced.Retries
 	}

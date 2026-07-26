@@ -182,7 +182,7 @@ never deleted by `sync` itself.
 always. Deploy into a specific subdirectory instead. This guard cannot be
 disabled; see [delete guards](strategies.md#delete-guards).
 
-### `refusing to delete N files: exceeds guards.max_deletes`
+### `refusing to delete N files: exceeds safety.max_deletes`
 
 Your run would delete more files than `safety.max_deletes` allows. Inspect the
 plan with `dry-run: true`; if the deletions are intended, raise (or remove)
