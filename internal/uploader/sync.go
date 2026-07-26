@@ -17,12 +17,6 @@ import (
 	"github.com/eiserv/easySFTP/internal/config"
 )
 
-// manifestName is the default file name the sync strategy keeps in each remote
-// target to record what it previously uploaded. Only files listed there are
-// ever deleted, so files placed on the server by others are left untouched.
-// The manifest-name input can override it per run; see Config.SyncManifestName.
-const manifestName = config.DefaultManifestName
-
 // manifestVersion is written to every manifest this version of easySFTP
 // produces. v1 manifests (hash only, no size/mtime) are still read; see
 // readManifest.

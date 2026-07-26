@@ -31,11 +31,6 @@ func Infof(format string, args ...any) {
 	fmt.Println(sanitizeLine(fmt.Sprintf(format, args...)))
 }
 
-// Noticef prints a notice annotation.
-func Noticef(format string, args ...any) {
-	fmt.Printf("::notice::%s\n", escapeData(fmt.Sprintf(format, args...)))
-}
-
 // Warningf prints a warning annotation.
 func Warningf(format string, args ...any) {
 	fmt.Printf("::warning::%s\n", escapeData(fmt.Sprintf(format, args...)))

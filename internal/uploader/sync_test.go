@@ -16,6 +16,12 @@ import (
 	"github.com/eiserv/easySFTP/internal/config"
 )
 
+// manifestName is the default manifest file name, the one a test config that
+// does not set manifest-name ends up using. Production code never reads a
+// constant for this: it goes through cfg.SyncManifestName(), which honors the
+// manifest-name input (issue #108).
+const manifestName = config.DefaultManifestName
+
 func syncConfig(srv *testServer, local string) *config.Config {
 	cfg := baseConfig(srv)
 	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www", Strategy: config.StrategySync}}
