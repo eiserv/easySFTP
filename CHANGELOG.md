@@ -5,6 +5,15 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1](https://github.com/eiserv/easySFTP/compare/v3.2.0...v3.2.1) (2026-07-26)
+
+
+### Documentation
+
+* issue forms and a PR template ([#139](https://github.com/eiserv/easySFTP/issues/139)) ([2861aa0](https://github.com/eiserv/easySFTP/commit/2861aa018f0a06439832a391856ce4648a97efe9))
+* migration guide from Dylan700/sftp-upload-action ([#141](https://github.com/eiserv/easySFTP/issues/141)) ([611344f](https://github.com/eiserv/easySFTP/commit/611344f0f7deab7cda7390f32fd2fc646819f8fa))
+* provider notes with a self-service discovery section ([#143](https://github.com/eiserv/easySFTP/issues/143)) ([5d1b7d4](https://github.com/eiserv/easySFTP/commit/5d1b7d42de47a709f3881c34334dbd3075f2eb19))
+
 ## [3.2.0](https://github.com/eiserv/easySFTP/compare/v3.1.0...v3.2.0) (2026-07-26)
 
 
