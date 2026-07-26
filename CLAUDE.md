@@ -38,28 +38,38 @@ Guiding principles for changes here:
   (`internal/config/config_test.go`), which keeps config tests hermetic when
   the ambient environment sets `EASYSFTP_*` variables.
 
-## Two categories of settings
+## Where a setting lives (v3)
 
-Look at how existing inputs are wired before adding a new one:
+v3 replaced the old two-category split with one rule: **every non-secret
+setting has exactly one home.** Check `action.yml` before assuming an input
+exists; most v2 inputs are now "Removed in v3" stubs that only exist to
+produce a migration error (`internal/config/config.go` holds the list and its
+messages).
 
-1. **Deployment shape** (what/where/how to reconcile): `uploads`, `strategy`,
-   `ignore`, `ignore-from`, `max-deletes`. These are mutually exclusive with
-   `config-file` (see the check at the top of `config.Load()`) because a
-   YAML config file replaces them entirely, and `configfile.go` /
-   `schema/easysftp.schema.json` define the per-target equivalents.
+The complete v3 input surface is:
+
+1. **Inline mode**: `host`, `port`, `username`, `host-key`, `known-hosts`,
+   `allow-any-host-key`, `source`, `target`, `mode`, `exclude`. Setting any of
+   these together with `config` fails the run (the check at the top of
+   `config.Load()`): there is no mixed mode.
    **Never give these inputs a `default:` in `action.yml`**: the runner
    exports declared defaults unconditionally, so the mutual-exclusion check
-   sees them as "user-set" and rejects every `config-file` run; that's how
+   sees them as "user-set" and rejects every config-file run; that's how
    #62 shipped in v2.0.0. `TestLoadConfigFileWithActionDefaults`
    (`internal/config/config_test.go`) guards against reintroducing this.
-2. **Run-wide behavior** (connection, transfer mechanics): `retries`,
-   `concurrency`, `sftp-request-concurrency`, `timeout`, `stall-timeout`,
-   `dry-run`, `sync-fast-path`, `skip-unchanged`, `dir-mode`, `file-mode`.
-   These always come from action
-   inputs, regardless of `config-file`, and have **no** per-target override
-   and **no** YAML config-file equivalent. Don't add one unless a concrete
-   use case needs per-target granularity; it's easy to add later, hard to
-   remove once users depend on it.
+2. **Config mode**: `config`, pointing at a `version: 3` YAML file that owns
+   everything non-secret, including what used to be run-wide inputs
+   (`advanced.*`, `permissions.*`, `sync.*`, `safety.max_deletes`). Parsed in
+   `configfile.go`, validated by `schema/easysftp.schema.json`.
+3. **Valid in both modes**: credentials (`password`, `private-key`,
+   `passphrase`, `proxy-*` credentials) plus `dry-run` and `log-level`. These
+   change how a run authenticates or reports, never what it deploys.
+
+So a new knob is normally a config-file field, not an input. Adding it as an
+input means arguing why it belongs in category 3. Note the cost of that
+choice: today a user who wants one permission bit set has to convert their
+whole deploy to a config file (issue #133). Per-deployment granularity is a
+separate, later decision; don't build it speculatively.
 
 ## Testing quirks
 
@@ -126,6 +136,33 @@ Look at how existing inputs are wired before adding a new one:
   class in `internal/uploader`. `-race` needs cgo: on a machine without a C
   toolchain it fails with "-race requires cgo". In that case run plain
   `go test ./...`, say so in the PR, and rely on CI for the race pass.
+
+## CI
+
+- Everything CI pulls from outside the repo is pinned by hash: actions by
+  their full commit SHA, and the self-test's SFTP container by `@sha256:`
+  digest with the readable tag as a trailing comment. Dependabot does not
+  update inline `docker run` digests, so that one is bumped by hand
+  (`docker buildx imagetools inspect atmoz/sftp:alpine`). Keep new external
+  dependencies pinned the same way.
+- The self-test job in `.github/workflows/ci.yml` is the only place a real
+  OpenSSH server is exercised, and the only place `action.yml`'s composite
+  wiring runs end to end. Unit tests set `EASYSFTP_*` directly and never see
+  declared input defaults, which is how #62 shipped green.
+
+## Behavior worth knowing before you change it
+
+- Uploads from **Windows runners** have no local permission bits to mirror:
+  Go synthesizes `0666` for writable files, `0444` for read-only ones, loses
+  the executable bit, and reports `0777` for directories (verified on Windows
+  11 / Go 1.25). That is what a run then requests via SETSTAT. Documented in
+  `docs/configuration.md`, `docs/troubleshooting.md` and `docs/examples.md`;
+  keep those in sync if the mode handling changes.
+- The three best-effort SETSTAT warnings (file-mode, dir-mode, preserve-times)
+  are warn-once **per deployment**, not per run: the flags live in
+  `transferEnv` (built in `uploadFiles`) and in `createRemoteDirs`' local
+  `warned`, both of which run once per deployment. The message texts say
+  "for this deployment" and a test pins it; see issue #121.
 
 ## Release process
 
