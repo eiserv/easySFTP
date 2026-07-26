@@ -78,7 +78,7 @@ job:
 | Delete removed files | yes (tracked, via sync) | yes (full wipe) | yes | yes (full wipe) | yes (tracked) |
 | Delete safety guards | yes (root refusal, max_deletes) | no | no | no | no |
 | Multiple targets / modes | yes (config file) | multiple mappings | single directory | single directory | single directory |
-| Dry run | yes | no | yes | no | no |
+| Dry run | yes | yes | yes | no | no |
 | Actively maintained | yes | last release 2024 | yes | yes | yes |
 
 The matrix reflects each project's public documentation as of July 2026.
@@ -96,6 +96,9 @@ no-longer-maintained [Dylan700/sftp-upload-action][dylan]:
   outputs and a job summary
 - end-to-end test suite against an in-process SFTP server, plus a CI self-test
   against a real OpenSSH server
+
+Coming from it? [docs/migration.md](docs/migration.md) maps every input and
+shows a before/after workflow.
 
 [dylan]: https://github.com/Dylan700/sftp-upload-action
 [sam]: https://github.com/SamKirkland/FTP-Deploy-Action
