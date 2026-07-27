@@ -52,6 +52,22 @@ version tags or releases by hand.
    `docs/configuration.md`, and `docs/security.md`, plus the README
    "Versioning" section. They do not update themselves (see issue #63).
 
+## Benchmarks around a release
+
+The `SFTP benchmark` workflow rides along with this flow and needs no manual
+step:
+
+- When the release PR opens, it is benchmarked once and the numbers appear in
+  that run's job summary. Nothing is stored yet.
+- After the release is published, the tagged code is benchmarked again and the
+  result is committed to `main` as the official reference for that version,
+  together with an updated `benchmarks/latest.json` and `benchmarks/latest.md`.
+- Releases older than the current one plus four move to `benchmarks/archive/`.
+
+Both runs need the `BENCHMARK_SFTP_*` secrets. Without them the benchmark job
+fails, which does not block the release: it runs beside the release pipeline,
+not inside it. See [`benchmarks/README.md`](../benchmarks/README.md).
+
 ## Stable asset names
 
 ```text

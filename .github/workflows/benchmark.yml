@@ -1,8 +1,27 @@
 name: SFTP benchmark
 
-# Manually triggered throughput measurement against a real SFTP server
-# (issue #169). It collects data only: no threshold here fails anything, since
-# run-to-run variance against an external host is not understood yet.
+# Throughput measurement against a real SFTP server (issue #169), plus the
+# bookkeeping that turns a measurement into a permanent entry in benchmarks/.
+#
+# It collects data only: no threshold here fails anything, since run-to-run
+# variance against an external host is not understood yet.
+#
+# Three ways in:
+#   workflow_dispatch  a manual or experimental run of any ref, or of a PR via
+#                      the "pr" input. Stored as a *manual* result, which never
+#                      becomes an official reference.
+#   pull_request       every release PR is benchmarked once when it opens, so
+#                      the numbers are visible before the merge. Nothing is
+#                      stored: the release is not real yet.
+#   release            after the release PR merged and release-please published
+#                      the tag, the tagged code is measured once more and that
+#                      result is committed as the official reference.
+#
+# Approval: the "benchmark" environment is the gate for manual and release-PR
+# runs. Give it required reviewers in the repository settings, otherwise every
+# account with write access can start a run against the external host. The
+# automatic post-release run uses "benchmark-release", which is meant to stay
+# unprotected so a release does not wait for a click.
 #
 # Required repository secrets:
 #   BENCHMARK_SFTP_HOST         host name of the benchmark server
@@ -19,6 +38,10 @@ name: SFTP benchmark
 on:
   workflow_dispatch:
     inputs:
+      pr:
+        description: "Pull request number to benchmark. Wins over candidate-ref."
+        required: false
+        type: string
       candidate-ref:
         description: "Ref (branch, tag or SHA) to benchmark. Defaults to the ref this workflow was started from."
         required: false
@@ -42,12 +65,20 @@ on:
         required: false
         default: "22"
         type: string
+  # Release PRs only; the job-level "if" below drops every other pull request.
+  # "opened" and not "synchronize": release-please rewrites its branch on every
+  # push to main, and one preview measurement per release PR is enough.
+  pull_request:
+    types: [opened, reopened]
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 # One benchmark at a time: two runs sharing the host would measure each other,
-# and they would also fight over the same remote directories.
+# they would also fight over the same remote directories, and the storing step
+# would race for a push to main.
 concurrency:
   group: sftp-benchmark
   cancel-in-progress: false
@@ -55,21 +86,70 @@ concurrency:
 jobs:
   benchmark:
     name: Benchmark SFTP throughput
-    # The secrets already require write access to reach; this is the explicit
-    # owner-only gate issue #169 asks for.
-    if: github.actor == github.repository_owner
+    if: >-
+      github.event_name != 'pull_request' ||
+      startsWith(github.head_ref, 'release-please--')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    # The maintainer gate issue #169 asks for. See the header: protect
+    # "benchmark" with required reviewers, leave "benchmark-release" open.
+    environment: ${{ github.event_name == 'release' && 'benchmark-release' || 'benchmark' }}
+    permissions:
+      # Only the release run pushes, but the token is scoped per job.
+      contents: write
     steps:
       # The workflow's own checkout, for scripts/benchmark.sh. It runs first:
       # a root checkout cleans the workspace and would remove the build
       # checkouts below.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Resolve what to benchmark
+        id: resolve
+        env:
+          # Through the environment, never interpolated into the script: these
+          # are user input, and "${{ }}" in a run block is a shell injection.
+          EVENT: ${{ github.event_name }}
+          PR: ${{ inputs.pr }}
+          CANDIDATE: ${{ inputs.candidate-ref }}
+          TAG: ${{ github.event.release.tag_name }}
+          FALLBACK: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+          release)
+            ref=$TAG
+            label=$TAG
+            ;;
+          *)
+            if [ -n "${PR:-}" ]; then
+              case "$PR" in
+              '' | *[!0-9]*)
+                echo "::error::pr must be a number, got '$PR'"
+                exit 1
+                ;;
+              esac
+              ref=refs/pull/$PR/merge
+              label=pr-$PR
+            elif [ -n "${CANDIDATE:-}" ]; then
+              ref=$CANDIDATE
+              label=$CANDIDATE
+            else
+              ref=$FALLBACK
+              label=${GITHUB_REF_NAME:-manual}
+            fi
+            ;;
+          esac
+          {
+            echo "ref=$ref"
+            echo "label=$label"
+            echo "recorded-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+          echo "benchmarking $ref"
+
       - name: Check out the candidate
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ inputs.candidate-ref || github.sha }}
+          ref: ${{ steps.resolve.outputs.ref }}
           path: builds/candidate
 
       - name: Check out the baseline
@@ -88,11 +168,8 @@ jobs:
         id: build
         env:
           CGO_ENABLED: "0"
-          # Through the environment, never interpolated into the script: a ref
-          # is user input, and "${{ }}" in a run block is a shell injection.
-          CANDIDATE_REF_INPUT: ${{ inputs.candidate-ref }}
+          CANDIDATE_REF_INPUT: ${{ steps.resolve.outputs.ref }}
           BASELINE_REF_INPUT: ${{ inputs.baseline-ref }}
-          DEFAULT_REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin"
@@ -101,7 +178,11 @@ jobs:
             ( cd "$dir" && go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/$name" ./cmd/easysftp )
           }
           build builds/candidate easysftp-candidate
-          echo "candidate-ref=${CANDIDATE_REF_INPUT:-$DEFAULT_REF} ($(git -C builds/candidate rev-parse --short HEAD))" >> "$GITHUB_OUTPUT"
+          candidate_sha=$(git -C builds/candidate rev-parse HEAD)
+          {
+            echo "candidate-ref=$CANDIDATE_REF_INPUT ($(git -C builds/candidate rev-parse --short HEAD))"
+            echo "candidate-sha=$candidate_sha"
+          } >> "$GITHUB_OUTPUT"
           if [ -n "$BASELINE_REF_INPUT" ]; then
             build builds/baseline easysftp-baseline
             {
@@ -116,15 +197,15 @@ jobs:
           CANDIDATE_REF: ${{ steps.build.outputs.candidate-ref }}
           BASELINE_BIN: ${{ steps.build.outputs.baseline-bin }}
           BASELINE_REF: ${{ steps.build.outputs.baseline-ref }}
-          REPEATS: ${{ inputs.repeats }}
-          REMOTE_BASE: ${{ inputs.remote-base }}
+          REPEATS: ${{ inputs.repeats || '3' }}
+          REMOTE_BASE: ${{ inputs.remote-base || '/easysftp-benchmark' }}
           # OUT_DIR is uploaded as an artifact; LOG_DIR (which holds logs that
           # name the host and user) deliberately is not.
           OUT_DIR: ${{ runner.temp }}/benchmark-results
           LOG_DIR: ${{ runner.temp }}/benchmark-logs
           DATASET_DIR: ${{ runner.temp }}/benchmark-data
           BENCH_HOST: ${{ secrets.BENCHMARK_SFTP_HOST }}
-          BENCH_PORT: ${{ inputs.port }}
+          BENCH_PORT: ${{ inputs.port || '22' }}
           BENCH_USERNAME: ${{ secrets.BENCHMARK_SFTP_USERNAME }}
           BENCH_PASSWORD: ${{ secrets.BENCHMARK_SFTP_PASSWORD }}
           BENCH_KNOWN_HOSTS: ${{ secrets.BENCHMARK_SFTP_KNOWN_HOSTS }}
@@ -141,3 +222,50 @@ jobs:
           name: benchmark-${{ github.run_id }}
           path: ${{ runner.temp }}/benchmark-results
           if-no-files-found: ignore
+
+      # Everything below stores the result in benchmarks/ on main. A release PR
+      # run (pull_request) stops here: nothing has been released yet.
+      - name: Check out main for storing
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          path: store-main
+          # Full history: the commit below rebases onto whatever landed on main
+          # while the benchmark was running, which a shallow clone cannot do.
+          fetch-depth: 0
+
+      - name: Store the result
+        if: github.event_name != 'pull_request'
+        env:
+          BENCH_DIR: store-main/benchmarks
+          RESULTS_JSON: ${{ runner.temp }}/benchmark-results/results.json
+          SUMMARY_MD: ${{ runner.temp }}/benchmark-results/summary.md
+          KIND: ${{ github.event_name == 'release' && 'release' || 'manual' }}
+          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+          LABEL: ${{ steps.resolve.outputs.label }}
+          RECORDED_AT: ${{ steps.resolve.outputs.recorded-at }}
+          COMMIT: ${{ steps.build.outputs.candidate-sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/benchmark-store.sh
+
+      - name: Commit the result to main
+        if: github.event_name != 'pull_request'
+        working-directory: store-main
+        env:
+          KIND: ${{ github.event_name == 'release' && 'release' || 'manual' }}
+          NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || steps.resolve.outputs.label }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add benchmarks
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore: store $KIND benchmark for $NAME"
+          # main usually moved on during a run that takes minutes; only new
+          # files are added here, so replaying them on top is safe.
+          git pull --rebase origin main
+          git push origin HEAD:main

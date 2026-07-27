@@ -155,6 +155,19 @@ granularity is a separate, later decision; don't build it speculatively.
   wiring runs end to end. Unit tests set `EASYSFTP_*` directly and never see
   declared input defaults, which is how #62 shipped green.
 
+## Benchmarks
+
+`scripts/benchmark.sh` measures, `scripts/benchmark-store.sh` files the result
+under `benchmarks/`; `benchmarks/README.md` documents the layout and is the
+page to keep in sync when either script changes. Read `benchmarks/index.json`
+before opening single files.
+
+Two invariants the whole thing rests on: a stored result is never rewritten
+(storing an existing name fails), and `latest.*` is only ever a copy of a
+`kind: "release"` entry, so a manual run cannot become an official number.
+`scripts/test-benchmark-store.sh` (run by CI, needs `jq`) pins the retention
+window, the archiving and both invariants.
+
 ## Behavior worth knowing before you change it
 
 - Uploads from **Windows runners** have no local permission bits to mirror:

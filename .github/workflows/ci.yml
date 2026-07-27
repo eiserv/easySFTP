@@ -32,6 +32,12 @@ jobs:
         shell: bash
         run: bash scripts/test-action.sh
 
+      # Linux only: the benchmark workflow runs on ubuntu-24.04, so that is the
+      # only platform this bookkeeping has to work on.
+      - name: Test benchmark storage and retention
+        if: runner.os == 'Linux'
+        run: bash scripts/test-benchmark-store.sh
+
       - name: Validate action metadata
         run: go test ./internal/actionmeta
 
