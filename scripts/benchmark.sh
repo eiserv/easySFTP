@@ -123,6 +123,9 @@ generate_dataset() {
 }
 
 # run_easysftp <binary> <source> <remote> <mode> <log> <outputs-file>
+# BENCH_* are never assigned here: they come from the environment and
+# require_env has already refused an empty one.
+# shellcheck disable=SC2153
 run_easysftp() {
   local binary=$1 source=$2 remote=$3 mode=$4 log=$5 outputs=$6
   : >"$outputs"
