@@ -11,6 +11,7 @@ import (
 	"github.com/pkg/sftp"
 
 	"github.com/eiserv/easySFTP/internal/config"
+	"github.com/eiserv/easySFTP/internal/metrics"
 )
 
 // createRemoteDirs creates every remote directory the plan needs with as few
@@ -21,7 +22,10 @@ import (
 // look closer, to report a path that already exists as a file clearly.
 func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, watch *stallWatchdog, log Logger) error {
 	for _, dir := range leafDirs(dirs) {
-		if err := client.MkdirAll(dir); err != nil {
+		done := metrics.Op("sftp_mkdirall")
+		err := client.MkdirAll(dir)
+		done(err)
+		if err != nil {
 			if bad := nonDirConflict(client, dir); bad != "" {
 				return fmt.Errorf("remote path %q exists but is not a directory", bad)
 			}
@@ -33,7 +37,10 @@ func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, 
 	if dirMode != nil {
 		warned := false
 		for _, dir := range dirs {
-			if err := client.Chmod(dir, dirMode.Perm()); err != nil && !warned {
+			done := metrics.Op("sftp_chmod_dir")
+			err := client.Chmod(dir, dirMode.Perm())
+			done(err)
+			if err != nil && !warned {
 				// Scoped to this pass (one per deployment), like the file-mode
 				// and preserve-times warnings in transfer.go; see issue #121.
 				log.Warningf("could not set dir-mode %04o on %s (server may reject SETSTAT); not warning again for this deployment: %v", dirMode.Perm(), dir, err)
@@ -101,7 +108,9 @@ func checkMaxDeletes(n int, cfg *config.Config) error {
 // dir yields empty lists and no error. Each completed directory listing ticks
 // the stall watchdog, so a deep but progressing scan is not read as a stall.
 func listRemoteContents(client *sftp.Client, dir string, watch *stallWatchdog) (files, dirs []string, err error) {
+	done := metrics.Op("sftp_readdir")
 	entries, err := client.ReadDir(dir)
+	done(err)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil, nil

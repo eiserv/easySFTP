@@ -38,6 +38,14 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/test-benchmark-store.sh
 
+      # Drives both measuring scripts end to end against a stub binary, so the
+      # jq aggregation, the schema and the CSV columns are checked without an
+      # SFTP server. The container job below covers the other half: that a real
+      # easySFTP run actually produces the metrics they aggregate.
+      - name: Test the benchmark aggregation
+        if: runner.os == 'Linux'
+        run: bash scripts/test-benchmark.sh
+
       - name: Validate action metadata
         run: go test ./internal/actionmeta
 
@@ -371,6 +379,51 @@ jobs:
           bash scripts/benchmark.sh
           jq -e '.results | length == 3 and all(.files > 0 and .median_ms > 0 and .failed_runs == 0)' "$OUT_DIR/results.json"
           test -s "$OUT_DIR/summary.md"
+          test -s "$OUT_DIR/results.csv"
+          # The instrumentation half: a real run must have produced phases, the
+          # per-round-trip operation samples and the process metrics. Asserted
+          # here because the stub-driven test above cannot prove that
+          # internal/metrics is wired into the upload path at all.
+          jq -e '.results[] | select(.label == "candidate" and .scenario == "small")
+                 | (.phases | map(.name) | index("upload")) != null
+                   and ((.operations | map(select(.name == "sftp_open")) | first | .count) == 300)
+                   and .process.max_rss_bytes > 0
+                   and .process.user_cpu_ms > 0
+                   and .process.net_write_bytes > 0
+                   and .counters.connections_opened == 1' "$OUT_DIR/results.json"
+
+      # A two-by-two grid of the matrix sweep: enough to prove the plumbing
+      # (config generation for both axes, per-cell aggregation, the CSV) without
+      # spending the self-test's minutes on a full sweep against a container
+      # whose numbers mean nothing anyway.
+      - name: Smoke-test the matrix benchmark
+        env:
+          CANDIDATE_BIN: ${{ runner.temp }}/bench-bin/easysftp
+          CANDIDATE_REF: self-test
+          REPEATS: "1"
+          MATRIX_CONNECTIONS: "1 2"
+          MATRIX_CONCURRENCY: "1 4"
+          MATRIX_SCENARIOS: "small single"
+          REMOTE_BASE: /upload/benchmark
+          OUT_DIR: ${{ runner.temp }}/matrix-out
+          LOG_DIR: ${{ runner.temp }}/matrix-logs
+          DATASET_DIR: ${{ runner.temp }}/bench-data
+          BENCH_HOST: localhost
+          BENCH_PORT: "2222"
+          BENCH_USERNAME: demo
+          BENCH_PASSWORD: demopass
+        run: |
+          BENCH_KNOWN_HOSTS=$(ssh-keyscan -p 2222 localhost 2>/dev/null)
+          export BENCH_KNOWN_HOSTS
+          bash scripts/benchmark-matrix.sh
+          jq -e '.cells | length == 8 and all(.median_ms > 0 and .failed_runs == 0)' "$OUT_DIR/matrix.json"
+          # connections > concurrency must be measured, not rejected, and the
+          # pool must really cap at the concurrency there (see the pool note in
+          # internal/uploader/session.go).
+          jq -e '[.cells[] | select(.connections == 2 and .concurrency == 1)]
+                 | length > 0 and all(.connections_used == 1)' "$OUT_DIR/matrix.json"
+          test -s "$OUT_DIR/matrix.csv"
+          test -s "$OUT_DIR/matrix.md"
 
       - name: Verify the benchmark left nothing behind
         run: |

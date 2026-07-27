@@ -4,6 +4,8 @@ import (
 	"io"
 	"sync/atomic"
 	"time"
+
+	"github.com/eiserv/easySFTP/internal/metrics"
 )
 
 // stallWatchdog fails a run fast when its active transfers stop making
@@ -80,6 +82,7 @@ func (w *stallWatchdog) monitor() {
 		}
 		if time.Since(lastChange) >= w.timeout {
 			w.fired.Store(true)
+			metrics.Count("stalls", 1)
 			w.log.Warningf("no transfer progress for %s; closing the connection so the run fails fast (stall-timeout)", w.timeout)
 			w.kill()
 			return

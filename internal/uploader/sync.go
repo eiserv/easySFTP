@@ -15,6 +15,7 @@ import (
 	"github.com/pkg/sftp"
 
 	"github.com/eiserv/easySFTP/internal/config"
+	"github.com/eiserv/easySFTP/internal/metrics"
 )
 
 // manifestVersion is written to every manifest this version of easySFTP
@@ -51,11 +52,14 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	// (within the shared reconnect budget) instead of failing the run, and a
 	// hung server trips stall-timeout; see issue #107.
 	var old manifest
-	if err := sess.do(ctx, watch, func(client *sftp.Client) error {
+	endRead := metrics.Phase("manifest_read")
+	err := sess.do(ctx, watch, func(client *sftp.Client) error {
 		var err error
 		old, err = readManifest(client, base, cfg.SyncManifestName(), log)
 		return err
-	}); err != nil {
+	})
+	endRead()
+	if err != nil {
 		return fmt.Errorf("reading sync manifest in %q: %w", base, err)
 	}
 
@@ -67,7 +71,10 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	if cfg.SyncFastPath {
 		cached = old.Files
 	}
-	if err := hashPlanFiles(ctx, p.files, cfg.Concurrency, cached); err != nil {
+	endHash := metrics.Phase("hash")
+	err = hashPlanFiles(ctx, p.files, cfg.Concurrency, cached)
+	endHash()
+	if err != nil {
 		return fmt.Errorf("hashing local files under %q: %w", p.pair.Local, err)
 	}
 
@@ -120,6 +127,7 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	}
 
 	var deleted []string // relative paths actually removed, for the recovery manifest
+	endSweep := metrics.Phase("delete_sweep")
 	for _, rel := range toDelete {
 		full := path.Join(base, rel)
 		if cfg.LogPerFile() {
@@ -129,12 +137,16 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 			err := sess.do(ctx, watch, func(client *sftp.Client) error {
 				// Already-gone counts as deleted: a retried delete may have
 				// landed before the connection died.
-				if err := client.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+				done := metrics.Op("sftp_remove")
+				err := client.Remove(full)
+				done(err)
+				if err != nil && !errors.Is(err, os.ErrNotExist) {
 					return err
 				}
 				return nil
 			})
 			if err != nil {
+				endSweep()
 				writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, deleted), log)
 				return fmt.Errorf("deleting %q: %w", full, err)
 			}
@@ -142,6 +154,7 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		stats.FilesDeleted++
 		deleted = append(deleted, rel)
 	}
+	endSweep()
 	stats.FilesSkipped += len(p.files) - len(upload)
 
 	if cfg.DryRun {
@@ -153,9 +166,12 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		deletedFull[i] = path.Join(base, rel)
 	}
 	pruneEmptyDirs(ctx, sess, watch, base, deletedFull)
-	if err := sess.do(ctx, watch, func(client *sftp.Client) error {
+	endWrite := metrics.Phase("manifest_write")
+	err = sess.do(ctx, watch, func(client *sftp.Client) error {
 		return writeManifest(client, base, cfg.SyncManifestName(), manifest{Version: manifestVersion, Files: local})
-	}); err != nil {
+	})
+	endWrite()
+	if err != nil {
 		return fmt.Errorf("writing sync manifest in %q: %w", base, err)
 	}
 	return nil
@@ -309,9 +325,13 @@ func pruneEmptyDirs(ctx context.Context, sess *session, watch *stallWatchdog, ba
 	}
 	// Deepest paths sort last; remove them first so parents can then empty out.
 	sort.Sort(sort.Reverse(sort.StringSlice(candidates)))
+	defer metrics.Phase("prune_dirs")()
 	for _, dir := range candidates {
 		_ = sess.do(ctx, watch, func(client *sftp.Client) error {
-			return client.RemoveDirectory(dir)
+			done := metrics.Op("sftp_rmdir")
+			err := client.RemoveDirectory(dir)
+			done(err)
+			return err
 		})
 	}
 }

@@ -61,9 +61,11 @@ step:
   that run's job summary. Nothing is stored yet.
 - After Release Please created the release, the `Release` workflow calls the
   benchmark with the new tag. The tagged code is measured and the result is
-  committed to `main` as the official reference for that version, together with
-  an updated `benchmarks/latest.json` and `benchmarks/latest.md`.
-- Releases older than the current one plus four move to `benchmarks/archive/`.
+  committed to `main` as `benchmarks/releases/release-vX.Y.Z.*`, the official
+  reference for that version, together with an updated `benchmarks/latest.json`
+  and `benchmarks/latest.md`.
+- Releases older than the current one plus four move to
+  `benchmarks/archive/releases/`.
 
 The benchmark is a `uses:` call from the `Release` workflow and **not** an
 `on: release` trigger: Release Please creates the release with the

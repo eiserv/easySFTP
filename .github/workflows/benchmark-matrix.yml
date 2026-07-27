@@ -1,0 +1,257 @@
+name: SFTP benchmark matrix
+
+# Connections/concurrency sweep, the counterpart to
+# .github/workflows/benchmark.yml.
+#
+# benchmark.yml answers "is this build faster at the default settings" and its
+# result is what a release is measured by. This workflow answers "how does a
+# change move the whole scaling curve": it sweeps advanced.connections against
+# advanced.concurrency and stores one cell per combination, so the result can
+# be read as a heatmap instead of as a single number.
+#
+# Manual only, and never official: a matrix result is a settings sweep, so it
+# is stored as kind "matrix" and can never become latest.*. It shares the
+# "sftp-benchmark" concurrency group with benchmark.yml, since both measure the
+# same host and two of them at once would measure each other.
+#
+# Cost: the default grid is 4 connection values x 5 concurrency values x 3
+# scenarios x the number of builds. That is over a hundred measured runs; the
+# job's timeout is generous for that reason, and the inputs exist so a quick
+# look can be a quick look.
+#
+# Secrets, runner and approval: identical to benchmark.yml; see its header for
+# the reasoning, including why this must stay off "on: release" and why the
+# self-hosted runner needs the fork-PR repository setting.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to benchmark. Wins over candidate-ref."
+        required: false
+        type: string
+      candidate-ref:
+        description: "Ref (branch, tag or SHA) to sweep. Defaults to the ref this workflow was started from."
+        required: false
+        type: string
+      baseline-ref:
+        description: "Optional second ref, swept cell by cell alongside the candidate (e.g. main)."
+        required: false
+        type: string
+      connections:
+        description: "advanced.connections values to sweep, space separated."
+        required: false
+        default: "1 2 4 8"
+        type: string
+      concurrency:
+        description: "advanced.concurrency values to sweep, space separated."
+        required: false
+        default: "1 2 4 8 16"
+        type: string
+      request-concurrency:
+        description: "Optional third axis (advanced.request_concurrency), space separated. Empty keeps easySFTP's default and the grid two-dimensional."
+        required: false
+        default: ""
+        type: string
+      scenarios:
+        description: "Payloads to sweep: any of small, mixed, large, single."
+        required: false
+        default: "small large single"
+        type: string
+      repeats:
+        description: "Measured repeats per cell; the median is reported."
+        required: false
+        default: "1"
+        type: string
+      store:
+        description: "Commit the result to benchmarks/matrix/ on main."
+        required: false
+        default: true
+        type: boolean
+      remote-base:
+        description: "Remote directory the benchmark owns. Everything below it is disposable."
+        required: false
+        default: "/easysftp-benchmark"
+        type: string
+      port:
+        description: "SFTP port of the benchmark server."
+        required: false
+        default: "22"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sftp-benchmark
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    name: Sweep connections against concurrency
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 360
+    environment: benchmark
+    permissions:
+      contents: write
+    steps:
+      # The workflow's own checkout, for the scripts. It runs first: a root
+      # checkout cleans the workspace and would remove the build checkouts.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Resolve what to benchmark
+        id: resolve
+        env:
+          # Through the environment, never interpolated into the script: these
+          # are user input, and "${{ }}" in a run block is a shell injection.
+          PR: ${{ inputs.pr }}
+          CANDIDATE: ${{ inputs.candidate-ref }}
+          FALLBACK: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PR:-}" ]; then
+            case "$PR" in
+            *[!0-9]*)
+              echo "::error::pr must be a number, got '$PR'"
+              exit 1
+              ;;
+            esac
+            ref=refs/pull/$PR/merge
+            label=pr-$PR
+          elif [ -n "${CANDIDATE:-}" ]; then
+            ref=$CANDIDATE
+            label=$CANDIDATE
+          else
+            ref=$FALLBACK
+            label=${GITHUB_REF_NAME:-manual}
+          fi
+          {
+            echo "ref=$ref"
+            echo "label=$label"
+            echo "recorded-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+          echo "sweeping $ref"
+
+      - name: Check out the candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.resolve.outputs.ref }}
+          path: builds/candidate
+
+      - name: Check out the baseline
+        if: inputs.baseline-ref != ''
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.baseline-ref }}
+          path: builds/baseline
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build both refs
+        id: build
+        env:
+          CGO_ENABLED: "0"
+          CANDIDATE_REF_INPUT: ${{ steps.resolve.outputs.ref }}
+          BASELINE_REF_INPUT: ${{ inputs.baseline-ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          build() {
+            local dir=$1 name=$2
+            ( cd "$dir" && go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/$name" ./cmd/easysftp )
+          }
+          build builds/candidate easysftp-candidate
+          {
+            echo "candidate-ref=$CANDIDATE_REF_INPUT ($(git -C builds/candidate rev-parse --short HEAD))"
+            echo "candidate-sha=$(git -C builds/candidate rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$BASELINE_REF_INPUT" ]; then
+            build builds/baseline easysftp-baseline
+            {
+              echo "baseline-bin=$RUNNER_TEMP/bin/easysftp-baseline"
+              echo "baseline-ref=$BASELINE_REF_INPUT ($(git -C builds/baseline rev-parse --short HEAD))"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the matrix benchmark
+        env:
+          CANDIDATE_BIN: ${{ runner.temp }}/bin/easysftp-candidate
+          CANDIDATE_REF: ${{ steps.build.outputs.candidate-ref }}
+          BASELINE_BIN: ${{ steps.build.outputs.baseline-bin }}
+          BASELINE_REF: ${{ steps.build.outputs.baseline-ref }}
+          REPEATS: ${{ inputs.repeats || '1' }}
+          REMOTE_BASE: ${{ inputs.remote-base || '/easysftp-benchmark' }}
+          MATRIX_CONNECTIONS: ${{ inputs.connections }}
+          MATRIX_CONCURRENCY: ${{ inputs.concurrency }}
+          MATRIX_REQUEST_CONCURRENCY: ${{ inputs.request-concurrency }}
+          MATRIX_SCENARIOS: ${{ inputs.scenarios }}
+          # OUT_DIR is uploaded as an artifact; LOG_DIR (which holds logs that
+          # name the host and user) deliberately is not.
+          OUT_DIR: ${{ runner.temp }}/matrix-results
+          LOG_DIR: ${{ runner.temp }}/matrix-logs
+          DATASET_DIR: ${{ runner.temp }}/matrix-data
+          BENCH_HOST: ${{ secrets.BENCHMARK_SFTP_HOST }}
+          BENCH_PORT: ${{ inputs.port || '22' }}
+          BENCH_USERNAME: ${{ secrets.BENCHMARK_SFTP_USERNAME }}
+          BENCH_PASSWORD: ${{ secrets.BENCHMARK_SFTP_PASSWORD }}
+          BENCH_KNOWN_HOSTS: ${{ secrets.BENCHMARK_SFTP_KNOWN_HOSTS }}
+        run: bash scripts/benchmark-matrix.sh
+
+      - name: Publish the summary
+        if: always()
+        run: cat "$RUNNER_TEMP/matrix-results/matrix.md" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-matrix-${{ github.run_id }}
+          path: ${{ runner.temp }}/matrix-results
+          if-no-files-found: ignore
+
+      - name: Check out main for storing
+        if: inputs.store
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          path: store-main
+          # Full history: the commit below rebases onto whatever landed on main
+          # while the sweep was running, which a shallow clone cannot do.
+          fetch-depth: 0
+
+      - name: Store the result
+        if: inputs.store
+        env:
+          BENCH_DIR: store-main/benchmarks
+          RESULTS_JSON: ${{ runner.temp }}/matrix-results/matrix.json
+          SUMMARY_MD: ${{ runner.temp }}/matrix-results/matrix.md
+          RESULTS_CSV: ${{ runner.temp }}/matrix-results/matrix.csv
+          KIND: matrix
+          LABEL: ${{ steps.resolve.outputs.label }}
+          RECORDED_AT: ${{ steps.resolve.outputs.recorded-at }}
+          COMMIT: ${{ steps.build.outputs.candidate-sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/benchmark-store.sh
+
+      - name: Commit the result to main
+        if: inputs.store
+        working-directory: store-main
+        env:
+          NAME: ${{ steps.resolve.outputs.label }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add benchmarks
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore: store matrix benchmark for $NAME"
+          # main usually moved on during a run that takes an hour; only new
+          # files are added here, so replaying them on top is safe.
+          git pull --rebase origin main
+          git push origin HEAD:main

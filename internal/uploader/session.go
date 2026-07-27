@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/eiserv/easySFTP/internal/config"
+	"github.com/eiserv/easySFTP/internal/metrics"
 )
 
 // conn is one live SSH/SFTP client pair.
@@ -65,10 +66,15 @@ func newSession(ctx context.Context, cfg *config.Config, log Logger) (*session, 
 				return nil, err
 			}
 		}
+		done := metrics.Op("ssh_connect")
 		sshClient, sftpClient, closeJump, err := connect(cfg, log)
+		done(err)
 		if err == nil {
+			metrics.Count("connections_opened", 1)
+			metrics.Count("connections_used", 1) // slot 0, dialed up front
 			s := &session{cfg: cfg, log: log, conns: make([]*conn, poolSize(cfg, log))}
 			s.conns[0] = &conn{ssh: sshClient, sftp: sftpClient, closeJump: closeJump}
+			metrics.Set("connections_pool_size", int64(len(s.conns)))
 			return s, nil
 		}
 		lastErr = err
@@ -136,10 +142,17 @@ func (s *session) acquire(index int) (*sftp.Client, *conn, int) {
 	if s.conns[slot] == nil {
 		c, err := s.dial()
 		if err != nil {
+			metrics.Count("connections_refused", 1)
 			s.log.Warningf("could not open connection %d of %d (%v); this run continues on its first connection",
 				slot+1, len(s.conns), err)
 			c = s.conns[0]
+		} else {
+			metrics.Count("connections_opened", 1)
 		}
+		// Slots the run actually reached, however they resolved: a pool whose
+		// tail is never touched (fewer files than connections) is the other
+		// way a configured connection can end up unused.
+		metrics.Count("connections_used", 1)
 		s.conns[slot] = c
 	}
 	c := s.conns[slot]
@@ -193,15 +206,21 @@ func (s *session) reconnect(ctx context.Context, c *conn, gen int) (*sftp.Client
 		return nil, fmt.Errorf("connection lost and the reconnect budget is spent (%d, from the retries input)", s.cfg.Retries)
 	}
 	s.reconnects++
+	metrics.Count("reconnects", 1)
+	// The op spans the backoff too: from the run's point of view that wait is
+	// exactly what a dropped connection costs.
+	doneReconnect := metrics.Op("reconnect")
 	backoff := time.Duration(1<<(s.reconnects-1)) * time.Second
 	s.log.Warningf("connection to the server was lost; reconnecting in %s (reconnect %d/%d)", backoff, s.reconnects, s.cfg.Retries)
 	if err := sleepCtx(ctx, backoff); err != nil {
+		doneReconnect(err)
 		return nil, err
 	}
 	c.sftp.Close()
 	c.ssh.Close()
 	c.closeJump()
 	sshClient, sftpClient, closeJump, err := connect(s.cfg, s.log)
+	doneReconnect(err)
 	if err != nil {
 		return nil, fmt.Errorf("reconnecting: %w", err)
 	}

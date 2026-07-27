@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/eiserv/easySFTP/internal/config"
+	"github.com/eiserv/easySFTP/internal/metrics"
 )
 
 // keepaliveInterval is how often sendKeepalives pings the connection. It is
@@ -150,7 +151,7 @@ func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, func(),
 	cleanup := noop
 	if cfg.Proxy == nil {
 		log.Infof("connecting to %s as %s ...", target.addr, target.user)
-		sshClient, err = ssh.Dial("tcp", target.addr, targetConfig)
+		sshClient, err = dialSSH(target.addr, targetConfig)
 		if err != nil {
 			return nil, nil, noop, fmt.Errorf("connecting to %s: %w", target.addr, err)
 		}
@@ -174,6 +175,29 @@ func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, func(),
 	return sshClient, sftpClient, cleanup, nil
 }
 
+// dialSSH is ssh.Dial, except that a benchmark run (metrics enabled) gets the
+// transport wrapped in a byte counter first, which is the only way to see what
+// the SSH framing adds on top of the payload. A normal run takes the plain
+// ssh.Dial path and is bit for bit what it was before the counter existed:
+// this must not put a wrapper into every production transfer.
+func dialSSH(addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
+	if !metrics.Enabled() {
+		return ssh.Dial("tcp", addr, cfg)
+	}
+	// Mirrors ssh.Dial: the config timeout covers the TCP dial, the handshake
+	// deadline handling stays inside ssh.NewClientConn.
+	c, err := net.DialTimeout("tcp", addr, cfg.Timeout)
+	if err != nil {
+		return nil, err
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(metrics.CountConn(c), addr, cfg)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	return ssh.NewClient(ncc, chans, reqs), nil
+}
+
 // dialViaJump connects to the jump host with its own auth and host key
 // verification, opens a TCP tunnel to the target through it, and runs the
 // target's SSH handshake (with the target's own host key verification) over
@@ -185,7 +209,7 @@ func dialViaJump(cfg *config.Config, targetAddr string, targetConfig *ssh.Client
 		return nil, nil, err
 	}
 	log.Infof("connecting to jump host %s as %s ...", jump.addr, jump.user)
-	jumpClient, err := ssh.Dial("tcp", jump.addr, jumpConfig)
+	jumpClient, err := dialSSH(jump.addr, jumpConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to jump host %s: %w", jump.addr, err)
 	}

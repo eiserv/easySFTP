@@ -7,6 +7,12 @@
 # slow number, because run-to-run variance against an external host is not
 # understood yet.
 #
+# Beyond the total duration, every measured run is instrumented via
+# EASYSFTP_METRICS_FILE (see internal/metrics): phase wall-clock times,
+# per-round-trip operation samples, process CPU/RSS, Go allocation and GC
+# counters and the run's connection bookkeeping. That is what turns "the small
+# scenario is slow" into "the small scenario spends its time in sftp_open".
+#
 # Everything comes from the environment; .github/workflows/benchmark.yml builds
 # the binaries and sets these:
 #
@@ -26,54 +32,21 @@
 # Candidate and baseline are interleaved repeat by repeat, not run as two
 # blocks: a shared host's throughput drifts over minutes, and a block layout
 # would charge that drift to whichever build ran second.
-#
-# "Median" here is the lower middle value for an even repeat count, which is
-# why an odd number of repeats is the better choice.
 
 set -euo pipefail
 
-# Scenario payloads, as "<count>:<KiB each>" groups. Fixed on purpose: a
-# benchmark whose payload changes between runs measures nothing.
-scenario_spec() {
-  case $1 in
-  small) echo '300:4' ;;               # per-file round-trip overhead dominates
-  mixed) echo '40:16 12:256 4:2048' ;; # roughly a built website
-  large) echo '2:16384' ;;             # raw transfer throughput
-  *)
-    echo "::error::unknown scenario $1" >&2
-    return 1
-    ;;
-  esac
-}
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+# shellcheck source=scripts/benchmark-lib.sh disable=SC1091
+source "$script_dir/benchmark-lib.sh"
 
+# The standard benchmark's scenario set is fixed: adding one here would make
+# every stored result before it incomparable. The matrix benchmark
+# (scripts/benchmark-matrix.sh) is where new scenarios such as "single" live.
 SCENARIOS=(small mixed large)
-
-require_env() {
-  local name missing=0
-  for name in "$@"; do
-    if [[ -z "${!name:-}" ]]; then
-      echo "::error::$name is required but empty" >&2
-      missing=1
-    fi
-  done
-  if ((missing)); then
-    echo "::error::See the secret list in .github/workflows/benchmark.yml" >&2
-    exit 1
-  fi
-}
 
 require_env CANDIDATE_BIN CANDIDATE_REF OUT_DIR DATASET_DIR LOG_DIR \
   REMOTE_BASE BENCH_HOST BENCH_USERNAME BENCH_PASSWORD BENCH_KNOWN_HOSTS
-
-# Checked because the benchmark runs on a self-hosted runner, where a
-# GitHub-hosted image's preinstalled tools are not a given. Better here than
-# after minutes of measuring.
-for cmd in jq nproc; do
-  command -v "$cmd" >/dev/null || {
-    echo "::error::$cmd is required but not installed on this runner" >&2
-    exit 1
-  }
-done
+require_tools jq nproc
 
 REPEATS=${REPEATS:-3}
 BENCH_PORT=${BENCH_PORT:-22}
@@ -91,147 +64,33 @@ if [[ -n "$BENCH_CONNECTIONS" && ! "$BENCH_CONNECTIONS" =~ ^[1-9][0-9]*$ ]]; the
   exit 1
 fi
 
-# The benchmark wipes everything below "$REMOTE_BASE/<build>/<scenario>" before
-# every repeat, so a too-broad path is a data-loss bug, not a slow benchmark.
-# easySFTP itself refuses "/"; this refuses the rest of the obvious mistakes.
-case "$REMOTE_BASE" in
-/ | . | .. | */)
-  echo "::error::REMOTE_BASE ('$REMOTE_BASE') must be a dedicated directory such as /easysftp-benchmark, without a trailing slash" >&2
-  exit 1
-  ;;
-esac
-
+check_remote_base
 mkdir -p "$OUT_DIR" "$DATASET_DIR" "$LOG_DIR"
-
-# Run logs echo the host name and the user name, both secrets here. OUT_DIR is
-# uploaded as a workflow artifact, where nothing is masked, so the logs must
-# live outside it.
-out_abs=$(cd "$OUT_DIR" && pwd -P)
-log_abs=$(cd "$LOG_DIR" && pwd -P)
-if [[ "$log_abs" == "$out_abs" || "$log_abs" == "$out_abs"/* ]]; then
-  echo "::error::LOG_DIR must not be inside OUT_DIR: run logs name the host and user, and OUT_DIR is uploaded as an artifact" >&2
-  exit 1
-fi
+check_log_dir
 
 runs_file="$LOG_DIR/runs.jsonl"
 aggregate_file="$LOG_DIR/aggregate.json"
 : >"$runs_file"
 
-generate_dataset() {
-  local scenario dir spec count size index sub
-  local -a specs
-  mkdir -p "$DATASET_DIR/empty"
-  for scenario in "${SCENARIOS[@]}"; do
-    dir="$DATASET_DIR/$scenario"
-    rm -rf "$dir"
-    index=0
-    read -r -a specs <<<"$(scenario_spec "$scenario")"
-    for spec in "${specs[@]}"; do
-      count=${spec%%:*}
-      size=${spec##*:}
-      while ((count-- > 0)); do
-        # Spread over subdirectories so remote directory creation is part of
-        # the measurement, as it is in a real site upload.
-        sub="$dir/part$((index % 8))"
-        mkdir -p "$sub"
-        head -c "$((size * 1024))" /dev/urandom >"$sub/file$index.bin"
-        index=$((index + 1))
-      done
-    done
-    echo "dataset $scenario: $index file(s), $(du -sh "$dir" | cut -f1)"
-  done
-}
-
-# run_easysftp <binary> <source> <remote> <mode> <log> <outputs-file> [connections]
-#
-# Without a connections value this is an inline run, exactly what a workflow
-# with source/target inputs does. With one, the run goes through a generated
-# config file instead: advanced.connections has no input (every non-secret
-# setting has exactly one home in v3), and inline inputs may not be combined
-# with a config file. That file names the host and the user, so it is written
-# to LOG_DIR, which is never uploaded as an artifact.
-#
-# BENCH_* are never assigned here: they come from the environment and
-# require_env has already refused an empty one.
-# shellcheck disable=SC2153
-run_easysftp() {
-  local binary=$1 source=$2 remote=$3 mode=$4 log=$5 outputs=$6 connections=${7:-}
-  : >"$outputs"
-  local -a vars=(GITHUB_OUTPUT="$outputs" EASYSFTP_PASSWORD="$BENCH_PASSWORD")
-  if [[ -n "$connections" ]]; then
-    local config="$LOG_DIR/config.yml"
-    {
-      echo "version: 3"
-      echo "connection:"
-      echo "  host: \"$BENCH_HOST\""
-      echo "  port: $BENCH_PORT"
-      echo "  username: \"$BENCH_USERNAME\""
-      echo "  known_hosts: |"
-      printf '%s\n' "$BENCH_KNOWN_HOSTS" | sed 's/^/    /'
-      echo "deployments:"
-      echo "  benchmark:"
-      echo "    source: \"$source\""
-      echo "    target: \"$remote\""
-      echo "    mode: $mode"
-      echo "advanced:"
-      echo "  connections: $connections"
-    } >"$config"
-    vars+=(EASYSFTP_CONFIG="$config")
-  else
-    vars+=(
-      EASYSFTP_HOST="$BENCH_HOST"
-      EASYSFTP_PORT="$BENCH_PORT"
-      EASYSFTP_USERNAME="$BENCH_USERNAME"
-      EASYSFTP_KNOWN_HOSTS="$BENCH_KNOWN_HOSTS"
-      EASYSFTP_SOURCE="$source"
-      EASYSFTP_TARGET="$remote"
-      EASYSFTP_MODE="$mode"
-    )
-  fi
-  env "${vars[@]}" "$binary" >"$log" 2>&1
-}
-
-# step_number <outputs-file> <name>: reads a number written in the
-# GITHUB_OUTPUT heredoc format, 0 when the run died before writing it.
-step_number() {
-  local value
-  value=$(awk -v key="$2" 'index($0, key "<<") == 1 { getline; print; exit }' "$1")
-  if [[ "$value" =~ ^[0-9]+$ ]]; then
-    echo "$value"
-  else
-    echo 0
-  fi
-}
-
-# count_matches <file> <grep args...>: always prints a number, so the callers
-# can hand it straight to "jq --argjson".
-count_matches() {
-  local file=$1 count
-  shift
-  count=$(grep -c "$@" "$file" 2>/dev/null || true)
-  if [[ "$count" =~ ^[0-9]+$ ]]; then
-    echo "$count"
-  else
-    echo 0
-  fi
-}
-
-# measure <label> <binary> <ref> <scenario> <repeat> <connections>
+# measure <label> <binary> <ref> <scenario> <repeat> <advanced-yaml>
 measure() {
-  local label=$1 binary=$2 ref=$3 scenario=$4 repeat=$5 connections=$6
+  local label=$1 binary=$2 ref=$3 scenario=$4 repeat=$5 advanced=$6
   local remote="$REMOTE_BASE/$label/$scenario"
   local stem="$LOG_DIR/$label-$scenario-$repeat"
   local code=0
 
   # Unmeasured: every repeat starts from the same empty remote directory, so
   # repeat 1 (uploading into nothing) measures the same thing as the repeats
-  # after it (which would otherwise overwrite existing files).
-  if ! run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean "$stem.clean.log" "$stem.clean.out" "$connections"; then
+  # after it (which would otherwise overwrite existing files). METRICS_FILE is
+  # cleared for it, so the pre-clean's own numbers can never be mistaken for
+  # the measurement's.
+  if ! METRICS_FILE= run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean "$stem.clean.log" "$stem.clean.out"; then
     echo "::warning::pre-clean of $label/$scenario repeat $repeat failed"
     cat "$stem.clean.log"
   fi
 
-  run_easysftp "$binary" "$DATASET_DIR/$scenario" "$remote" overlay "$stem.log" "$stem.out" "$connections" || code=$?
+  METRICS_FILE="$stem.metrics.json" \
+    run_easysftp "$binary" "$DATASET_DIR/$scenario" "$remote" overlay "$stem.log" "$stem.out" "$advanced" || code=$?
   if ((code != 0)); then
     # Into the job log, which masks secrets. Never into the artifact.
     echo "::warning::$label/$scenario repeat $repeat exited $code"
@@ -250,6 +109,7 @@ measure() {
     --argjson retries "$(count_matches "$stem.log" -e retrying -e reconnecting)" \
     --argjson errors "$(count_matches "$stem.log" '^::error::')" \
     --argjson refused "$(count_matches "$stem.log" -e 'could not open connection')" \
+    --argjson metrics "$(metrics_json "$stem.metrics.json")" \
     '$ARGS.named' >>"$runs_file"
 
   echo "$label/$scenario repeat $repeat: $(step_number "$stem.out" duration-ms) ms, exit $code"
@@ -258,12 +118,12 @@ measure() {
 labels=(candidate)
 binaries=("$CANDIDATE_BIN")
 refs=("$CANDIDATE_REF")
-conns=("")
+advanced=("")
 if [[ -n "$BASELINE_BIN" ]]; then
   labels+=(baseline)
   binaries+=("$BASELINE_BIN")
   refs+=("${BASELINE_REF:-unknown}")
-  conns+=("")
+  advanced+=("")
 fi
 # The connection pool is measured as a third build of the *same* binary, not
 # as a separate workflow run: the two numbers are only comparable when they
@@ -272,15 +132,15 @@ if [[ -n "$BENCH_CONNECTIONS" ]]; then
   labels+=("pool$BENCH_CONNECTIONS")
   binaries+=("$CANDIDATE_BIN")
   refs+=("$CANDIDATE_REF")
-  conns+=("$BENCH_CONNECTIONS")
+  advanced+=("connections: $BENCH_CONNECTIONS")
 fi
 
-generate_dataset
+generate_dataset "${SCENARIOS[@]}"
 
 for scenario in "${SCENARIOS[@]}"; do
   for ((repeat = 1; repeat <= REPEATS; repeat++)); do
     for i in "${!labels[@]}"; do
-      measure "${labels[$i]}" "${binaries[$i]}" "${refs[$i]}" "$scenario" "$repeat" "${conns[$i]}"
+      measure "${labels[$i]}" "${binaries[$i]}" "${refs[$i]}" "$scenario" "$repeat" "${advanced[$i]}"
     done
   done
 done
@@ -290,71 +150,178 @@ done
 for scenario in "${SCENARIOS[@]}"; do
   for i in "${!labels[@]}"; do
     stem="$LOG_DIR/cleanup-${labels[$i]}-$scenario"
-    run_easysftp "${binaries[$i]}" "$DATASET_DIR/empty" \
-      "$REMOTE_BASE/${labels[$i]}/$scenario" clean "$stem.log" "$stem.out" "${conns[$i]}" ||
+    METRICS_FILE= run_easysftp "${binaries[$i]}" "$DATASET_DIR/empty" \
+      "$REMOTE_BASE/${labels[$i]}/$scenario" clean "$stem.log" "$stem.out" "${advanced[$i]}" ||
       echo "::warning::cleanup of ${labels[$i]}/$scenario failed"
   done
 done
 
-jq -s '
-  def median: sort | .[(((length - 1) / 2) | floor)];
+# One aggregate row per (build, scenario). The timing fields at the top level
+# are exactly the ones results.json v1 had, so anything already reading a
+# stored benchmark keeps working; everything new sits in its own sub-object.
+#
+# duration_ms.* is wall clock. process.* is what the run cost the machine.
+# phases[] is wall clock per phase and adds up to roughly the duration.
+# operations[] is cumulative across parallel workers and does not: see the
+# "note" field the metrics file carries.
+jq -s "
+  $JQ_STATS
   group_by([.label, .scenario])
-  | map({
-      label: .[0].label,
-      ref: .[0].ref,
-      scenario: .[0].scenario,
-      repeats: length,
-      failed_runs: (map(select(.exit_code != 0)) | length),
-      files: (map(.files) | max),
-      bytes: (map(.bytes) | max),
-      durations_ms: map(.duration_ms),
-      median_ms: (map(.duration_ms) | median),
-      min_ms: (map(.duration_ms) | min),
-      max_ms: (map(.duration_ms) | max),
-      retries: (map(.retries) | add),
-      errors: (map(.errors) | add),
-      refused_connections: (map(.refused) | add)
-    })
+  | map(
+      (map(select(.metrics != null)) | map(.metrics)) as \$m
+      | {
+        label: .[0].label,
+        ref: .[0].ref,
+        scenario: .[0].scenario,
+        repeats: length,
+        failed_runs: (map(select(.exit_code != 0)) | length),
+        files: (map(.files) | max),
+        bytes: (map(.bytes) | max),
+        durations_ms: map(.duration_ms),
+        median_ms: (map(.duration_ms) | median),
+        min_ms: (map(.duration_ms) | min),
+        max_ms: (map(.duration_ms) | max),
+        mad_ms: (map(.duration_ms) | mad),
+        duration_ms: (map(.duration_ms) | stats),
+        retries: (map(.retries) | add),
+        errors: (map(.errors) | add),
+        refused_connections: (map(.refused) | add),
+        process: {
+          user_cpu_ms: (\$m | map(.process.user_cpu_ms) | median),
+          sys_cpu_ms: (\$m | map(.process.sys_cpu_ms) | median),
+          cpu_percent: (\$m | map(.process.cpu_percent) | median),
+          max_rss_bytes: (\$m | map(.process.max_rss_bytes) | median),
+          go_total_alloc_bytes: (\$m | map(.process.go_total_alloc_bytes) | median),
+          go_mallocs: (\$m | map(.process.go_mallocs) | median),
+          go_gc_count: (\$m | map(.process.go_gc_count) | median),
+          go_gc_pause_total_ms: (\$m | map(.process.go_gc_pause_total_ms) | median),
+          go_peak_goroutines: (\$m | map(.process.go_peak_goroutines) | max),
+          disk_read_bytes: (\$m | map(.process.disk_read_bytes) | median),
+          net_read_bytes: (\$m | map(.process.net_read_bytes) | median),
+          net_write_bytes: (\$m | map(.process.net_write_bytes) | median)
+        },
+        counters: (\$m | map(.counters // {}) | map(to_entries) | add // []
+          | group_by(.key)
+          | map({key: .[0].key, value: (map(.value) | median)}) | from_entries),
+        phases: (\$m | map(.phases // []) | add // []
+          | group_by(.name)
+          | map({name: .[0].name, median_ms: (map(.wall_ms) | median)})
+          | sort_by(-.median_ms)),
+        operations: (\$m | map(.operations // []) | add // []
+          | group_by(.name)
+          | map({
+              name: .[0].name,
+              count: (map(.count) | median),
+              median_total_ms: (map(.total_ms) | median),
+              avg_ms: (map(.avg_ms) | median),
+              p50_ms: (map(.p50_ms) | median),
+              p90_ms: (map(.p90_ms) | median),
+              p99_ms: (map(.p99_ms) | median),
+              max_ms: (map(.max_ms) | median),
+              errors: (map(.errors) | add)
+            })
+          | sort_by(-.median_total_ms))
+      })
   | map(. + {
-      mib_per_s: (if .median_ms > 0 then (.bytes / 1048576) / (.median_ms / 1000) else 0 end),
-      files_per_s: (if .median_ms > 0 then .files / (.median_ms / 1000) else 0 end)
+      mib_per_s: (if .median_ms > 0 then ((.bytes / 1048576) / (.median_ms / 1000) | round2) else 0 end),
+      files_per_s: (if .median_ms > 0 then (.files / (.median_ms / 1000) | round2) else 0 end)
     })
-' "$runs_file" >"$aggregate_file"
+" "$runs_file" >"$aggregate_file"
+
+# The reference build every delta is measured against: the baseline when one
+# was measured, otherwise the candidate, so a pool run without a baseline is
+# still compared against something.
+reference_label=candidate
+if [[ -n "$BASELINE_BIN" ]]; then
+  reference_label=baseline
+fi
 
 settings="easySFTP defaults (no advanced.* overrides): concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay"
 if [[ -n "$BENCH_CONNECTIONS" ]]; then
   settings="$settings; the pool$BENCH_CONNECTIONS build is the same binary with advanced.connections: $BENCH_CONNECTIONS"
 fi
 
+scenario_docs=$(for scenario in "${SCENARIOS[@]}"; do
+  jq -nc --arg k "$scenario" --arg v "$(scenario_description "$scenario")" '{key: $k, value: $v}'
+done | jq -s 'from_entries')
+
+# results.json, schema_version 2. Layers, in the order a reader needs them:
+#   metadata (candidate_ref, baseline_ref, repeats, runner, settings, env)
+#   results   aggregated per build and scenario, incl. process/phases/operations
+#   comparison  candidate (and pool) against the reference build
+#   runs      every individual repeat, verbatim, metrics included
+# v1's top-level keys all still exist and mean the same thing.
+# Through a file, not a process substitution: jq's --slurpfile wants a real
+# path, and /dev/fd is not one everywhere this may be run.
+runs_array="$LOG_DIR/runs.json"
+jq -s '.' "$runs_file" >"$runs_array"
+
 jq -n \
   --slurpfile results "$aggregate_file" \
+  --slurpfile runs "$runs_array" \
   --arg candidate_ref "$CANDIDATE_REF" \
   --arg baseline_ref "$BASELINE_REF" \
+  --arg reference_label "$reference_label" \
   --argjson repeats "$REPEATS" \
   --arg runner "${RUNNER_ENVIRONMENT:-local}, $(uname -sr), $(nproc) cpu" \
+  --argjson environment "$(bench_environment)" \
   --arg settings "$settings" \
-  '{
-     candidate_ref: $candidate_ref,
-     baseline_ref: $baseline_ref,
-     repeats: $repeats,
-     runner: $runner,
-     settings: $settings,
-     scenarios: {
-       small: "300 files x 4 KiB",
-       mixed: "40 x 16 KiB + 12 x 256 KiB + 4 x 2 MiB",
-       large: "2 files x 16 MiB"
-     },
-     results: $results[0]
-   }' >"$OUT_DIR/results.json"
+  --argjson scenarios "$scenario_docs" \
+  "
+  $JQ_STATS
+  (\$results[0]) as \$r
+  | {
+     schema_version: 2,
+     benchmark_kind: \"standard\",
+     candidate_ref: \$candidate_ref,
+     baseline_ref: \$baseline_ref,
+     repeats: \$repeats,
+     runner: \$runner,
+     environment: \$environment,
+     settings: \$settings,
+     reference_label: \$reference_label,
+     scenarios: \$scenarios,
+     note: \"phases are wall clock and add up to the duration; operations are cumulative across parallel workers and do not\",
+     results: \$r,
+     comparison: [
+       \$r[] | select(.label != \$reference_label) as \$c
+       | (\$r[] | select(.label == \$reference_label and .scenario == \$c.scenario)) as \$b
+       | {
+           scenario: \$c.scenario,
+           label: \$c.label,
+           reference_label: \$reference_label,
+           median_ms: \$c.median_ms,
+           reference_median_ms: \$b.median_ms,
+           delta_ms: (\$c.median_ms - \$b.median_ms),
+           delta_percent: pct(\$c.median_ms; \$b.median_ms),
+           reference_mad_ms: \$b.mad_ms,
+           within_noise: (if (\$b.mad_ms // 0) == 0 then null
+             else ((if \$c.median_ms - \$b.median_ms < 0 then \$b.median_ms - \$c.median_ms else \$c.median_ms - \$b.median_ms end) <= \$b.mad_ms) end)
+         }
+     ],
+     runs: \$runs[0]
+   }" >"$OUT_DIR/results.json"
+
+# CSV alongside the JSON: one row per (build, scenario), so a spreadsheet or a
+# plot can read a stored result without a JSON parser. Deliberately flat and
+# aggregate-only; the raw repeats stay in results.json.
+jq -r '
+  ["scenario","build","ref","repeats","files","bytes","median_ms","min_ms","max_ms","mad_ms",
+   "mib_per_s","files_per_s","user_cpu_ms","sys_cpu_ms","cpu_percent","max_rss_bytes",
+   "go_gc_count","go_peak_goroutines","net_write_bytes","connections_opened","connections_refused",
+   "retries","errors","failed_runs"],
+  (.results[] | [
+    .scenario, .label, .ref, .repeats, .files, .bytes, .median_ms, .min_ms, .max_ms, .mad_ms,
+    .mib_per_s, .files_per_s, .process.user_cpu_ms, .process.sys_cpu_ms, .process.cpu_percent,
+    .process.max_rss_bytes, .process.go_gc_count, .process.go_peak_goroutines, .process.net_write_bytes,
+    (.counters.connections_opened // 0), (.counters.connections_refused // 0),
+    .retries, .errors, .failed_runs
+  ])
+  | @csv
+' "$OUT_DIR/results.json" >"$OUT_DIR/results.csv"
 
 # summary.md carries the same numbers, readable. The delta column compares
 # every build's median against the reference build's; negative means faster.
-# The reference is the baseline when one was measured, otherwise the candidate,
-# so a pool run without a baseline is still compared against something.
-reference_label=candidate
-if [[ -n "$BASELINE_BIN" ]]; then
-  reference_label=baseline
-fi
 {
   echo "## easySFTP benchmark"
   echo
@@ -366,38 +333,79 @@ fi
   echo "| Runner | $(uname -sr), $(nproc) cpu |"
   echo "| Settings | $settings |"
   echo
-  echo "| Scenario | Build | Files | Size | Median | Min | Max | MiB/s | files/s | Retries | Errors | Failed runs | Delta |"
-  echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+  echo "### Throughput"
+  echo
+  echo "| Scenario | Build | Files | Size | Median | Min | Max | MAD | MiB/s | files/s | Retries | Errors | Failed runs | Delta |"
+  echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
   for scenario in "${SCENARIOS[@]}"; do
-    baseline_median=$(jq -r --arg s "$scenario" --arg r "$reference_label" \
-      'map(select(.scenario == $s and .label == $r)) | .[0].median_ms // empty' "$aggregate_file")
     for label in "${labels[@]}"; do
-      row=$(jq -r --arg s "$scenario" --arg l "$label" '
-        map(select(.scenario == $s and .label == $l)) | .[0]
-        | [.files, (.bytes / 1048576 * 10 | round / 10),
-           .median_ms, .min_ms, .max_ms,
-           (.mib_per_s * 10 | round / 10), (.files_per_s * 10 | round / 10),
-           .retries, .errors, .failed_runs]
-        | @tsv' "$aggregate_file")
-      IFS=$'\t' read -r files mib median min max mibs fps retries errors failed <<<"$row"
-      delta='-'
-      if [[ "$label" != "$reference_label" && -n "$baseline_median" && "$baseline_median" != 0 ]]; then
-        delta=$(awk -v c="$median" -v b="$baseline_median" 'BEGIN { printf "%+.1f%%", (c - b) / b * 100 }')
-      fi
-      echo "| $scenario | $label | $files | ${mib} MiB | ${median} ms | ${min} ms | ${max} ms | $mibs | $fps | $retries | $errors | $failed | $delta |"
+      jq -r --arg s "$scenario" --arg l "$label" '
+        (.results[] | select(.scenario == $s and .label == $l)) as $row
+        # Through a list: the reference build has no comparison entry, and a
+        # bare "as" over an empty generator would drop its whole row.
+        | ([.comparison[] | select(.scenario == $s and .label == $l) | .delta_percent] | first) as $delta
+        | "| \($s) | \($l) | \($row.files) | \((($row.bytes / 1048576) * 10 | round / 10)) MiB "
+          + "| \($row.median_ms) ms | \($row.min_ms) ms | \($row.max_ms) ms | \($row.mad_ms) ms "
+          + "| \($row.mib_per_s) | \($row.files_per_s) | \($row.retries) | \($row.errors) | \($row.failed_runs) "
+          + "| \(if $delta == null then "-" else (if $delta > 0 then "+" else "" end) + ($delta | tostring) + "%" end) |"
+      ' "$OUT_DIR/results.json"
     done
   done
   echo
-  echo "Delta compares each build's median against the \`$reference_label\` build; negative is faster."
+  echo "Delta compares each build's median against the \`$reference_label\` build; negative is faster. MAD is the median absolute deviation of the repeats: a delta smaller than it is inside this host's own noise."
+
+  echo
+  echo "### Resources (median per run)"
+  echo
+  echo "| Scenario | Build | User CPU | Sys CPU | CPU % | Peak RSS | Go allocs | GCs | GC pause | Peak goroutines | Net sent |"
+  echo "|---|---|---|---|---|---|---|---|---|---|---|"
+  # Looped rather than one jq pass over .results, so the rows come out in
+  # scenario order like the throughput table above instead of in jq's
+  # group_by order.
+  for scenario in "${SCENARIOS[@]}"; do
+    for label in "${labels[@]}"; do
+      jq -r --arg s "$scenario" --arg l "$label" '.results[] | select(.scenario == $s and .label == $l)
+        | "| \(.scenario) | \(.label) | \(.process.user_cpu_ms) ms | \(.process.sys_cpu_ms) ms | \(.process.cpu_percent)% "
+          + "| \(((.process.max_rss_bytes / 1048576) * 10 | round / 10)) MiB "
+          + "| \(((.process.go_total_alloc_bytes / 1048576) * 10 | round / 10)) MiB | \(.process.go_gc_count) "
+          + "| \(.process.go_gc_pause_total_ms) ms | \(.process.go_peak_goroutines) "
+          + "| \(((.process.net_write_bytes / 1048576) * 10 | round / 10)) MiB |"
+      ' "$OUT_DIR/results.json"
+    done
+  done
+
+  echo
+  echo "### Where the time goes"
+  echo
+  echo "Phases are wall clock and add up to roughly the run's duration. Operation totals are **cumulative across parallel workers** and are normally larger than the phase they belong to; read them for their share and their per-call cost, never as wall clock."
+  echo
+  for scenario in "${SCENARIOS[@]}"; do
+    echo "<details><summary><code>$scenario</code> phases and round-trips</summary>"
+    echo
+    echo "| Build | Phase | Wall |"
+    echo "|---|---|---|"
+    jq -r --arg s "$scenario" '.results[] | select(.scenario == $s) as $row
+      | $row.phases[] | select(.median_ms > 0)
+      | "| \($row.label) | \(.name) | \(.median_ms) ms |"' "$OUT_DIR/results.json"
+    echo
+    echo "| Build | Operation | Count | Cumulative | Avg | p50 | p90 | p99 | Max |"
+    echo "|---|---|---|---|---|---|---|---|---|"
+    jq -r --arg s "$scenario" '.results[] | select(.scenario == $s) as $row
+      | $row.operations[] | select(.count > 0)
+      | "| \($row.label) | \(.name) | \(.count) | \(.median_total_ms) ms | \(.avg_ms) ms | \(.p50_ms) ms | \(.p90_ms) ms | \(.p99_ms) ms | \(.max_ms) ms |"' "$OUT_DIR/results.json"
+    echo
+    echo "</details>"
+    echo
+  done
+
   # Without this line a pool run whose extra connections the server refused
   # reads as "the pool did nothing", which is the wrong conclusion entirely.
-  refused=$(jq '[.[].refused_connections] | add // 0' "$aggregate_file")
+  refused=$(jq '[.results[].refused_connections] | add // 0' "$OUT_DIR/results.json")
   if [[ "$refused" != 0 ]]; then
-    echo
     echo "**$refused connection(s) were refused by the server** and fell back to the run's first connection, so a pool build measured here had fewer connections than configured."
+    echo
   fi
-  echo
-  echo "Data only: these numbers set no threshold and fail no build. Collected to evaluate the single-connection ceiling discussed in issue #158."
+  echo "Data only: these numbers set no threshold and fail no build. Collected to evaluate the single-connection ceiling discussed in issue #158 and to show where a run spends its time."
 } >"$OUT_DIR/summary.md"
 
 cat "$OUT_DIR/summary.md"

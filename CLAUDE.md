@@ -171,16 +171,38 @@ granularity is a separate, later decision; don't build it speculatively.
 
 ## Benchmarks
 
-`scripts/benchmark.sh` measures, `scripts/benchmark-store.sh` files the result
-under `benchmarks/`; `benchmarks/README.md` documents the layout and is the
-page to keep in sync when either script changes. Read `benchmarks/index.json`
-before opening single files.
+`scripts/benchmark.sh` measures throughput at the default settings,
+`scripts/benchmark-matrix.sh` sweeps `advanced.connections` against
+`advanced.concurrency`, both on top of the shared `scripts/benchmark-lib.sh`
+(payload generation, running a build, reading its outputs, the jq statistics).
+`scripts/benchmark-store.sh` files a result under `benchmarks/`;
+`benchmarks/README.md` documents the layout and the JSON schema and is the page
+to keep in sync when any of those change. Read `benchmarks/index.json` before
+opening single files.
 
-Two invariants the whole thing rests on: a stored result is never rewritten
-(storing an existing name fails), and `latest.*` is only ever a copy of a
-`kind: "release"` entry, so a manual run cannot become an official number.
-`scripts/test-benchmark-store.sh` (run by CI, needs `jq`) pins the retention
-window, the archiving and both invariants.
+Results are filed by kind: `benchmarks/releases/`, `manual/`, `matrix/`, plus
+`archive/<kind>/`. Only `latest.{json,md}` and `index.json` sit at the top
+level, because those links must not move. `KIND=reindex bash
+scripts/benchmark-store.sh` rebuilds both from what is on disk (that is how the
+migration into this layout was done).
+
+Three invariants the whole thing rests on: a stored result is never rewritten
+(storing an existing name fails), `latest.*` is only ever a copy of a
+`kind: "release"` entry, and a matrix run is never official. Two CI-run
+self-checks pin them (both need `jq`): `scripts/test-benchmark-store.sh` for
+the retention window, archiving and the invariants, and
+`scripts/test-benchmark.sh`, which drives both measuring scripts end to end
+against a stub binary so the jq aggregation, schema and CSV columns are checked
+without an SFTP server. The other half (that a *real* run produces the metrics
+those scripts aggregate) is asserted by the container self-test in `ci.yml`.
+
+Instrumentation lives in `internal/metrics` and is off unless
+`EASYSFTP_METRICS_FILE` names a path. It is deliberately **not** an
+`action.yml` input, so none of the drift-check lists apply to it. When metrics
+are off, `metrics.Enabled()` is false and `dialSSH` takes the plain `ssh.Dial`
+path: the byte-counting `net.Conn` must never end up in a production transfer.
+Phases are wall clock, operation samples are cumulative across the parallel
+upload workers; do not present the two as the same kind of number.
 
 ## Behavior worth knowing before you change it
 

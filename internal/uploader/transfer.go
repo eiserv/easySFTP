@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/eiserv/easySFTP/internal/config"
+	"github.com/eiserv/easySFTP/internal/metrics"
 )
 
 // tmpSuffix is appended to the remote path while a file is still uploading.
@@ -65,14 +66,17 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 		// Through sess.do so a connection drop during directory setup redials
 		// instead of failing the run; MkdirAll and chmod are idempotent, so
 		// rerunning the whole pass on a fresh client is safe.
+		endDirs := metrics.Phase("create_dirs")
 		err := sess.do(ctx, watch, func(client *sftp.Client) error {
 			return createRemoteDirs(client, dirs, cfg.DirMode, watch, log)
 		})
+		endDirs()
 		if err != nil {
 			return completed, err
 		}
 	}
 
+	defer metrics.Phase("upload")()
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(cfg.Concurrency)
 	results := make([]int64, len(files))
@@ -99,7 +103,10 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 			// preview then reports the same skips the real run would.
 			if skipUnchanged {
 				client, _, _ := sess.acquire(i)
-				if fi, err := client.Stat(f.remotePath); err == nil && fi.Mode().IsRegular() && fi.Size() == f.size {
+				done := metrics.Op("sftp_stat")
+				fi, err := client.Stat(f.remotePath)
+				done(err)
+				if err == nil && fi.Mode().IsRegular() && fi.Size() == f.size {
 					if cfg.LogPerFile() {
 						log.Infof("%sskip %s (remote file has the same size)", verb, f.remotePath)
 					}
@@ -165,8 +172,14 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 	// The index makes the temp path unique per planned transfer, so it can't
 	// collide with another planned file whose real name is this one's plus
 	// tmpSuffix (see issue #42).
+	//
+	// The four round-trips below (open, write, chmod, rename) are sampled
+	// separately: in the small-file scenario the payload is a rounding error
+	// and the question is which of them the run is really spending its time in.
 	tmpPath := fmt.Sprintf("%s%s.%d", f.remotePath, tmpSuffix, index)
+	doneOpen := metrics.Op("sftp_open")
 	dst, err := client.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	doneOpen(err)
 	if err != nil {
 		return 0, err
 	}
@@ -177,10 +190,13 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 	if watch != nil {
 		reader = watch.reader(reader)
 	}
+	doneWrite := metrics.Op("sftp_write")
 	n, err := io.Copy(dst, reader)
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}
+	doneWrite(err)
+	metrics.Count("local_read_bytes", n)
 	if err != nil {
 		cleanupTmp(client, tmpPath, log)
 		return n, err
@@ -190,13 +206,19 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 	// override when set. Some servers reject SETSTAT; an explicit override
 	// warns once per deployment so the user knows it isn't taking effect, but
 	// a mirrored local mode stays silent as before.
-	if cerr := client.Chmod(tmpPath, mode); cerr != nil && env.modeWarned != nil && !env.modeWarned.Swap(true) {
+	doneChmod := metrics.Op("sftp_chmod")
+	cerr := client.Chmod(tmpPath, mode)
+	doneChmod(cerr)
+	if cerr != nil && env.modeWarned != nil && !env.modeWarned.Swap(true) {
 		log.Warningf("could not set file-mode %04o on %s (server may reject SETSTAT); not warning again for this deployment: %v", mode, f.remotePath, cerr)
 	}
 
-	if err := renameReplace(client, tmpPath, f.remotePath); err != nil {
+	doneRename := metrics.Op("sftp_rename")
+	rerr := renameReplace(client, tmpPath, f.remotePath)
+	doneRename(rerr)
+	if rerr != nil {
 		cleanupTmp(client, tmpPath, log)
-		return n, fmt.Errorf("replacing %q: %w", f.remotePath, err)
+		return n, fmt.Errorf("replacing %q: %w", f.remotePath, rerr)
 	}
 
 	// preserve-times (timesWarned non-nil): keep the local modification time
@@ -204,7 +226,10 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 	// path; a failure warns once per deployment and never fails the deploy.
 	if env.timesWarned != nil {
 		mtime := time.Unix(f.mtime, 0)
-		if cerr := client.Chtimes(f.remotePath, mtime, mtime); cerr != nil && !env.timesWarned.Swap(true) {
+		doneTimes := metrics.Op("sftp_chtimes")
+		cerr := client.Chtimes(f.remotePath, mtime, mtime)
+		doneTimes(cerr)
+		if cerr != nil && !env.timesWarned.Swap(true) {
 			log.Warningf("could not preserve the modification time on %s (server may reject SETSTAT); not warning again for this deployment: %v", f.remotePath, cerr)
 		}
 	}

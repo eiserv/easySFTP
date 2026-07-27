@@ -16,6 +16,7 @@ import (
 
 	"github.com/eiserv/easySFTP/internal/config"
 	"github.com/eiserv/easySFTP/internal/gha"
+	"github.com/eiserv/easySFTP/internal/metrics"
 	"github.com/eiserv/easySFTP/internal/uploader"
 )
 
@@ -46,6 +47,14 @@ func helpRequested(args []string) bool {
 func run() error {
 	logBuildInfo()
 
+	// Benchmark instrumentation, off unless the variable names a file. It is
+	// deliberately not an action.yml input: it is a measurement hook for
+	// scripts/benchmark*.sh, not a feature of the action, and the file it
+	// writes is a workflow artifact, never part of a deploy. See
+	// internal/metrics and benchmarks/README.md.
+	metrics.Start(os.Getenv("EASYSFTP_METRICS_FILE"))
+	defer metrics.Write()
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -55,6 +64,13 @@ func run() error {
 	defer stop()
 
 	stats, runErr := uploader.Run(ctx, cfg, ghaLogger{})
+	metrics.Set("files_uploaded", int64(stats.FilesUploaded))
+	metrics.Set("files_deleted", int64(stats.FilesDeleted))
+	metrics.Set("files_skipped", int64(stats.FilesSkipped))
+	metrics.Set("bytes_uploaded", stats.BytesUploaded)
+	if runErr != nil {
+		metrics.Count("errors", 1)
+	}
 	mode := "uploaded"
 	if cfg.DryRun {
 		mode = "would upload (dry-run)"

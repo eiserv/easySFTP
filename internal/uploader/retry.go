@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"time"
+
+	"github.com/eiserv/easySFTP/internal/metrics"
 )
 
 // uploadFileWithRetry uploads one file, retrying transient failures with
@@ -19,11 +21,18 @@ import (
 // (see uploadFile) so two planned transfers never race over the same temporary
 // name, even if one target's path happens to literally be another's plus
 // tmpSuffix, and it picks the file's connection out of the pool.
-func uploadFileWithRetry(ctx context.Context, env *transferEnv, f fileItem, index int, mode fs.FileMode) (int64, error) {
+// The results are named so the metrics sample below can be recorded from a
+// defer, covering every one of this function's exits.
+func uploadFileWithRetry(ctx context.Context, env *transferEnv, f fileItem, index int, mode fs.FileMode) (uploaded int64, err error) {
 	sess, watch, log, retries := env.sess, env.watch, env.log, env.cfg.Retries
+	// One sample per file, covering every attempt and its backoff: the sum of
+	// the individual round-trips below it is what this splits into.
+	doneFile := metrics.Op("file_upload")
+	defer func() { doneFile(err) }()
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
+			metrics.Count("retries", 1)
 			backoff := time.Duration(1<<(attempt-1)) * time.Second
 			log.Warningf("retrying upload of %s in %s (attempt %d/%d): %v", f.localPath, backoff, attempt+1, retries+1, lastErr)
 			if err := sleepCtx(ctx, backoff); err != nil {

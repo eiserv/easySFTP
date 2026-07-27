@@ -1,8 +1,15 @@
 {
-  "schema_version": 1,
-  "generated_at": "2026-07-27T19:31:00Z",
+  "schema_version": 2,
+  "generated_at": "2026-07-27T20:00:00Z",
   "generated_by": "scripts/benchmark-store.sh",
   "documentation": "benchmarks/README.md",
+  "layout": {
+    "releases": "releases/release-vX.Y.Z.{json,md}",
+    "manual": "manual/manual-<stamp>-<label>.{json,md}",
+    "matrix": "matrix/matrix-<stamp>-<label>.{json,md,csv}",
+    "archive": "archive/<kind>/<same names>",
+    "latest": "latest.{json,md}"
+  },
   "keep_releases": 5,
   "latest_release": "v3.3.2",
   "entries": [
@@ -15,14 +22,19 @@
       "commit": "49dcaf38f2879248cfffbdfd02d3b87381992e51",
       "run_url": "https://github.com/eiserv/easySFTP/actions/runs/30298465159",
       "candidate_ref": "49dcaf38f2879248cfffbdfd02d3b87381992e51 (49dcaf3)",
+      "benchmark_kind": "standard",
+      "benchmark_schema_version": 1,
+      "runner": "self-hosted, Linux 7.0.0-28-generic, 10 cpu",
+      "environment": null,
       "archived": false,
-      "json": "manual-20260727T193100Z-perf-connection-pool.json",
-      "markdown": "manual-20260727T193100Z-perf-connection-pool.md",
+      "json": "manual/manual-20260727T193100Z-perf-connection-pool.json",
+      "markdown": "manual/manual-20260727T193100Z-perf-connection-pool.md",
       "median_ms": {
         "large": 70694,
         "mixed": 27665,
         "small": 13404
-      }
+      },
+      "best_ms": {}
     },
     {
       "kind": "release",
@@ -33,14 +45,19 @@
       "commit": "afe5aaf7cac2a29675887f36f63c3c82b53aa4c3",
       "run_url": "https://github.com/eiserv/easySFTP/actions/runs/30286969318",
       "candidate_ref": "v3.3.2 (afe5aaf)",
+      "benchmark_kind": "standard",
+      "benchmark_schema_version": 1,
+      "runner": "self-hosted, Linux 7.0.0-28-generic, 10 cpu",
+      "environment": null,
       "archived": false,
-      "json": "release-v3.3.2.json",
-      "markdown": "release-v3.3.2.md",
+      "json": "releases/release-v3.3.2.json",
+      "markdown": "releases/release-v3.3.2.md",
       "median_ms": {
         "large": 76306,
         "mixed": 28419,
         "small": 13044
-      }
+      },
+      "best_ms": {}
     },
     {
       "kind": "release",
@@ -51,14 +68,19 @@
       "commit": "3bf56021e757a468dab39fbaa88b923b9ae00f83",
       "run_url": "https://github.com/eiserv/easySFTP/actions/runs/30282308009",
       "candidate_ref": "v3.3.1 (3bf5602)",
+      "benchmark_kind": "standard",
+      "benchmark_schema_version": 1,
+      "runner": "Linux 6.17.0-1020-azure, 4 cpu",
+      "environment": null,
       "archived": false,
-      "json": "release-v3.3.1.json",
-      "markdown": "release-v3.3.1.md",
+      "json": "releases/release-v3.3.1.json",
+      "markdown": "releases/release-v3.3.1.md",
       "median_ms": {
         "large": 81803,
         "mixed": 34357,
         "small": 64892
-      }
+      },
+      "best_ms": {}
     }
   ]
 }

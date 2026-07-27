@@ -288,6 +288,7 @@ jobs:
           BENCH_DIR: store-main/benchmarks
           RESULTS_JSON: ${{ runner.temp }}/benchmark-results/results.json
           SUMMARY_MD: ${{ runner.temp }}/benchmark-results/summary.md
+          RESULTS_CSV: ${{ runner.temp }}/benchmark-results/results.csv
           KIND: ${{ inputs.release-version != '' && 'release' || 'manual' }}
           VERSION: ${{ inputs.release-version }}
           LABEL: ${{ steps.resolve.outputs.label }}
@@ -343,7 +344,12 @@ jobs:
           # Renamed for the release page: "release-v3.3.2.json" reads like a
           # second copy of the release next to the binaries, "benchmark-" says
           # what it is. The file in benchmarks/ keeps its own naming.
-          cp "benchmarks/release-$VERSION.json" "benchmark-$VERSION.json"
-          cp "benchmarks/release-$VERSION.md" "benchmark-$VERSION.md"
-          gh release upload "$VERSION" "benchmark-$VERSION.json" "benchmark-$VERSION.md" \
+          cp "benchmarks/releases/release-$VERSION.json" "benchmark-$VERSION.json"
+          cp "benchmarks/releases/release-$VERSION.md" "benchmark-$VERSION.md"
+          assets=("benchmark-$VERSION.json" "benchmark-$VERSION.md")
+          if [ -f "benchmarks/releases/release-$VERSION.csv" ]; then
+            cp "benchmarks/releases/release-$VERSION.csv" "benchmark-$VERSION.csv"
+            assets+=("benchmark-$VERSION.csv")
+          fi
+          gh release upload "$VERSION" "${assets[@]}" \
             --clobber --repo "$GITHUB_REPOSITORY"
