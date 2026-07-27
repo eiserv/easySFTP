@@ -56,7 +56,7 @@ per scenario, so a reader (human or agent) does not have to open every file.
 ## Official versus manual
 
 - **Official** results are `kind: "release"`. They are measured automatically
-  after release-please published a tag, against exactly that tag, and they are
+  after release-please created a tag, against exactly that tag, and they are
   the only results `latest.*` is ever copied from.
 - **Manual** results are `kind: "manual"`, produced by a manually started run
   (a branch, a tag, or a pull request). They are kept alongside the official
@@ -81,3 +81,9 @@ Start it manually from the Actions tab with a `pr` number to benchmark a pull
 request, or a `candidate-ref` plus an optional `baseline-ref` to compare two
 refs in the same run. A manual run needs an approval on the `benchmark`
 environment first, which only a maintainer can give.
+
+If a release ended up without its official result, the same workflow repairs
+it: set `release-version` to that tag (for example `v3.3.0`). The run measures
+the tag and stores it as the official reference, and it fails rather than
+touch a reference that already exists. Everything else is a manual run and
+stays one.

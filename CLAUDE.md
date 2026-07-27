@@ -150,6 +150,12 @@ granularity is a separate, later decision; don't build it speculatively.
   update inline `docker run` digests, so that one is bumped by hand
   (`docker buildx imagetools inspect atmoz/sftp:alpine`). Keep new external
   dependencies pinned the same way.
+- Nothing may hang off `on: release`. release-please creates the release with
+  the `GITHUB_TOKEN`, and events raised by that token never start a workflow
+  run, so such a job silently never runs (v3.3.0 shipped without its benchmark
+  that way). Post-release work is a `uses:` call from `release-please.yml`,
+  gated on `needs.release-please.outputs.release_created`, as
+  `release-binaries` and `benchmark` both do.
 - The self-test job in `.github/workflows/ci.yml` is the only place a real
   OpenSSH server is exercised, and the only place `action.yml`'s composite
   wiring runs end to end. Unit tests set `EASYSFTP_*` directly and never see

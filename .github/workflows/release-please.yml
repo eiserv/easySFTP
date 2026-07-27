@@ -36,3 +36,21 @@ jobs:
     uses: ./.github/workflows/release-binaries.yml
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
+
+  # Called from here and not triggered by "on: release" in benchmark.yml: the
+  # release above is created with the GITHUB_TOKEN, and events raised by that
+  # token never start a workflow run. This job does not gate the release; it
+  # measures the tag and files the result under benchmarks/.
+  benchmark:
+    name: Benchmark the released tag
+    needs: release-please
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/benchmark.yml
+    with:
+      release-version: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit

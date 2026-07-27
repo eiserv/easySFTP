@@ -13,9 +13,16 @@ name: SFTP benchmark
 #   pull_request       every release PR is benchmarked once when it opens, so
 #                      the numbers are visible before the merge. Nothing is
 #                      stored: the release is not real yet.
-#   release            after the release PR merged and release-please published
-#                      the tag, the tagged code is measured once more and that
-#                      result is committed as the official reference.
+#   workflow_call      release-please.yml calls this after it created a release,
+#                      passing the tag as "release-version". The tagged code is
+#                      measured once more and committed as the official
+#                      reference.
+#
+# That last one is a "uses:" call and not an "on: release" trigger on purpose.
+# release-please creates the GitHub Release with the GITHUB_TOKEN, and events
+# raised by that token never start a workflow run, so an "on: release" job
+# silently never runs. v3.3.0 shipped without its benchmark that way. The
+# release-binaries pipeline is wired the same way for the same reason.
 #
 # Approval: the "benchmark" environment is the gate for manual and release-PR
 # runs. Give it required reviewers in the repository settings, otherwise every
@@ -50,6 +57,10 @@ on:
         description: "Optional second ref to benchmark in the same run, for comparison (e.g. main)."
         required: false
         type: string
+      release-version:
+        description: "Repairs a missed release benchmark: measures this tag and stores it as the official reference (e.g. v3.3.0). Refuses to overwrite an existing one."
+        required: false
+        type: string
       repeats:
         description: "Measured repeats per scenario; the median is reported."
         required: false
@@ -70,8 +81,12 @@ on:
   # push to main, and one preview measurement per release PR is enough.
   pull_request:
     types: [opened, reopened]
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      release-version:
+        description: "Tag to benchmark and store as the official reference of that release."
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -93,7 +108,9 @@ jobs:
     timeout-minutes: 60
     # The maintainer gate issue #169 asks for. See the header: protect
     # "benchmark" with required reviewers, leave "benchmark-release" open.
-    environment: ${{ github.event_name == 'release' && 'benchmark-release' || 'benchmark' }}
+    # "push" is only ever release-please.yml calling this workflow; a manual
+    # repair run of a release stays behind the approval like any other one.
+    environment: ${{ github.event_name == 'push' && 'benchmark-release' || 'benchmark' }}
     permissions:
       # Only the release run pushes, but the token is scoped per job.
       contents: write
@@ -108,37 +125,40 @@ jobs:
         env:
           # Through the environment, never interpolated into the script: these
           # are user input, and "${{ }}" in a run block is a shell injection.
-          EVENT: ${{ github.event_name }}
           PR: ${{ inputs.pr }}
           CANDIDATE: ${{ inputs.candidate-ref }}
-          TAG: ${{ github.event.release.tag_name }}
+          VERSION: ${{ inputs.release-version }}
           FALLBACK: ${{ github.sha }}
         run: |
           set -euo pipefail
-          case "$EVENT" in
-          release)
-            ref=$TAG
-            label=$TAG
-            ;;
-          *)
-            if [ -n "${PR:-}" ]; then
-              case "$PR" in
-              '' | *[!0-9]*)
-                echo "::error::pr must be a number, got '$PR'"
-                exit 1
-                ;;
-              esac
-              ref=refs/pull/$PR/merge
-              label=pr-$PR
-            elif [ -n "${CANDIDATE:-}" ]; then
-              ref=$CANDIDATE
-              label=$CANDIDATE
-            else
-              ref=$FALLBACK
-              label=${GITHUB_REF_NAME:-manual}
-            fi
-            ;;
-          esac
+          if [ -n "${VERSION:-}" ]; then
+            # Checked here and not only in benchmark-store.sh: failing after a
+            # measurement that takes minutes is a poor way to report a typo.
+            case "$VERSION" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::release-version must look like v3.3.0, got '$VERSION'"
+              exit 1
+              ;;
+            esac
+            ref=$VERSION
+            label=$VERSION
+          elif [ -n "${PR:-}" ]; then
+            case "$PR" in
+            *[!0-9]*)
+              echo "::error::pr must be a number, got '$PR'"
+              exit 1
+              ;;
+            esac
+            ref=refs/pull/$PR/merge
+            label=pr-$PR
+          elif [ -n "${CANDIDATE:-}" ]; then
+            ref=$CANDIDATE
+            label=$CANDIDATE
+          else
+            ref=$FALLBACK
+            label=${GITHUB_REF_NAME:-manual}
+          fi
           {
             echo "ref=$ref"
             echo "label=$label"
@@ -241,8 +261,8 @@ jobs:
           BENCH_DIR: store-main/benchmarks
           RESULTS_JSON: ${{ runner.temp }}/benchmark-results/results.json
           SUMMARY_MD: ${{ runner.temp }}/benchmark-results/summary.md
-          KIND: ${{ github.event_name == 'release' && 'release' || 'manual' }}
-          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+          KIND: ${{ inputs.release-version != '' && 'release' || 'manual' }}
+          VERSION: ${{ inputs.release-version }}
           LABEL: ${{ steps.resolve.outputs.label }}
           RECORDED_AT: ${{ steps.resolve.outputs.recorded-at }}
           COMMIT: ${{ steps.build.outputs.candidate-sha }}
@@ -253,8 +273,8 @@ jobs:
         if: github.event_name != 'pull_request'
         working-directory: store-main
         env:
-          KIND: ${{ github.event_name == 'release' && 'release' || 'manual' }}
-          NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || steps.resolve.outputs.label }}
+          KIND: ${{ inputs.release-version != '' && 'release' || 'manual' }}
+          NAME: ${{ steps.resolve.outputs.label }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
