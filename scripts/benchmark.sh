@@ -391,7 +391,7 @@ fi
   echo "Delta compares each build's median against the \`$reference_label\` build; negative is faster."
   # Without this line a pool run whose extra connections the server refused
   # reads as "the pool did nothing", which is the wrong conclusion entirely.
-  refused=$(jq '[.[].refused_connections] | add' "$aggregate_file")
+  refused=$(jq '[.[].refused_connections] | add // 0' "$aggregate_file")
   if [[ "$refused" != 0 ]]; then
     echo
     echo "**$refused connection(s) were refused by the server** and fell back to the run's first connection, so a pool build measured here had fewer connections than configured."
