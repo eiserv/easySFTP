@@ -99,12 +99,20 @@ granularity is a separate, later decision; don't build it speculatively.
   (`withDropOnRequest(method, path)`, which kills the live connection the
   first time a matching SFTP request arrives; use it to simulate a drop
   during a non-transfer phase like a delete sweep or remote scan) and
-  request-triggered hangs (`withStallOnRequest`). Follow that pattern (wrap
+  request-triggered hangs (`withStallOnRequest`) and refused connections
+  (`withMaxConns(n)`, which closes everything accepted beyond the first n; the
+  connection pool's degradation path uses it). Follow that pattern (wrap
   the relevant `Handlers` field, add a `serverOption`) for new
   fault-injection needs instead of building a new fake server. Note that
   `withDropOnRequest` closes *every* live connection, including any
   `verifyClient` session opened before the drop fires; open verification
   clients after the run, not before.
+- A run may hold more than one connection (`advanced.connections`, issue
+  #158). Only the per-file upload path spreads over them, by file index;
+  `session.do` and therefore everything else always uses the first one. A
+  connection the server refuses is not an error: that pool slot falls back to
+  the first connection after one warning. The reconnect budget stays run-wide
+  and the stall watchdog closes every connection.
 - Every remote operation outside the per-file upload path must go through
   `session.do` (see `internal/uploader/session.go`): it redials on
   connection-class errors sharing the `retries` reconnect budget and marks
