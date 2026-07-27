@@ -5,6 +5,13 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.2](https://github.com/eiserv/easySFTP/compare/v3.3.1...v3.3.2) (2026-07-27)
+
+
+### Bug Fixes
+
+* **benchmarks:** stop using the jq keyword "label" as a variable ([#176](https://github.com/eiserv/easySFTP/issues/176)) ([17b57ef](https://github.com/eiserv/easySFTP/commit/17b57efabfebcecde85e650037bc9425eb57a12d))
+
 ## [3.3.1](https://github.com/eiserv/easySFTP/compare/v3.3.0...v3.3.1) (2026-07-27)
 
 
