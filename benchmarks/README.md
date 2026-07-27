@@ -71,8 +71,12 @@ per scenario, so a reader (human or agent) does not have to open every file.
 The benchmark runs on a fixed self-hosted runner, not on a GitHub-hosted one:
 those land in a changing region on changing hardware, which puts the machine
 into every delta between two releases. Each result records where it ran in its
-`runner` field (`self-hosted` or `github-hosted`, plus kernel and CPU count).
-Two results are only comparable when that field matches.
+`runner` field, and two results are only comparable when that field matches.
+
+Results up to and including v3.3.1 predate this and name only the kernel and
+CPU count (`Linux 6.17.0-1020-azure, 4 cpu`); every one of them was measured on
+a GitHub-hosted runner. From the next release on the field starts with
+`self-hosted`.
 
 ## Retention
 
