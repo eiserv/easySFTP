@@ -160,9 +160,17 @@ type Config struct {
 	DryRun                 bool
 	Concurrency            int
 	SftpRequestConcurrency int
-	Retries                int
-	Timeout                time.Duration
-	SyncFastPath           bool
+
+	// Connections is how many SSH connections a run may open, so uploads can
+	// use more than one TCP flow and more than one cipher stream (issue #158).
+	// 1 (the default) keeps the single-connection behavior. Never more than
+	// Concurrency: a connection without a worker on it is a handshake for
+	// nothing.
+	Connections int
+
+	Retries      int
+	Timeout      time.Duration
+	SyncFastPath bool
 
 	// StallTimeout, if positive, aborts the run when active transfers make
 	// no progress for this long, instead of hanging until the job-level
@@ -228,6 +236,7 @@ const envPrefix = "EASYSFTP_"
 const (
 	defaultConcurrency        = 4
 	defaultRequestConcurrency = 16
+	defaultConnections        = 1
 	defaultRetries            = 2
 	defaultTimeoutSec         = 30
 )
@@ -309,6 +318,7 @@ func Load() (*Config, error) {
 		Passphrase:             os.Getenv(envPrefix + "PASSPHRASE"),
 		Concurrency:            defaultConcurrency,
 		SftpRequestConcurrency: defaultRequestConcurrency,
+		Connections:            defaultConnections,
 		Retries:                defaultRetries,
 		Timeout:                defaultTimeoutSec * time.Second,
 		ManifestName:           DefaultManifestName,
@@ -432,6 +442,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("advanced.concurrency must be at least 1, got %d", c.Concurrency)
 	case c.SftpRequestConcurrency < 1:
 		return fmt.Errorf("advanced.request_concurrency must be at least 1, got %d", c.SftpRequestConcurrency)
+	case c.Connections < 1:
+		return fmt.Errorf("advanced.connections must be at least 1, got %d", c.Connections)
 	case c.Retries < 0:
 		return fmt.Errorf("advanced.retries must not be negative, got %d", c.Retries)
 	case c.Timeout < 0:

@@ -96,6 +96,12 @@ request, or a `candidate-ref` plus an optional `baseline-ref` to compare two
 refs in the same run. A manual run needs an approval on the `benchmark`
 environment first, which only a maintainer can give.
 
+Setting `connections` measures a third build labelled `poolN`: the candidate
+binary again, this time with `advanced.connections: N` (issue #158). It runs
+interleaved with the others, since two numbers from two separate runs against a
+shared host are not comparable. The `Delta` column then compares every build
+against the baseline, or against the candidate when no baseline was given.
+
 If a release ended up without its official result, the same workflow repairs
 it: set `release-version` to that tag (for example `v3.3.0`). The run measures
 the tag and stores it as the official reference, and it fails rather than

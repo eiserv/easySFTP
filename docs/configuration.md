@@ -164,6 +164,7 @@ advanced:
   stall_timeout: 0
   concurrency: auto            # or a number
   request_concurrency: auto
+  connections: 1               # SSH connections uploads spread over
   skip_unchanged: false
 
 permissions:
@@ -221,7 +222,39 @@ sync:
 | `stall_timeout` | `0` (off) | Abort when active remote operations make no progress for this many seconds. |
 | `concurrency` | `auto` (4) | Files uploaded in parallel. Also bounds the sync hashing worker pool. `auto` uses the built-in default. |
 | `request_concurrency` | `auto` (16) | Max in-flight SFTP requests per file (pipelining within one transfer). |
+| `connections` | `1` | SSH connections the parallel uploads spread over. Never more than `concurrency`. See below. |
 | `skip_unchanged` | `false` | For `overlay`, skip a file whose remote counterpart has the same size (coarse; `sync` compares content hashes). |
+
+##### `connections`: more than one TCP flow
+
+By default a run does everything over a single SSH connection, so the whole
+deploy shares one TCP congestion window and one cipher stream, no matter how
+high `concurrency` and `request_concurrency` are. On a long-distance link that
+window is what caps throughput, and neither knob can lift it.
+
+`connections: 4` opens up to four connections and spreads the parallel uploads
+over them. Everything else (remote scans, deletes, the sync manifest) stays on
+the first one.
+
+It is off by default because it is not free:
+
+- **Server limits are real.** sshd's `MaxStartups` and per-account connection
+  limits on shared hosting will refuse the extra connections. easySFTP then
+  warns once per refused connection and finishes the deploy on the ones it
+  has, so a too-high value costs a warning, not a failed deploy.
+- **Each connection repeats the handshake**, including host key verification.
+  A short run of a few files pays that for nothing, which is why connections
+  past the first are only opened when a file actually needs one.
+- **The `retries` budget is shared.** Reconnects are counted per run, not per
+  connection.
+- **The stall watchdog closes all of them.** `stall_timeout` only knows that
+  the run stopped moving bytes, not which connection stalled.
+
+Worth trying when the server is far away or the link has real latency, and the
+transfer is clearly not saturating it. On a nearby server, or with many small
+files where per-file round-trips dominate, expect little or nothing: measure
+before you keep it. easySFTP's own numbers live in
+[`benchmarks/`](../benchmarks/README.md).
 
 #### `permissions`
 

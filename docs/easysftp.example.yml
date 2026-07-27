@@ -74,6 +74,9 @@ advanced:
   stall_timeout: 0 # abort after this many seconds without progress; 0 = off
   concurrency: auto # files uploaded in parallel ("auto" = built-in default)
   request_concurrency: auto # in-flight SFTP requests per file
+  # SSH connections uploads spread over. >1 lifts the single-TCP-flow ceiling
+  # on high-latency links; some servers limit connections per account.
+  connections: 1
   skip_unchanged: false # overlay only: skip same-size remote files
 
 # Remote permission and timestamp handling (all best-effort).

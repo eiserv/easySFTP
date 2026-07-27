@@ -39,6 +39,7 @@ type testServer struct {
 	dropped       int32 // whether the first connection was already wrapped
 	stallAfter    int64 // if >0, stop reading (but stay connected) after this many bytes
 	refuseFirst   int32 // if >0, close this many first accepted connections immediately
+	maxConns      int32 // if >0, close every connection accepted beyond this many
 	accepted      int32 // total connections accepted, for asserting attempt counts
 
 	keepalives *int64 // if set, counts "keepalive@openssh.com" global requests received
@@ -114,6 +115,11 @@ func withFailSetstat() serverOption { return func(s *testServer) { s.failSetstat
 // handshake, simulating a transient outage (restarting sshd, network blip)
 // that clears after a moment.
 func withRefuseFirstConns(n int32) serverOption { return func(s *testServer) { s.refuseFirst = n } }
+
+// withMaxConns closes every connection accepted beyond the first n,
+// simulating a server that caps concurrent connections (sshd's MaxStartups,
+// or a per-account limit on shared hosting).
+func withMaxConns(n int32) serverOption { return func(s *testServer) { s.maxConns = n } }
 
 // withKeepaliveCounter makes the server tally every "keepalive@openssh.com"
 // global request it receives into c, instead of just discarding it.
@@ -546,7 +552,12 @@ func (s *testServer) acceptLoop() {
 		if err != nil {
 			return
 		}
-		if atomic.AddInt32(&s.accepted, 1) <= s.refuseFirst {
+		n := atomic.AddInt32(&s.accepted, 1)
+		if n <= s.refuseFirst {
+			conn.Close()
+			continue
+		}
+		if s.maxConns > 0 && n-s.refuseFirst > s.maxConns {
 			conn.Close()
 			continue
 		}

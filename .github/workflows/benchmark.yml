@@ -85,6 +85,10 @@ on:
         required: false
         default: "3"
         type: string
+      connections:
+        description: "Also measure the candidate with advanced.connections set to this many SSH connections (issue #158), as a third build. Empty = single connection only."
+        required: false
+        type: string
       remote-base:
         description: "Remote directory the benchmark owns. Everything below it is disposable."
         required: false
@@ -241,6 +245,7 @@ jobs:
           BASELINE_REF: ${{ steps.build.outputs.baseline-ref }}
           REPEATS: ${{ inputs.repeats || '3' }}
           REMOTE_BASE: ${{ inputs.remote-base || '/easysftp-benchmark' }}
+          BENCH_CONNECTIONS: ${{ inputs.connections }}
           # OUT_DIR is uploaded as an artifact; LOG_DIR (which holds logs that
           # name the host and user) deliberately is not.
           OUT_DIR: ${{ runner.temp }}/benchmark-results

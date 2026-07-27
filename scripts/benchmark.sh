@@ -12,6 +12,10 @@
 #
 #   CANDIDATE_BIN, CANDIDATE_REF  build under test and the ref it was built from
 #   BASELINE_BIN,  BASELINE_REF   optional comparison build (may be empty)
+#   BENCH_CONNECTIONS             optional: measure the candidate a second time
+#                                 with advanced.connections set to this many SSH
+#                                 connections (issue #158), as a third build
+#                                 label "poolN"
 #   REPEATS                       measured repeats per scenario (default 3)
 #   REMOTE_BASE                   remote directory this benchmark owns
 #   OUT_DIR                       results.json and summary.md land here
@@ -75,9 +79,15 @@ REPEATS=${REPEATS:-3}
 BENCH_PORT=${BENCH_PORT:-22}
 BASELINE_BIN=${BASELINE_BIN:-}
 BASELINE_REF=${BASELINE_REF:-}
+BENCH_CONNECTIONS=${BENCH_CONNECTIONS:-}
 
 if [[ ! "$REPEATS" =~ ^[1-9][0-9]*$ ]]; then
   echo "::error::REPEATS must be a positive integer, got '$REPEATS'" >&2
+  exit 1
+fi
+
+if [[ -n "$BENCH_CONNECTIONS" && ! "$BENCH_CONNECTIONS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "::error::BENCH_CONNECTIONS must be a positive integer, got '$BENCH_CONNECTIONS'" >&2
   exit 1
 fi
 
@@ -132,24 +142,53 @@ generate_dataset() {
   done
 }
 
-# run_easysftp <binary> <source> <remote> <mode> <log> <outputs-file>
+# run_easysftp <binary> <source> <remote> <mode> <log> <outputs-file> [connections]
+#
+# Without a connections value this is an inline run, exactly what a workflow
+# with source/target inputs does. With one, the run goes through a generated
+# config file instead: advanced.connections has no input (every non-secret
+# setting has exactly one home in v3), and inline inputs may not be combined
+# with a config file. That file names the host and the user, so it is written
+# to LOG_DIR, which is never uploaded as an artifact.
+#
 # BENCH_* are never assigned here: they come from the environment and
 # require_env has already refused an empty one.
 # shellcheck disable=SC2153
 run_easysftp() {
-  local binary=$1 source=$2 remote=$3 mode=$4 log=$5 outputs=$6
+  local binary=$1 source=$2 remote=$3 mode=$4 log=$5 outputs=$6 connections=${7:-}
   : >"$outputs"
-  env \
-    GITHUB_OUTPUT="$outputs" \
-    EASYSFTP_HOST="$BENCH_HOST" \
-    EASYSFTP_PORT="$BENCH_PORT" \
-    EASYSFTP_USERNAME="$BENCH_USERNAME" \
-    EASYSFTP_PASSWORD="$BENCH_PASSWORD" \
-    EASYSFTP_KNOWN_HOSTS="$BENCH_KNOWN_HOSTS" \
-    EASYSFTP_SOURCE="$source" \
-    EASYSFTP_TARGET="$remote" \
-    EASYSFTP_MODE="$mode" \
-    "$binary" >"$log" 2>&1
+  local -a vars=(GITHUB_OUTPUT="$outputs" EASYSFTP_PASSWORD="$BENCH_PASSWORD")
+  if [[ -n "$connections" ]]; then
+    local config="$LOG_DIR/config.yml"
+    {
+      echo "version: 3"
+      echo "connection:"
+      echo "  host: \"$BENCH_HOST\""
+      echo "  port: $BENCH_PORT"
+      echo "  username: \"$BENCH_USERNAME\""
+      echo "  known_hosts: |"
+      printf '%s\n' "$BENCH_KNOWN_HOSTS" | sed 's/^/    /'
+      echo "deployments:"
+      echo "  benchmark:"
+      echo "    source: \"$source\""
+      echo "    target: \"$remote\""
+      echo "    mode: $mode"
+      echo "advanced:"
+      echo "  connections: $connections"
+    } >"$config"
+    vars+=(EASYSFTP_CONFIG="$config")
+  else
+    vars+=(
+      EASYSFTP_HOST="$BENCH_HOST"
+      EASYSFTP_PORT="$BENCH_PORT"
+      EASYSFTP_USERNAME="$BENCH_USERNAME"
+      EASYSFTP_KNOWN_HOSTS="$BENCH_KNOWN_HOSTS"
+      EASYSFTP_SOURCE="$source"
+      EASYSFTP_TARGET="$remote"
+      EASYSFTP_MODE="$mode"
+    )
+  fi
+  env "${vars[@]}" "$binary" >"$log" 2>&1
 }
 
 # step_number <outputs-file> <name>: reads a number written in the
@@ -177,9 +216,9 @@ count_matches() {
   fi
 }
 
-# measure <label> <binary> <ref> <scenario> <repeat>
+# measure <label> <binary> <ref> <scenario> <repeat> <connections>
 measure() {
-  local label=$1 binary=$2 ref=$3 scenario=$4 repeat=$5
+  local label=$1 binary=$2 ref=$3 scenario=$4 repeat=$5 connections=$6
   local remote="$REMOTE_BASE/$label/$scenario"
   local stem="$LOG_DIR/$label-$scenario-$repeat"
   local code=0
@@ -187,12 +226,12 @@ measure() {
   # Unmeasured: every repeat starts from the same empty remote directory, so
   # repeat 1 (uploading into nothing) measures the same thing as the repeats
   # after it (which would otherwise overwrite existing files).
-  if ! run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean "$stem.clean.log" "$stem.clean.out"; then
+  if ! run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean "$stem.clean.log" "$stem.clean.out" "$connections"; then
     echo "::warning::pre-clean of $label/$scenario repeat $repeat failed"
     cat "$stem.clean.log"
   fi
 
-  run_easysftp "$binary" "$DATASET_DIR/$scenario" "$remote" overlay "$stem.log" "$stem.out" || code=$?
+  run_easysftp "$binary" "$DATASET_DIR/$scenario" "$remote" overlay "$stem.log" "$stem.out" "$connections" || code=$?
   if ((code != 0)); then
     # Into the job log, which masks secrets. Never into the artifact.
     echo "::warning::$label/$scenario repeat $repeat exited $code"
@@ -210,6 +249,7 @@ measure() {
     --argjson bytes "$(step_number "$stem.out" bytes-uploaded)" \
     --argjson retries "$(count_matches "$stem.log" -e retrying -e reconnecting)" \
     --argjson errors "$(count_matches "$stem.log" '^::error::')" \
+    --argjson refused "$(count_matches "$stem.log" -e 'could not open connection')" \
     '$ARGS.named' >>"$runs_file"
 
   echo "$label/$scenario repeat $repeat: $(step_number "$stem.out" duration-ms) ms, exit $code"
@@ -218,10 +258,21 @@ measure() {
 labels=(candidate)
 binaries=("$CANDIDATE_BIN")
 refs=("$CANDIDATE_REF")
+conns=("")
 if [[ -n "$BASELINE_BIN" ]]; then
   labels+=(baseline)
   binaries+=("$BASELINE_BIN")
   refs+=("${BASELINE_REF:-unknown}")
+  conns+=("")
+fi
+# The connection pool is measured as a third build of the *same* binary, not
+# as a separate workflow run: the two numbers are only comparable when they
+# are interleaved on the same host in the same minutes.
+if [[ -n "$BENCH_CONNECTIONS" ]]; then
+  labels+=("pool$BENCH_CONNECTIONS")
+  binaries+=("$CANDIDATE_BIN")
+  refs+=("$CANDIDATE_REF")
+  conns+=("$BENCH_CONNECTIONS")
 fi
 
 generate_dataset
@@ -229,7 +280,7 @@ generate_dataset
 for scenario in "${SCENARIOS[@]}"; do
   for ((repeat = 1; repeat <= REPEATS; repeat++)); do
     for i in "${!labels[@]}"; do
-      measure "${labels[$i]}" "${binaries[$i]}" "${refs[$i]}" "$scenario" "$repeat"
+      measure "${labels[$i]}" "${binaries[$i]}" "${refs[$i]}" "$scenario" "$repeat" "${conns[$i]}"
     done
   done
 done
@@ -240,7 +291,7 @@ for scenario in "${SCENARIOS[@]}"; do
   for i in "${!labels[@]}"; do
     stem="$LOG_DIR/cleanup-${labels[$i]}-$scenario"
     run_easysftp "${binaries[$i]}" "$DATASET_DIR/empty" \
-      "$REMOTE_BASE/${labels[$i]}/$scenario" clean "$stem.log" "$stem.out" ||
+      "$REMOTE_BASE/${labels[$i]}/$scenario" clean "$stem.log" "$stem.out" "${conns[$i]}" ||
       echo "::warning::cleanup of ${labels[$i]}/$scenario failed"
   done
 done
@@ -261,7 +312,8 @@ jq -s '
       min_ms: (map(.duration_ms) | min),
       max_ms: (map(.duration_ms) | max),
       retries: (map(.retries) | add),
-      errors: (map(.errors) | add)
+      errors: (map(.errors) | add),
+      refused_connections: (map(.refused) | add)
     })
   | map(. + {
       mib_per_s: (if .median_ms > 0 then (.bytes / 1048576) / (.median_ms / 1000) else 0 end),
@@ -269,18 +321,24 @@ jq -s '
     })
 ' "$runs_file" >"$aggregate_file"
 
+settings="easySFTP defaults (no advanced.* overrides): concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay"
+if [[ -n "$BENCH_CONNECTIONS" ]]; then
+  settings="$settings; the pool$BENCH_CONNECTIONS build is the same binary with advanced.connections: $BENCH_CONNECTIONS"
+fi
+
 jq -n \
   --slurpfile results "$aggregate_file" \
   --arg candidate_ref "$CANDIDATE_REF" \
   --arg baseline_ref "$BASELINE_REF" \
   --argjson repeats "$REPEATS" \
   --arg runner "${RUNNER_ENVIRONMENT:-local}, $(uname -sr), $(nproc) cpu" \
+  --arg settings "$settings" \
   '{
      candidate_ref: $candidate_ref,
      baseline_ref: $baseline_ref,
      repeats: $repeats,
      runner: $runner,
-     settings: "easySFTP defaults (no advanced.* overrides): concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay",
+     settings: $settings,
      scenarios: {
        small: "300 files x 4 KiB",
        mixed: "40 x 16 KiB + 12 x 256 KiB + 4 x 2 MiB",
@@ -289,8 +347,14 @@ jq -n \
      results: $results[0]
    }' >"$OUT_DIR/results.json"
 
-# summary.md carries the same numbers, readable. The delta column compares the
-# candidate's median against the baseline's; negative means faster.
+# summary.md carries the same numbers, readable. The delta column compares
+# every build's median against the reference build's; negative means faster.
+# The reference is the baseline when one was measured, otherwise the candidate,
+# so a pool run without a baseline is still compared against something.
+reference_label=candidate
+if [[ -n "$BASELINE_BIN" ]]; then
+  reference_label=baseline
+fi
 {
   echo "## easySFTP benchmark"
   echo
@@ -300,13 +364,13 @@ jq -n \
   echo "| Baseline | \`${BASELINE_REF:-none}\` |"
   echo "| Repeats per scenario | $REPEATS |"
   echo "| Runner | $(uname -sr), $(nproc) cpu |"
-  echo "| Settings | easySFTP defaults: concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay |"
+  echo "| Settings | $settings |"
   echo
   echo "| Scenario | Build | Files | Size | Median | Min | Max | MiB/s | files/s | Retries | Errors | Failed runs | Delta |"
   echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
   for scenario in "${SCENARIOS[@]}"; do
-    baseline_median=$(jq -r --arg s "$scenario" \
-      'map(select(.scenario == $s and .label == "baseline")) | .[0].median_ms // empty' "$aggregate_file")
+    baseline_median=$(jq -r --arg s "$scenario" --arg r "$reference_label" \
+      'map(select(.scenario == $s and .label == $r)) | .[0].median_ms // empty' "$aggregate_file")
     for label in "${labels[@]}"; do
       row=$(jq -r --arg s "$scenario" --arg l "$label" '
         map(select(.scenario == $s and .label == $l)) | .[0]
@@ -317,12 +381,21 @@ jq -n \
         | @tsv' "$aggregate_file")
       IFS=$'\t' read -r files mib median min max mibs fps retries errors failed <<<"$row"
       delta='-'
-      if [[ "$label" == candidate && -n "$baseline_median" && "$baseline_median" != 0 ]]; then
+      if [[ "$label" != "$reference_label" && -n "$baseline_median" && "$baseline_median" != 0 ]]; then
         delta=$(awk -v c="$median" -v b="$baseline_median" 'BEGIN { printf "%+.1f%%", (c - b) / b * 100 }')
       fi
       echo "| $scenario | $label | $files | ${mib} MiB | ${median} ms | ${min} ms | ${max} ms | $mibs | $fps | $retries | $errors | $failed | $delta |"
     done
   done
+  echo
+  echo "Delta compares each build's median against the \`$reference_label\` build; negative is faster."
+  # Without this line a pool run whose extra connections the server refused
+  # reads as "the pool did nothing", which is the wrong conclusion entirely.
+  refused=$(jq '[.[].refused_connections] | add' "$aggregate_file")
+  if [[ "$refused" != 0 ]]; then
+    echo
+    echo "**$refused connection(s) were refused by the server** and fell back to the run's first connection, so a pool build measured here had fewer connections than configured."
+  fi
   echo
   echo "Data only: these numbers set no threshold and fail no build. Collected to evaluate the single-connection ceiling discussed in issue #158."
 } >"$OUT_DIR/summary.md"

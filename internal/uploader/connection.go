@@ -19,14 +19,15 @@ import (
 // different value.
 const keepaliveInterval = 30 * time.Second
 
-// sendKeepalives periodically sends an SSH keepalive request until ctx is
-// canceled. This keeps long or idle-looking transfers alive across NAT
-// gateways and firewalls that drop idle TCP connections, and answers sshd's
-// own ClientAliveInterval probes so the server doesn't disconnect us first.
-// client is a getter (not a fixed *ssh.Client) so one loop follows the
-// session across reconnects; interval is a parameter so tests can drive it
-// with a short tick instead of waiting 30s.
-func sendKeepalives(ctx context.Context, client func() *ssh.Client, interval time.Duration) {
+// sendKeepalives periodically sends an SSH keepalive request on every live
+// connection until ctx is canceled. This keeps long or idle-looking transfers
+// alive across NAT gateways and firewalls that drop idle TCP connections, and
+// answers sshd's own ClientAliveInterval probes so the server doesn't
+// disconnect us first. clients is a getter (not a fixed slice) so one loop
+// follows the session across reconnects and picks up connections the pool
+// opens later; interval is a parameter so tests can drive it with a short tick
+// instead of waiting 30s.
+func sendKeepalives(ctx context.Context, clients func() []*ssh.Client, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -34,7 +35,9 @@ func sendKeepalives(ctx context.Context, client func() *ssh.Client, interval tim
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			_, _, _ = client().SendRequest("keepalive@openssh.com", true, nil)
+			for _, c := range clients() {
+				_, _, _ = c.SendRequest("keepalive@openssh.com", true, nil)
+			}
 		}
 	}
 }

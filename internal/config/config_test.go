@@ -84,8 +84,9 @@ func TestLoadInlineDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.SftpRequestConcurrency != 16 || cfg.Retries != 2 ||
-		cfg.DryRun || cfg.SyncFastPath || cfg.SkipUnchanged || cfg.AllowAnyHostKey || cfg.LogLevel != LogNormal {
+	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.SftpRequestConcurrency != 16 || cfg.Connections != 1 ||
+		cfg.Retries != 2 || cfg.DryRun || cfg.SyncFastPath || cfg.SkipUnchanged || cfg.AllowAnyHostKey ||
+		cfg.LogLevel != LogNormal {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
 	if cfg.Timeout != 30*time.Second {
@@ -306,6 +307,7 @@ advanced:
   stall_timeout: 120
   concurrency: 8
   request_concurrency: 4
+  connections: 3
   skip_unchanged: true
 permissions:
   files: "0644"
@@ -349,7 +351,7 @@ sync:
 		t.Errorf("expected max_deletes 500, got %d", cfg.Safety.MaxDeletes)
 	}
 	if cfg.Retries != 4 || cfg.Timeout != 60*time.Second || cfg.StallTimeout != 120*time.Second ||
-		cfg.Concurrency != 8 || cfg.SftpRequestConcurrency != 4 || !cfg.SkipUnchanged {
+		cfg.Concurrency != 8 || cfg.SftpRequestConcurrency != 4 || cfg.Connections != 3 || !cfg.SkipUnchanged {
 		t.Errorf("unexpected advanced settings: %+v", cfg)
 	}
 	if cfg.FileMode == nil || *cfg.FileMode != 0o644 || cfg.DirMode == nil || *cfg.DirMode != 0o755 || !cfg.PreserveTimes {
@@ -366,8 +368,8 @@ func TestLoadConfigModeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.SftpRequestConcurrency != 16 || cfg.Retries != 2 ||
-		cfg.Timeout != 30*time.Second || cfg.StallTimeout != 0 || cfg.Safety.MaxDeletes != 0 {
+	if cfg.Port != 22 || cfg.Concurrency != 4 || cfg.SftpRequestConcurrency != 16 || cfg.Connections != 1 ||
+		cfg.Retries != 2 || cfg.Timeout != 30*time.Second || cfg.StallTimeout != 0 || cfg.Safety.MaxDeletes != 0 {
 		t.Errorf("unexpected config-mode defaults: %+v", cfg)
 	}
 	if cfg.Uploads[0].Strategy != StrategyOverlay {
@@ -417,6 +419,25 @@ advanced:
 	}
 	if cfg.Concurrency != 4 {
 		t.Errorf("expected 'auto' to resolve to the default concurrency, got %d", cfg.Concurrency)
+	}
+}
+
+func TestLoadConfigModeRejectsZeroConnections(t *testing.T) {
+	setConfigModeEnv(t, `version: 3
+connection:
+  host: sftp.example.com
+  username: deploy
+  host_key: SHA256:abc
+deployments:
+  website:
+    source: ./dist/
+    target: /www/
+advanced:
+  connections: 0
+`)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "advanced.connections must be at least 1") {
+		t.Fatalf("expected a connections validation error, got %v", err)
 	}
 }
 

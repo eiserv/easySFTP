@@ -98,7 +98,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 			// The stat is read-only, so it also runs in dry-run mode: the
 			// preview then reports the same skips the real run would.
 			if skipUnchanged {
-				client, _ := sess.current()
+				client, _, _ := sess.acquire(i)
 				if fi, err := client.Stat(f.remotePath); err == nil && fi.Mode().IsRegular() && fi.Size() == f.size {
 					if cfg.LogPerFile() {
 						log.Infof("%sskip %s (remote file has the same size)", verb, f.remotePath)

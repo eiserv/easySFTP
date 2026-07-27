@@ -160,6 +160,10 @@
           "description": "Maximum in-flight SFTP requests per file (pipelining within one file's transfer), or \"auto\" for the built-in default.",
           "$ref": "#/$defs/autoInt"
         },
+        "connections": {
+          "description": "Number of SSH connections uploads may spread over (default 1, never more than concurrency). More connections lift the single-TCP-flow and single-cipher-stream ceiling on high-latency links, but some servers and shared hosts limit concurrent connections per account.",
+          "$ref": "#/$defs/autoInt"
+        },
         "skip_unchanged": {
           "description": "For overlay deployments, skip uploading a file when the remote file already exists with the same size (coarse; use mode sync for exact content comparison).",
           "type": "boolean"

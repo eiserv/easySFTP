@@ -776,7 +776,7 @@ func TestSendKeepalivesPingsUntilCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		sendKeepalives(ctx, func() *ssh.Client { return sshClient }, 10*time.Millisecond)
+		sendKeepalives(ctx, func() []*ssh.Client { return []*ssh.Client{sshClient} }, 10*time.Millisecond)
 		close(done)
 	}()
 

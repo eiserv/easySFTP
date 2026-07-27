@@ -68,6 +68,7 @@ type yamlAdvanced struct {
 	StallTimeout       *int    `yaml:"stall_timeout"`
 	Concurrency        autoInt `yaml:"concurrency"`
 	RequestConcurrency autoInt `yaml:"request_concurrency"`
+	Connections        autoInt `yaml:"connections"`
 	SkipUnchanged      bool    `yaml:"skip_unchanged"`
 }
 
@@ -119,7 +120,7 @@ var allowedKeys = map[string][]string{
 	"defaults":         {"mode", "exclude"},
 	"deployments.*":    {"source", "target", "mode", "exclude"},
 	"safety":           {"max_deletes"},
-	"advanced":         {"retries", "timeout", "stall_timeout", "concurrency", "request_concurrency", "skip_unchanged"},
+	"advanced":         {"retries", "timeout", "stall_timeout", "concurrency", "request_concurrency", "connections", "skip_unchanged"},
 	"permissions":      {"files", "directories", "preserve_times"},
 	"sync":             {"fast_path", "manifest"},
 }
@@ -346,6 +347,7 @@ func applyYAML(cfg *Config, yc *yamlConfig) error {
 	}
 	cfg.Concurrency = yc.Advanced.Concurrency.or(defaultConcurrency)
 	cfg.SftpRequestConcurrency = yc.Advanced.RequestConcurrency.or(defaultRequestConcurrency)
+	cfg.Connections = yc.Advanced.Connections.or(defaultConnections)
 	cfg.SkipUnchanged = yc.Advanced.SkipUnchanged
 
 	var err error

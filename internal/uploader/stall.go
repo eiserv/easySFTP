@@ -10,15 +10,17 @@ import (
 // progress. Transfers mark themselves active for the duration of each upload
 // attempt and tick the watchdog on every read that moved bytes. A monitor
 // goroutine fires when transfers are active but no tick arrived for the
-// configured timeout; firing closes the SSH connection, which unblocks every
-// SFTP operation stuck on the stalled server with an error, so the run fails
-// in minutes with a clear message instead of hanging until the job-level
+// configured timeout; firing closes the run's SSH connections, which unblocks
+// every SFTP operation stuck on the stalled server with an error, so the run
+// fails in minutes with a clear message instead of hanging until the job-level
 // timeout.
 //
-// Closing the whole connection (rather than aborting just the stalled file)
-// is deliberate: all transfers share one SSH session, and a write blocked on
-// an exhausted SSH channel window cannot be interrupted any other way. A
-// server that stalls one transfer has stalled the session.
+// Closing whole connections (rather than aborting just the stalled file) is
+// deliberate: transfers share a connection, and a write blocked on an
+// exhausted SSH channel window cannot be interrupted any other way. With a
+// connection pool every connection goes, since the watchdog only knows that
+// the run as a whole stopped moving bytes: a server that stalls one transfer
+// has stalled the run.
 type stallWatchdog struct {
 	timeout time.Duration
 	kill    func() // closes the SSH connection

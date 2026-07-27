@@ -5,8 +5,8 @@
 // transfer.go performs the uploads, retry.go wraps a single upload in the
 // retry/reconnect loop, remote.go holds the remote-path and remote-directory
 // helpers, connection.go dials the server (optionally through a jump host),
-// hostkeys.go verifies host keys, session.go owns the live client pair and
-// its reconnects, sync.go implements the sync strategy and its manifest, and
+// hostkeys.go verifies host keys, session.go owns the run's connections and
+// their reconnects, sync.go implements the sync strategy and its manifest, and
 // stall.go the stall watchdog. This file ties them together: Run and the
 // per-strategy dispatch.
 package uploader
@@ -101,11 +101,11 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 
 	keepaliveCtx, stopKeepalives := context.WithCancel(ctx)
 	defer stopKeepalives()
-	go sendKeepalives(keepaliveCtx, sess.currentSSH, keepaliveInterval)
+	go sendKeepalives(keepaliveCtx, sess.liveSSH, keepaliveInterval)
 
 	var watch *stallWatchdog
 	if cfg.StallTimeout > 0 {
-		watch = startStallWatchdog(cfg.StallTimeout, func() { sess.currentSSH().Close() }, log)
+		watch = startStallWatchdog(cfg.StallTimeout, sess.closeSSH, log)
 		defer watch.stop()
 	}
 

@@ -16,19 +16,35 @@ import (
 	"github.com/eiserv/easySFTP/internal/config"
 )
 
-// session holds the run's SSH/SFTP client pair and can transparently redial
-// it when the connection drops mid-run, so per-file retries run against a
-// live client instead of burning their backoff on a dead one.
+// conn is one live SSH/SFTP client pair.
+type conn struct {
+	ssh       *ssh.Client
+	sftp      *sftp.Client
+	closeJump func() // closes the jump-host transport; no-op for direct connections
+	gen       int    // bumped on every successful reconnect of this connection
+}
+
+// session holds the run's connections and can transparently redial one when it
+// drops mid-run, so per-file retries run against a live client instead of
+// burning their backoff on a dead one.
+//
+// A run opens advanced.connections of them (1 by default). Everything above
+// that number is one connection's ceiling: one TCP congestion window and one
+// cipher stream carry the whole run, which neither concurrency nor
+// request_concurrency can lift (issue #158). Parallel uploads spread over the
+// pool; every other remote operation (remote scans, delete sweeps, manifest
+// writes, directory setup) stays on the first connection, where its reconnect
+// behavior is exactly what it was before the pool existed.
 type session struct {
 	cfg *config.Config
 	log Logger
 
-	mu         sync.Mutex
-	sshClient  *ssh.Client
-	sftpClient *sftp.Client
-	closeJump  func() // closes the jump-host transport; no-op for direct connections
-	gen        int    // bumped on every successful reconnect
-	reconnects int    // spent so far; bounded by cfg.Retries
+	mu    sync.Mutex
+	conns []*conn // slot 0 is dialed up front, the rest on first use
+	// reconnects spent so far, bounded by cfg.Retries and shared by every
+	// connection: the input is a run-wide budget, and a server that drops
+	// connections drops them faster with more of them open.
+	reconnects int
 }
 
 // newSession dials the server and opens the initial SFTP session, retrying
@@ -51,7 +67,9 @@ func newSession(ctx context.Context, cfg *config.Config, log Logger) (*session, 
 		}
 		sshClient, sftpClient, closeJump, err := connect(cfg, log)
 		if err == nil {
-			return &session{cfg: cfg, log: log, sshClient: sshClient, sftpClient: sftpClient, closeJump: closeJump}, nil
+			s := &session{cfg: cfg, log: log, conns: make([]*conn, poolSize(cfg, log))}
+			s.conns[0] = &conn{ssh: sshClient, sftp: sftpClient, closeJump: closeJump}
+			return s, nil
 		}
 		lastErr = err
 		if !isRetryableConnect(err) {
@@ -59,6 +77,25 @@ func newSession(ctx context.Context, cfg *config.Config, log Logger) (*session, 
 		}
 	}
 	return nil, lastErr
+}
+
+// poolSize is how many connections the run may open. It never exceeds the
+// number of files uploaded in parallel: a connection no worker ever picks is a
+// handshake for nothing.
+func poolSize(cfg *config.Config, log Logger) int {
+	n := cfg.Connections
+	if n < 1 {
+		n = 1 // a directly constructed config (tests) leaves this at zero
+	}
+	if cfg.Concurrency > 0 && n > cfg.Concurrency {
+		log.Infof("advanced.connections is %d but only %d file(s) upload in parallel; opening at most %d connection(s)",
+			n, cfg.Concurrency, cfg.Concurrency)
+		n = cfg.Concurrency
+	}
+	if n > 1 {
+		log.Infof("uploads may use up to %d connections", n)
+	}
+	return n
 }
 
 // permanentError marks a connect() failure that must never be retried: local
@@ -82,37 +119,75 @@ func isRetryableConnect(err error) bool {
 	return !strings.Contains(err.Error(), "ssh: unable to authenticate")
 }
 
-// current returns the live SFTP client and its generation. The generation is
+// acquire returns the live SFTP client serving the given file index, the
+// connection behind it and that connection's generation. The generation is
 // handed back to reconnect so that concurrent workers failing on the same
 // dead connection trigger only one redial between them.
-func (s *session) current() (*sftp.Client, int) {
+//
+// Files are spread over the pool round-robin. Connections past the first are
+// dialed on first use, so a run that uploads three files never pays for four
+// handshakes, and a server that refuses one (sshd's MaxSessions/MaxStartups,
+// a per-account connection limit on shared hosting) costs a warning rather
+// than the run: that slot falls back to the first connection.
+func (s *session) acquire(index int) (*sftp.Client, *conn, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sftpClient, s.gen
+	slot := index % len(s.conns)
+	if s.conns[slot] == nil {
+		c, err := s.dial()
+		if err != nil {
+			s.log.Warningf("could not open connection %d of %d (%v); this run continues on its first connection",
+				slot+1, len(s.conns), err)
+			c = s.conns[0]
+		}
+		s.conns[slot] = c
+	}
+	c := s.conns[slot]
+	return c.sftp, c, c.gen
 }
 
-// currentSSH returns the live SSH client (used by the keepalive loop, which
-// must follow reconnects to the fresh transport).
-func (s *session) currentSSH() *ssh.Client {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.sshClient
+// dial opens one additional pooled connection. Must be called with s.mu held,
+// which also serializes the handshakes of a starting run: the alternative is
+// several workers dialing the same slot at once.
+//
+// Everything connect() logs is a property of the host and the configuration,
+// so an extra connection can only repeat what the first one already said (the
+// "connecting ..." line, the host key verdict). Outside debug mode those
+// repeats are dropped; a dial that actually fails comes back as an error, not
+// as a log line, and host key verification itself still runs per connection,
+// inside connect().
+func (s *session) dial() (*conn, error) {
+	log := s.log
+	if !s.cfg.Debug() {
+		log = quietLogger{s.log}
+	}
+	sshClient, sftpClient, closeJump, err := connect(s.cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	return &conn{ssh: sshClient, sftp: sftpClient, closeJump: closeJump}, nil
 }
 
-// reconnect redials after a connection-class failure. gen is the generation
-// of the caller's failed client: when another worker already reconnected, the
-// fresh client is returned without dialing again. Reconnects are bounded by
-// the retries input; past that budget, or when the redial itself fails, an
-// error is returned and the caller gives up.
+// quietLogger swallows the log output of a repeat dial; see session.dial.
+type quietLogger struct{ Logger }
+
+func (quietLogger) Infof(string, ...any)    {}
+func (quietLogger) Warningf(string, ...any) {}
+
+// reconnect redials c after a connection-class failure. gen is the generation
+// of the caller's failed client: when another worker already reconnected it,
+// the fresh client is returned without dialing again. Reconnects are bounded
+// by the retries input (one budget for the whole pool); past that budget, or
+// when the redial itself fails, an error is returned and the caller gives up.
 //
 // The lock is held across the backoff and redial on purpose: workers that
-// fail in the meantime block in current()/reconnect() until the fresh client
+// fail in the meantime block in acquire()/reconnect() until the fresh client
 // is up, instead of hammering the dead one.
-func (s *session) reconnect(ctx context.Context, gen int) (*sftp.Client, error) {
+func (s *session) reconnect(ctx context.Context, c *conn, gen int) (*sftp.Client, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.gen != gen {
-		return s.sftpClient, nil
+	if c.gen != gen {
+		return c.sftp, nil
 	}
 	if s.reconnects >= s.cfg.Retries {
 		return nil, fmt.Errorf("connection lost and the reconnect budget is spent (%d, from the retries input)", s.cfg.Retries)
@@ -123,20 +198,57 @@ func (s *session) reconnect(ctx context.Context, gen int) (*sftp.Client, error) 
 	if err := sleepCtx(ctx, backoff); err != nil {
 		return nil, err
 	}
-	s.sftpClient.Close()
-	s.sshClient.Close()
-	s.closeJump()
+	c.sftp.Close()
+	c.ssh.Close()
+	c.closeJump()
 	sshClient, sftpClient, closeJump, err := connect(s.cfg, s.log)
 	if err != nil {
 		return nil, fmt.Errorf("reconnecting: %w", err)
 	}
-	s.sshClient, s.sftpClient, s.closeJump = sshClient, sftpClient, closeJump
-	s.gen++
-	return s.sftpClient, nil
+	c.ssh, c.sftp, c.closeJump = sshClient, sftpClient, closeJump
+	c.gen++
+	return c.sftp, nil
 }
 
-// do runs op against the live client, redialing on a connection-class failure
-// so the retried op runs against a fresh client instead of the dead one.
+// eachConn calls fn once per opened connection, skipping slots that were never
+// dialed and counting a connection shared by several slots (see acquire) once.
+// Must be called with s.mu held.
+func (s *session) eachConn(fn func(*conn)) {
+	seen := make(map[*conn]bool, len(s.conns))
+	for _, c := range s.conns {
+		if c == nil || seen[c] {
+			continue
+		}
+		seen[c] = true
+		fn(c)
+	}
+}
+
+// liveSSH returns the SSH client of every opened connection. Snapshotted under
+// the lock because reconnect swaps those fields; callers (the keepalive loop
+// and the stall watchdog) act on every connection the run has open.
+func (s *session) liveSSH() []*ssh.Client {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*ssh.Client
+	s.eachConn(func(c *conn) { out = append(out, c.ssh) })
+	return out
+}
+
+// closeSSH closes every live transport. The stall watchdog fires this: a
+// server that stalls one transfer has stalled the run (all connections share
+// its answer time), and closing the transports is what unblocks the SFTP
+// operations stuck on it.
+func (s *session) closeSSH() {
+	for _, c := range s.liveSSH() {
+		c.Close()
+	}
+}
+
+// do runs op against the first connection, redialing on a connection-class
+// failure so the retried op runs against a fresh client instead of the dead one.
+// Everything outside the per-file upload path goes through here, which keeps
+// remote scans, delete sweeps and manifest writes on one connection.
 // Reconnects share the run-wide budget (the retries input) with the upload
 // path; past that budget the original failure is returned. Non-connection
 // errors are returned as-is, untouched.
@@ -148,7 +260,7 @@ func (s *session) reconnect(ctx context.Context, gen int) (*sftp.Client, error) 
 // the connection died.
 func (s *session) do(ctx context.Context, watch *stallWatchdog, op func(*sftp.Client) error) error {
 	for {
-		client, gen := s.current()
+		client, c, gen := s.acquire(0)
 		if watch != nil {
 			watch.begin()
 		}
@@ -165,19 +277,21 @@ func (s *session) do(ctx context.Context, watch *stallWatchdog, op func(*sftp.Cl
 		if watch != nil && watch.fired.Load() {
 			return err
 		}
-		if _, rerr := s.reconnect(ctx, gen); rerr != nil {
+		if _, rerr := s.reconnect(ctx, c, gen); rerr != nil {
 			return fmt.Errorf("%w (%v)", err, rerr)
 		}
 	}
 }
 
-// close tears the session down at the end of the run.
+// close tears every connection of the session down at the end of the run.
 func (s *session) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sftpClient.Close()
-	s.sshClient.Close()
-	s.closeJump()
+	s.eachConn(func(c *conn) {
+		c.sftp.Close()
+		c.ssh.Close()
+		c.closeJump()
+	})
 }
 
 // isConnError reports whether err looks like the connection itself died (as

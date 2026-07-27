@@ -15,10 +15,10 @@ import (
 // When a failure looks connection-class, the session is asked to reconnect
 // first, so the retry runs against a live client instead of the dead one.
 //
-// index is the file's position in the plan and is folded into the temp
-// path (see uploadFile) so two planned transfers never race over the same
-// temporary name, even if one target's path happens to literally be
-// another's plus tmpSuffix.
+// index is the file's position in the plan. It is folded into the temp path
+// (see uploadFile) so two planned transfers never race over the same temporary
+// name, even if one target's path happens to literally be another's plus
+// tmpSuffix, and it picks the file's connection out of the pool.
 func uploadFileWithRetry(ctx context.Context, env *transferEnv, f fileItem, index int, mode fs.FileMode) (int64, error) {
 	sess, watch, log, retries := env.sess, env.watch, env.log, env.cfg.Retries
 	var lastErr error
@@ -30,7 +30,7 @@ func uploadFileWithRetry(ctx context.Context, env *transferEnv, f fileItem, inde
 				return 0, err
 			}
 		}
-		client, gen := sess.current()
+		client, c, gen := sess.acquire(index)
 		if attempt > 0 {
 			// A previous attempt may have left its temp file behind (a dead
 			// connection cannot run the normal cleanup). Clear it so the
@@ -53,7 +53,7 @@ func uploadFileWithRetry(ctx context.Context, env *transferEnv, f fileItem, inde
 			break
 		}
 		if isConnError(err) && attempt < retries {
-			if _, rerr := sess.reconnect(ctx, gen); rerr != nil {
+			if _, rerr := sess.reconnect(ctx, c, gen); rerr != nil {
 				return 0, fmt.Errorf("uploading %q to %q: %w (%v)", f.localPath, f.remotePath, lastErr, rerr)
 			}
 		}
