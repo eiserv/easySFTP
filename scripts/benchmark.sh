@@ -61,6 +61,16 @@ require_env() {
 require_env CANDIDATE_BIN CANDIDATE_REF OUT_DIR DATASET_DIR LOG_DIR \
   REMOTE_BASE BENCH_HOST BENCH_USERNAME BENCH_PASSWORD BENCH_KNOWN_HOSTS
 
+# Checked because the benchmark runs on a self-hosted runner, where a
+# GitHub-hosted image's preinstalled tools are not a given. Better here than
+# after minutes of measuring.
+for cmd in jq nproc; do
+  command -v "$cmd" >/dev/null || {
+    echo "::error::$cmd is required but not installed on this runner" >&2
+    exit 1
+  }
+done
+
 REPEATS=${REPEATS:-3}
 BENCH_PORT=${BENCH_PORT:-22}
 BASELINE_BIN=${BASELINE_BIN:-}
@@ -264,7 +274,7 @@ jq -n \
   --arg candidate_ref "$CANDIDATE_REF" \
   --arg baseline_ref "$BASELINE_REF" \
   --argjson repeats "$REPEATS" \
-  --arg runner "$(uname -sr), $(nproc) cpu" \
+  --arg runner "${RUNNER_ENVIRONMENT:-local}, $(uname -sr), $(nproc) cpu" \
   '{
      candidate_ref: $candidate_ref,
      baseline_ref: $baseline_ref,

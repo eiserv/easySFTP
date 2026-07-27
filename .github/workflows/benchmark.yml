@@ -30,6 +30,24 @@ name: SFTP benchmark
 # automatic post-release run uses "benchmark-release", which is meant to stay
 # unprotected so a release does not wait for a click.
 #
+# Self-hosted runner: this job runs on a fixed machine (labels self-hosted,
+# Linux, X64) so results are comparable instead of landing on whatever
+# GitHub-hosted region was free. It is the only job in this repository that may
+# use it; every other workflow stays on GitHub-hosted runners. Three layers
+# keep untrusted code off that machine, and all three are needed:
+#   1. workflow_dispatch and workflow_call require write access already.
+#   2. The pull_request path is restricted to release-please branches *of this
+#      repository*. A fork can name its branch "release-please--anything", so
+#      the head-repo check, not the branch name, is what keeps forks out.
+#   3. Repository setting "Fork pull request workflows from outside
+#      collaborators" must stay on "Require approval for all external
+#      contributors". Without it an outside contributor can add
+#      "runs-on: self-hosted" to any workflow in a fork PR and execute
+#      arbitrary code on the machine; no YAML in this repository can prevent
+#      that, since a pull_request run uses the workflow files from the PR.
+# The runner also holds nothing sensitive by design: secrets are passed per
+# run, not stored on it.
+#
 # Required repository secrets:
 #   BENCHMARK_SFTP_HOST         host name of the benchmark server
 #   BENCHMARK_SFTP_USERNAME     SFTP user name
@@ -103,8 +121,11 @@ jobs:
     name: Benchmark SFTP throughput
     if: >-
       github.event_name != 'pull_request' ||
-      startsWith(github.head_ref, 'release-please--')
-    runs-on: ubuntu-24.04
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.head_ref, 'release-please--'))
+    # The one job in this repo on the self-hosted runner. Everything else stays
+    # on GitHub-hosted runners; see the "Self-hosted runner" note in the header.
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 60
     # The maintainer gate issue #169 asks for. See the header: protect
     # "benchmark" with required reviewers, leave "benchmark-release" open.

@@ -66,6 +66,14 @@ per scenario, so a reader (human or agent) does not have to open every file.
   before the merge. That run stores nothing: its result belongs to a release
   that does not exist yet. The official file is the post-tag measurement.
 
+## Where the numbers were measured
+
+The benchmark runs on a fixed self-hosted runner, not on a GitHub-hosted one:
+those land in a changing region on changing hardware, which puts the machine
+into every delta between two releases. Each result records where it ran in its
+`runner` field (`self-hosted` or `github-hosted`, plus kernel and CPU count).
+Two results are only comparable when that field matches.
+
 ## Retention
 
 The current release and the four before it stay in `benchmarks/`. Older
