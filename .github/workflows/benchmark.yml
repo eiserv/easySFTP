@@ -1,0 +1,143 @@
+name: SFTP benchmark
+
+# Manually triggered throughput measurement against a real SFTP server
+# (issue #169). It collects data only: no threshold here fails anything, since
+# run-to-run variance against an external host is not understood yet.
+#
+# Required repository secrets:
+#   BENCHMARK_SFTP_HOST         host name of the benchmark server
+#   BENCHMARK_SFTP_USERNAME     SFTP user name
+#   BENCHMARK_SFTP_PASSWORD     SFTP password
+#   BENCHMARK_SFTP_KNOWN_HOSTS  verbatim output of "ssh-keyscan <host>", so the
+#                               benchmark verifies the server like any other
+#                               easySFTP run does
+#
+# The account must be a throwaway one: everything below
+# "<remote-base>/<build>/<scenario>" is wiped before every repeat and again at
+# the end of the run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate-ref:
+        description: "Ref (branch, tag or SHA) to benchmark. Defaults to the ref this workflow was started from."
+        required: false
+        type: string
+      baseline-ref:
+        description: "Optional second ref to benchmark in the same run, for comparison (e.g. main)."
+        required: false
+        type: string
+      repeats:
+        description: "Measured repeats per scenario; the median is reported."
+        required: false
+        default: "3"
+        type: string
+      remote-base:
+        description: "Remote directory the benchmark owns. Everything below it is disposable."
+        required: false
+        default: "/easysftp-benchmark"
+        type: string
+      port:
+        description: "SFTP port of the benchmark server."
+        required: false
+        default: "22"
+        type: string
+
+permissions:
+  contents: read
+
+# One benchmark at a time: two runs sharing the host would measure each other,
+# and they would also fight over the same remote directories.
+concurrency:
+  group: sftp-benchmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Benchmark SFTP throughput
+    # The secrets already require write access to reach; this is the explicit
+    # owner-only gate issue #169 asks for.
+    if: github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      # The workflow's own checkout, for scripts/benchmark.sh. It runs first:
+      # a root checkout cleans the workspace and would remove the build
+      # checkouts below.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check out the candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.candidate-ref || github.sha }}
+          path: builds/candidate
+
+      - name: Check out the baseline
+        if: inputs.baseline-ref != ''
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.baseline-ref }}
+          path: builds/baseline
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build both refs
+        id: build
+        env:
+          CGO_ENABLED: "0"
+          # Through the environment, never interpolated into the script: a ref
+          # is user input, and "${{ }}" in a run block is a shell injection.
+          CANDIDATE_REF_INPUT: ${{ inputs.candidate-ref }}
+          BASELINE_REF_INPUT: ${{ inputs.baseline-ref }}
+          DEFAULT_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          build() {
+            local dir=$1 name=$2
+            ( cd "$dir" && go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/$name" ./cmd/easysftp )
+          }
+          build builds/candidate easysftp-candidate
+          echo "candidate-ref=${CANDIDATE_REF_INPUT:-$DEFAULT_REF} ($(git -C builds/candidate rev-parse --short HEAD))" >> "$GITHUB_OUTPUT"
+          if [ -n "$BASELINE_REF_INPUT" ]; then
+            build builds/baseline easysftp-baseline
+            {
+              echo "baseline-bin=$RUNNER_TEMP/bin/easysftp-baseline"
+              echo "baseline-ref=$BASELINE_REF_INPUT ($(git -C builds/baseline rev-parse --short HEAD))"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the benchmark
+        env:
+          CANDIDATE_BIN: ${{ runner.temp }}/bin/easysftp-candidate
+          CANDIDATE_REF: ${{ steps.build.outputs.candidate-ref }}
+          BASELINE_BIN: ${{ steps.build.outputs.baseline-bin }}
+          BASELINE_REF: ${{ steps.build.outputs.baseline-ref }}
+          REPEATS: ${{ inputs.repeats }}
+          REMOTE_BASE: ${{ inputs.remote-base }}
+          # OUT_DIR is uploaded as an artifact; LOG_DIR (which holds logs that
+          # name the host and user) deliberately is not.
+          OUT_DIR: ${{ runner.temp }}/benchmark-results
+          LOG_DIR: ${{ runner.temp }}/benchmark-logs
+          DATASET_DIR: ${{ runner.temp }}/benchmark-data
+          BENCH_HOST: ${{ secrets.BENCHMARK_SFTP_HOST }}
+          BENCH_PORT: ${{ inputs.port }}
+          BENCH_USERNAME: ${{ secrets.BENCHMARK_SFTP_USERNAME }}
+          BENCH_PASSWORD: ${{ secrets.BENCHMARK_SFTP_PASSWORD }}
+          BENCH_KNOWN_HOSTS: ${{ secrets.BENCHMARK_SFTP_KNOWN_HOSTS }}
+        run: bash scripts/benchmark.sh
+
+      - name: Publish the summary
+        if: always()
+        run: cat "$RUNNER_TEMP/benchmark-results/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-${{ github.run_id }}
+          path: ${{ runner.temp }}/benchmark-results
+          if-no-files-found: ignore

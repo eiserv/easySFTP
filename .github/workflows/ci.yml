@@ -338,3 +338,38 @@ jobs:
           [ "${{ steps.badkey.outcome }}" = "failure" ]
           [ "${{ steps.nokey.outcome }}" = "failure" ]
           [ "${{ steps.v2input.outcome }}" = "failure" ]
+
+      # The benchmark harness (issue #169) normally runs against an external
+      # server behind secrets, so this container is the only place its
+      # plumbing can be exercised: binary invocation, step-output parsing and
+      # the JSON/Markdown aggregation. One repeat is enough to prove the
+      # pipeline; the numbers it produces are meaningless against localhost.
+      - name: Smoke-test the benchmark harness
+        env:
+          CANDIDATE_BIN: ${{ runner.temp }}/bench-bin/easysftp
+          CANDIDATE_REF: self-test
+          REPEATS: "1"
+          REMOTE_BASE: /upload/benchmark
+          OUT_DIR: ${{ runner.temp }}/bench-out
+          LOG_DIR: ${{ runner.temp }}/bench-logs
+          DATASET_DIR: ${{ runner.temp }}/bench-data
+          BENCH_HOST: localhost
+          BENCH_PORT: "2222"
+          BENCH_USERNAME: demo
+          BENCH_PASSWORD: demopass
+        run: |
+          mkdir -p "$RUNNER_TEMP/bench-bin"
+          go build -o "$RUNNER_TEMP/bench-bin/easysftp" ./cmd/easysftp
+          BENCH_KNOWN_HOSTS=$(ssh-keyscan -p 2222 localhost 2>/dev/null)
+          export BENCH_KNOWN_HOSTS
+          bash scripts/benchmark.sh
+          jq -e '.results | length == 3 and all(.files > 0 and .median_ms > 0 and .failed_runs == 0)' "$OUT_DIR/results.json"
+          test -s "$OUT_DIR/summary.md"
+
+      - name: Verify the benchmark left nothing behind
+        run: |
+          if [ -n "$(docker exec sftp find /home/demo/upload/benchmark -type f)" ]; then
+            echo "::error::benchmark payload survived its own cleanup"
+            docker exec sftp find /home/demo/upload/benchmark
+            exit 1
+          fi
