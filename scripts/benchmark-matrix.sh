@@ -114,7 +114,7 @@ concurrency: $conc"
 request_concurrency: $request"
   fi
 
-  if ! METRICS_FILE= run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean \
+  if ! METRICS_FILE='' run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean \
     "$stem.clean.log" "$stem.clean.out" "$advanced"; then
     echo "::warning::pre-clean of $label/$scenario c$conns/w$conc repeat $repeat failed"
     cat "$stem.clean.log"
@@ -170,7 +170,7 @@ done
 for scenario in "${scenarios[@]}"; do
   for i in "${!labels[@]}"; do
     stem="$LOG_DIR/cleanup-${labels[$i]}-$scenario"
-    METRICS_FILE= run_easysftp "${binaries[$i]}" "$DATASET_DIR/empty" \
+    METRICS_FILE='' run_easysftp "${binaries[$i]}" "$DATASET_DIR/empty" \
       "$REMOTE_BASE/matrix/${labels[$i]}/$scenario" clean "$stem.log" "$stem.out" "" ||
       echo "::warning::cleanup of ${labels[$i]}/$scenario failed"
   done

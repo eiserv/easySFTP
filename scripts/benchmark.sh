@@ -84,7 +84,7 @@ measure() {
   # after it (which would otherwise overwrite existing files). METRICS_FILE is
   # cleared for it, so the pre-clean's own numbers can never be mistaken for
   # the measurement's.
-  if ! METRICS_FILE= run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean "$stem.clean.log" "$stem.clean.out"; then
+  if ! METRICS_FILE='' run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean "$stem.clean.log" "$stem.clean.out"; then
     echo "::warning::pre-clean of $label/$scenario repeat $repeat failed"
     cat "$stem.clean.log"
   fi
@@ -150,7 +150,7 @@ done
 for scenario in "${SCENARIOS[@]}"; do
   for i in "${!labels[@]}"; do
     stem="$LOG_DIR/cleanup-${labels[$i]}-$scenario"
-    METRICS_FILE= run_easysftp "${binaries[$i]}" "$DATASET_DIR/empty" \
+    METRICS_FILE='' run_easysftp "${binaries[$i]}" "$DATASET_DIR/empty" \
       "$REMOTE_BASE/${labels[$i]}/$scenario" clean "$stem.log" "$stem.out" "${advanced[$i]}" ||
       echo "::warning::cleanup of ${labels[$i]}/$scenario failed"
   done

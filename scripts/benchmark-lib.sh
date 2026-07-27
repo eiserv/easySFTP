@@ -221,7 +221,9 @@ metrics_json() {
 # odd number of repeats is the better choice. "mad" is the median absolute
 # deviation: a spread metric that a single slow repeat (the normal failure mode
 # of a shared host) does not blow up, unlike a standard deviation.
-# shellcheck disable=SC2034  # used by the scripts that source this file
+# SC2034: used by the scripts that source this file. SC2016: the "$xs"/"$m" in
+# here are jq variables, so single quotes are exactly right.
+# shellcheck disable=SC2034,SC2016
 JQ_STATS='
   def median: if length == 0 then 0 else (sort | .[(((length - 1) / 2) | floor)]) end;
   def mad: . as $xs
