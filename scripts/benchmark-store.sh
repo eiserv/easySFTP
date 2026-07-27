@@ -92,10 +92,14 @@ done
 
 # The envelope keeps the measurement verbatim under .benchmark and adds only
 # provenance around it, so a reader never has to guess which run a number is.
+# The variable is "run_label", not "label": "label" is a jq keyword, and jq 1.6
+# (what Debian/Ubuntu LTS and therefore the self-hosted runner ship) rejects
+# "$label" in a filter with "unexpected label, expecting IDENT or __loc__".
+# The *key* stays "label", which every jq parses.
 jq -n \
   --arg kind "$KIND" \
   --arg version "$VERSION" \
-  --arg label "$slug" \
+  --arg run_label "$slug" \
   --arg recorded_at "$RECORDED_AT" \
   --arg commit "$COMMIT" \
   --arg run_url "$RUN_URL" \
@@ -104,7 +108,7 @@ jq -n \
      schema_version: 1,
      kind: $kind,
      version: (if $version == "" then null else $version end),
-     label: (if $label == "" then null else $label end),
+     label: (if $run_label == "" then null else $run_label end),
      official: ($kind == "release"),
      recorded_at: $recorded_at,
      commit: (if $commit == "" then null else $commit end),
