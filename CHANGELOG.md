@@ -5,6 +5,13 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0](https://github.com/eiserv/easySFTP/compare/v3.2.2...v3.3.0) (2026-07-27)
+
+
+### Features
+
+* manually triggered SFTP benchmark workflow ([#170](https://github.com/eiserv/easySFTP/issues/170)) ([cceade3](https://github.com/eiserv/easySFTP/commit/cceade31348b2f5410ddef971459340821dfb7af))
+
 ## [3.2.2](https://github.com/eiserv/easySFTP/compare/v3.2.1...v3.2.2) (2026-07-26)
 
 
