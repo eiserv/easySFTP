@@ -15,8 +15,9 @@ name: SFTP benchmark
 #                      stored: the release is not real yet.
 #   workflow_call      release-please.yml calls this after it created a release,
 #                      passing the tag as "release-version". The tagged code is
-#                      measured once more and committed as the official
-#                      reference.
+#                      measured once more, committed as the official reference,
+#                      and attached to the GitHub Release as an asset (the
+#                      "attach" job below).
 #
 # That last one is a "uses:" call and not an "on: release" trigger on purpose.
 # release-please creates the GitHub Release with the GITHUB_TOKEN, and events
@@ -310,3 +311,34 @@ jobs:
           # files are added here, so replaying them on top is safe.
           git pull --rebase origin main
           git push origin HEAD:main
+
+  # A release's numbers belong on its release page, next to the binaries. This
+  # is a separate job on a GitHub-hosted runner: it needs nothing but "gh" and
+  # a checkout, and the self-hosted runner stays reserved for the measurement.
+  # It reads the files from main, which the job above pushed there, so it can
+  # only run once that finished.
+  attach:
+    name: Attach the result to the release
+    needs: benchmark
+    if: inputs.release-version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+
+      - name: Upload the benchmark as a release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release-version }}
+        run: |
+          set -euo pipefail
+          # Renamed for the release page: "release-v3.3.2.json" reads like a
+          # second copy of the release next to the binaries, "benchmark-" says
+          # what it is. The file in benchmarks/ keeps its own naming.
+          cp "benchmarks/release-$VERSION.json" "benchmark-$VERSION.json"
+          cp "benchmarks/release-$VERSION.md" "benchmark-$VERSION.md"
+          gh release upload "$VERSION" "benchmark-$VERSION.json" "benchmark-$VERSION.md" \
+            --clobber --repo "$GITHUB_REPOSITORY"

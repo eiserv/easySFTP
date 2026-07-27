@@ -57,7 +57,9 @@ per scenario, so a reader (human or agent) does not have to open every file.
 
 - **Official** results are `kind: "release"`. They are measured automatically
   after release-please created a tag, against exactly that tag, and they are
-  the only results `latest.*` is ever copied from.
+  the only results `latest.*` is ever copied from. Both files are also attached
+  to that GitHub Release as `benchmark-vX.Y.Z.json` and `benchmark-vX.Y.Z.md`,
+  so the numbers sit next to the binaries they describe.
 - **Manual** results are `kind: "manual"`, produced by a manually started run
   (a branch, a tag, or a pull request). They are kept alongside the official
   ones and are clearly named, but they never become a reference and never
