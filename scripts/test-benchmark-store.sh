@@ -26,9 +26,28 @@ cat >"$results" <<'JSON'
   "repeats": 1,
   "runner": "self-hosted, Linux 6.1.0, 4 cpu",
   "environment": { "os": "Linux", "cpus": 4 },
+  "link": {
+    "iface": "eth0",
+    "shaping": {
+      "available": false,
+      "reason": "no profile asked for shaping, so it was never probed for",
+      "requested": ["baseline"],
+      "applied": ["baseline"]
+    },
+    "probes": [
+      {
+        "profile": "baseline", "at": "start", "handshake_ms": 41.2,
+        "rtt_ms": { "p50": 18.4, "p90": 21, "min": 17.1, "max": 44.2, "samples": 21 },
+        "control": { "streams": 4, "bytes": 8388608,
+                     "single_stream_mib_per_s": 0.41, "n_stream_mib_per_s": 1.6 },
+        "host_load": { "available": false, "reason": "SFTP-only account" },
+        "errors": []
+      }
+    ]
+  },
   "results": [
-    { "label": "candidate", "scenario": "small", "median_ms": 1000 },
-    { "label": "baseline", "scenario": "small", "median_ms": 1200 }
+    { "label": "candidate", "scenario": "small", "link_profile": "baseline", "median_ms": 1000 },
+    { "label": "baseline", "scenario": "small", "link_profile": "baseline", "median_ms": 1200 }
   ]
 }
 JSON
@@ -163,16 +182,33 @@ expect_equal 'index links the file it describes' releases/release-v1.2.0.json \
   "$(jq -r '.entries[0].json' "$BENCH_DIR/index.json")"
 expect_equal 'index carries the environment forward' Linux \
   "$(jq -r '.entries[0].environment.os' "$BENCH_DIR/index.json")"
+# environment says which machine, the link fields say which path. Both have to
+# survive into the index, or a reader has to open every file to find out whether
+# two results are comparable at all.
+expect_equal 'index carries the probed RTT forward' 18.4 \
+  "$(jq -r '.entries[0].rtt_p50_ms' "$BENCH_DIR/index.json")"
+expect_equal 'index names the link profiles a result was measured over' baseline \
+  "$(jq -r '.entries[0].link_profiles | join(" ")' "$BENCH_DIR/index.json")"
 expect_equal 'the raw measurement is kept verbatim' test-ref \
   "$(jq -r .benchmark.candidate_ref "$BENCH_DIR/latest.json")"
+# The whole link object, untouched: the store layer wraps a measurement, it does
+# not summarise it.
+expect_equal 'the link object is kept verbatim' '18.4 0.41 eth0' \
+  "$(jq -r '[.benchmark.link.probes[0].rtt_ms.p50, .benchmark.link.probes[0].control.single_stream_mib_per_s, .benchmark.link.iface] | join(" ")' "$BENCH_DIR/latest.json")"
 
 # trend.csv is the flat "over releases" export: a header plus one row per
-# candidate scenario of every stored non-matrix result (10 of those, one
-# scenario each).
+# candidate scenario and link profile of every stored non-matrix result (10 of
+# those, one scenario and one profile each).
 expect_equal 'trend.csv covers every stored standard result' 11 \
-  "$(wc -l <"$BENCH_DIR/trend.csv")"
-expect_equal 'trend.csv carries the throughput index.json lacks' '"scenario","files","bytes","median_ms"' \
+  "$(($(wc -l <"$BENCH_DIR/trend.csv")))"
+expect_equal 'trend.csv carries the link the row was measured over' '"scenario","link_profile","rtt_p50_ms","control_single_mib_per_s"' \
   "$(head -1 "$BENCH_DIR/trend.csv" | cut -d, -f7-10)"
+expect_equal 'trend.csv carries the throughput index.json lacks' '"files","bytes","median_ms"' \
+  "$(head -1 "$BENCH_DIR/trend.csv" | cut -d, -f11-13)"
+# Matched rather than split on columns: the runner field contains commas of its
+# own ("self-hosted, Linux 6.1.0, 4 cpu"), so a naive CSV split lands elsewhere.
+expect_equal 'trend.csv fills in the link columns from the probe' 10 \
+  "$(grep -c ',"baseline",18.4,0.41,' "$BENCH_DIR/trend.csv")"
 expect_equal 'trend.csv leaves matrix runs out' 0 \
   "$(grep -c '"matrix"' "$BENCH_DIR/trend.csv" || true)"
 

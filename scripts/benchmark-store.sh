@@ -268,6 +268,18 @@ entries() {
       benchmark_schema_version: (.benchmark.schema_version // 1),
       runner: (.benchmark.runner // null),
       environment: (.benchmark.environment // null),
+      # The link the result was measured over (issue #184). environment says
+      # which machine, this says which path, and without the second one two
+      # results from different days are not comparable even when the first
+      # matches. Empty on everything measured before the probe existed.
+      link_profiles: (.benchmark.link.shaping.requested // []),
+      # The opening probe of the baseline profile, i.e. the real line as the run
+      # found it. Here so that "was that release measured on a slower line" can
+      # be answered without opening every file.
+      rtt_p50_ms: (((.benchmark.link.probes // [])
+        | map(select(.at == "start"))
+        | (map(select(.profile == "baseline")) + .)
+        | map(.rtt_ms.p50) | map(select(. != null)) | first) // null),
       archived: ($path | startswith("archive/")),
       json: $path,
       markdown: ($path | sub("\\.json$"; ".md")),
@@ -321,22 +333,32 @@ entries "${stored[@]}" | jq -s \
      entries: (sort_by(.recorded_at) | reverse)
    }' >"$BENCH_DIR/index.json"
 
-# trend.csv: one row per (stored standard result, scenario), so a plot of
-# runtime and throughput across releases needs neither a JSON parser nor a pass
-# over every file. index.json carries the medians but not the throughput, which
-# is exactly the second axis such a plot wants. Matrix results are left out:
-# their point is that they have no single number per scenario.
+# trend.csv: one row per (stored standard result, scenario, link profile), so a
+# plot of runtime and throughput across releases needs neither a JSON parser nor
+# a pass over every file. index.json carries the medians but not the throughput,
+# which is exactly the second axis such a plot wants. Matrix results are left
+# out: their point is that they have no single number per scenario.
+#
+# link_profile, rtt_p50_ms and control_single_mib_per_s ride along because a
+# trend line across months is otherwise a trend of the line as much as of the
+# code. A result measured before the probe existed has one row per scenario with
+# the profile empty, exactly as before.
 {
-  echo '"recorded_at","kind","version","label","candidate_ref","runner","scenario","files","bytes","median_ms","min_ms","max_ms","mad_ms","mib_per_s","files_per_s","max_rss_bytes","user_cpu_ms","archived","json"'
+  echo '"recorded_at","kind","version","label","candidate_ref","runner","scenario","link_profile","rtt_p50_ms","control_single_mib_per_s","files","bytes","median_ms","min_ms","max_ms","mad_ms","mib_per_s","files_per_s","max_rss_bytes","user_cpu_ms","archived","json"'
   for path in "${stored[@]}"; do
     jq -r --arg path "${path#"$BENCH_DIR"/}" '
       select((.benchmark.benchmark_kind // "standard") != "matrix")
       | . as $e
+      | (.benchmark.link.probes // []) as $probes
       | (.benchmark.results // [])[]
       | select(.label == "candidate")
+      | . as $row
+      | ([$probes[] | select(.profile == ($row.link_profile // "baseline") and .at == "start")] | first) as $p
       | [$e.recorded_at, $e.kind, $e.version, $e.label,
          ($e.benchmark.candidate_ref // null), ($e.benchmark.runner // null),
-         .scenario, .files, .bytes, .median_ms, .min_ms, .max_ms,
+         .scenario, (.link_profile // null),
+         ($p.rtt_ms.p50 // null), ($p.control.single_stream_mib_per_s // null),
+         .files, .bytes, .median_ms, .min_ms, .max_ms,
          (.mad_ms // null), (.mib_per_s // null), (.files_per_s // null),
          (.process.max_rss_bytes // null), (.process.user_cpu_ms // null),
          ($path | startswith("archive/")), $path]

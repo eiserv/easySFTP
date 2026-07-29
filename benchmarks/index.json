@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-07-28T12:18:18Z",
+  "generated_at": "2026-07-29T23:18:25Z",
   "generated_by": "scripts/benchmark-store.sh",
   "documentation": "benchmarks/README.md",
   "layout": {
@@ -35,6 +35,8 @@
         "go_version": "go1.25.5",
         "runner_name": "coolify-runner-jGF0UljK22lP3"
       },
+      "link_profiles": [],
+      "rtt_p50_ms": null,
       "archived": false,
       "json": "matrix/matrix-20260728T121818Z-main.json",
       "markdown": "matrix/matrix-20260728T121818Z-main.md",
@@ -68,6 +70,8 @@
         "go_version": "go1.25.5",
         "runner_name": "coolify-runner-jGF0UljK22lP3"
       },
+      "link_profiles": [],
+      "rtt_p50_ms": null,
       "archived": false,
       "json": "matrix/matrix-20260727T222956Z-main.json",
       "markdown": "matrix/matrix-20260727T222956Z-main.md",
@@ -91,6 +95,8 @@
       "benchmark_schema_version": 1,
       "runner": "self-hosted, Linux 7.0.0-28-generic, 10 cpu",
       "environment": null,
+      "link_profiles": [],
+      "rtt_p50_ms": null,
       "archived": false,
       "json": "manual/manual-20260727T193100Z-perf-connection-pool.json",
       "markdown": "manual/manual-20260727T193100Z-perf-connection-pool.md",
@@ -114,6 +120,8 @@
       "benchmark_schema_version": 1,
       "runner": "self-hosted, Linux 7.0.0-28-generic, 10 cpu",
       "environment": null,
+      "link_profiles": [],
+      "rtt_p50_ms": null,
       "archived": false,
       "json": "releases/release-v3.3.2.json",
       "markdown": "releases/release-v3.3.2.md",
@@ -137,6 +145,8 @@
       "benchmark_schema_version": 1,
       "runner": "Linux 6.17.0-1020-azure, 4 cpu",
       "environment": null,
+      "link_profiles": [],
+      "rtt_p50_ms": null,
       "archived": false,
       "json": "releases/release-v3.3.1.json",
       "markdown": "releases/release-v3.3.1.md",
