@@ -77,8 +77,10 @@ Markdown:
 |---|---|
 | `candidate_ref`, `baseline_ref`, `repeats`, `runner`, `settings` | what was measured and how |
 | `environment` | OS, kernel, architecture, CPU model, CPU count, Go version |
+| `link` | the network path: probed RTT, a throughput control, the server's load, and which shaping was asked for (see "The link profile" below) |
 | `scenarios` | the payload behind each scenario name |
-| `results[]` | one row per (build, scenario): the aggregate |
+| `results[]` | one row per (build, scenario, link profile): the aggregate |
+| `results[].link_profile` | which link profile the row was measured over; `baseline` means the real line |
 | `results[].duration_ms` | `values`, `median`, `min`, `max`, `mad`, `samples` |
 | `results[].process` | CPU time, peak RSS, Go allocations, GC count and pause, peak goroutines, disk and network bytes |
 | `results[].phases[]` | wall clock per phase (connect, local_scan, remote_scan, hash, create_dirs, upload, delete_sweep, manifest_read, manifest_write, prune_dirs, cleanup) |
@@ -102,13 +104,86 @@ same thing in version 2.
 
 | Key | What it is |
 |---|---|
-| `axes` | the grid, declared: `connections`, `concurrency`, `request_concurrency` |
-| `cells[]` | one row per (scenario, build, connections, concurrency, request_concurrency) with duration, throughput, files/s, CPU, peak RSS, connections opened/used/refused, reconnects, retries, errors |
-| `scaling[]` | the same cells pre-grouped per scenario and build, ordered along the axes, plus the `best` cell |
-| `comparison[]` | candidate against baseline at identical coordinates |
+| `axes` | the grid, declared: `link_profiles`, `connections`, `concurrency`, `request_concurrency` |
+| `link` | the same object a standard run carries, one probe pair per swept profile |
+| `cells[]` | one row per (link profile, scenario, build, connections, concurrency, request_concurrency) with duration, throughput, files/s, network bytes, CPU, peak RSS, connections opened/used/refused, reconnects, retries, errors |
+| `scaling[]` | the same cells pre-grouped per link profile, scenario and build, ordered along the axes, plus the `best` cell |
+| `comparison[]` | candidate against baseline at identical coordinates, **including the same link profile** |
 
 The CSV next to it is the same `cells[]` flattened, one row per cell, which is
 what a heatmap or a scaling plot reads.
+
+### The link profile
+
+`environment` says which machine measured. It said nothing at all about the path
+to the server, and that path is most of what these numbers are (issue #184).
+Every result from this change on carries a `link` object next to it:
+
+```jsonc
+"link": {
+  "iface": "eth0",                  // the interface towards the server, null when unknown
+  "shaping": {
+    "available": true,              // could tc actually be used on this runner
+    "reason": null,                 // why not, when it could not
+    "requested": ["baseline", "+50ms/5mbit"],
+    "applied": ["baseline", "+50ms/5mbit"]
+  },
+  "probes": [
+    { "profile": "baseline", "at": "start",   // "start" and "end" of that profile's own runs
+      "handshake_ms": 41.2,
+      "rtt_ms": { "p50": 18.4, "p90": 21.0, "min": 17.1, "max": 44.2, "samples": 21 },
+      "control": { "streams": 4, "bytes": 8388608,
+                   "single_stream_mib_per_s": 0.41, "n_stream_mib_per_s": 1.6 },
+      "host_load": { "available": true, "method": "sftp:/proc/loadavg", "load1": 0.9 },
+      "errors": [] }
+  ]
+}
+```
+
+Three things to know when reading it:
+
+- **`environment` is the comparability key, `link` is a measurement.** Two
+  results are only comparable when `environment` matches; `link` varies from run
+  to run by design, which is exactly why it must not be part of that check.
+- **The control measurement is not easySFTP.** It comes from
+  [`cmd/linkprobe`](../cmd/linkprobe), which uses `x/crypto/ssh` and `pkg/sftp`
+  directly and imports nothing from `internal/uploader`. It separates "the line
+  is slow" from "easySFTP is slow", not `pkg/sftp` from the line. When a
+  scenario's own MiB/s sits at the single-stream control, the run was network
+  bound and a code delta on it says nothing.
+- **Each profile is probed twice**, before and after its own measured runs. A
+  start and an end probe of the *same* profile are comparable, and that is what
+  makes drift over a multi-hour sweep visible. Two probes of different profiles
+  are not.
+
+An absent `link` object, or one with `probes: []`, means no probe binary was
+available for that run. That is honest and readable; an invented entry would not
+be.
+
+#### Requesting a shaped link
+
+Both workflows take a `link-profiles` input (`BENCH_LINK_PROFILES` and
+`MATRIX_LINK_PROFILES` for the scripts), space separated. Empty, the default,
+means the real line only, recorded under the profile name `baseline`. The
+grammar, implemented in [`scripts/benchmark-link.sh`](../scripts/benchmark-link.sh):
+
+| Profile | What it applies |
+|---|---|
+| `baseline`, `unshaped` | nothing, the real line |
+| `+50ms` | `netem delay 50ms` on egress, so RTT goes up by 50 ms, not 100 |
+| `+50ms/5mbit` | the same plus a `tbf` rate of 5 Mbit |
+| `baseline/5mbit` | the rate alone |
+
+The axis multiplies everything: four profiles over a matrix grid are four times
+the hours, and the matrix script prints its run count before it starts for that
+reason.
+
+Shaping needs `NET_ADMIN` on the runner. Where it is missing, the run does not
+fail: it records `shaping.available: false` with a reason, measures every profile
+on the real line, and the profile names then say what was asked for rather than
+what happened. The library applies shaping through a trap on EXIT, INT and TERM
+that removes the qdisc again, because a runner left shaped by an aborted run
+makes every later measurement on it quietly wrong.
 
 ### Where the instrumentation comes from
 
@@ -121,17 +196,21 @@ is inert and the connection is not even wrapped in its byte counter.
 ### The two top-level exports
 
 `index.json` lists every result newest first, with `kind`, `official`,
-`archived`, `benchmark_kind`, the environment, the paths of all its files, and
+`archived`, `benchmark_kind`, the environment, the link profiles it was measured
+over, the probed RTT p50 of its baseline profile, the paths of all its files, and
 the candidate's median milliseconds per scenario (or, for a matrix run, its
 best cell), so a reader does not have to open every file.
 
 `trend.csv` is the same set flattened for plotting: one row per stored
-non-matrix result and scenario, carrying the timestamp, the version, the
-runner, the duration statistics **and the throughput**, which `index.json`
-deliberately does not. It is what a "runtime and throughput over releases"
-chart reads. Both files are regenerated in full on every store, so they always
-describe what is actually on disk. Columns whose data predates the metric
-(peak RSS and CPU time on schema 1 results) are empty rather than zero.
+non-matrix result, scenario and link profile, carrying the timestamp, the
+version, the runner, the link the row was measured over, the duration statistics
+**and the throughput**, which `index.json` deliberately does not. It is what a
+"runtime and throughput over releases" chart reads, and the `rtt_p50_ms` column
+is what keeps such a chart from reading a slower line as a slower release. Both
+files are regenerated in full on every store, so they always describe what is
+actually on disk. Columns whose data predates the metric (peak RSS and CPU time
+on schema 1 results, the link columns on anything measured before the probe
+existed) are empty rather than zero.
 
 ## Official versus manual versus matrix
 
@@ -158,6 +237,10 @@ into every delta between two releases. Each result records where it ran in its
 `runner` field (and, from schema 2 on, in the richer `environment` object), and
 two results are only comparable when those match.
 
+A fixed runner and a fixed server are still not a fixed *path*, and a matrix run
+takes hours. That is what the `link` object above is for: it records the path
+each result was measured over instead of leaving it as an invisible constant.
+
 Results up to and including v3.3.1 predate this and name only the kernel and
 CPU count (`Linux 6.17.0-1020-azure, 4 cpu`); every one of them was measured on
 a GitHub-hosted runner. From v3.3.2 on the field starts with `self-hosted`.
@@ -170,6 +253,12 @@ delta against: a single slow repeat, which is the normal failure mode of a
 shared host, moves it far less than it moves a standard deviation. A candidate
 whose delta is smaller than the baseline's MAD has not been shown to be
 faster or slower, and `comparison[].within_noise` says so directly.
+
+Before reading a delta at all, check the run's single-stream control against the
+scenario's own MiB/s. A scenario sitting at the control was limited by the path,
+not by the code, and no delta measured there means anything. Every
+`comparison[]` entry pairs two cells of the same `link_profile` for the same
+reason.
 
 There are deliberately no thresholds here and nothing fails a build. The data
 format is meant to make automatic regression detection possible later, not to
@@ -202,6 +291,11 @@ interleaved with the others, since two numbers from two separate runs against a
 shared host are not comparable. The `Delta` column then compares every build
 against the baseline, or against the candidate when no baseline was given.
 
+Setting `link-profiles` measures every scenario once per profile and records the
+probed link next to the numbers; see "The link profile" above for the grammar and
+for what happens without `NET_ADMIN`. `link-iface` overrides the interface, which
+is otherwise derived from the route to the benchmark host.
+
 If a release ended up without its official result, the same workflow repairs
 it: set `release-version` to that tag (for example `v3.3.0`). The run measures
 the tag and stores it as the official reference, and it fails rather than
@@ -210,11 +304,13 @@ stays one.
 
 The **`SFTP benchmark matrix`** workflow
 ([`.github/workflows/benchmark-matrix.yml`](../.github/workflows/benchmark-matrix.yml))
-runs the sweep. Its `connections` and `concurrency` inputs are the axes, and
-`request-concurrency` adds an optional third one. Candidate and baseline are
-measured cell by cell, back to back, for the same reason the standard benchmark
-interleaves its repeats. The default grid is over a hundred measured runs and
-takes hours; shrink the axes for a quick look.
+runs the sweep. Its `connections` and `concurrency` inputs are the axes,
+`request-concurrency` adds an optional third one and `link-profiles` a fourth.
+Candidate and baseline are measured cell by cell, back to back, for the same
+reason the standard benchmark interleaves its repeats. The default grid is over a
+hundred measured runs and takes hours, and each extra link profile multiplies
+that; shrink the axes for a quick look. The script prints its run count before it
+starts.
 
 ### About `connections` above `concurrency`
 

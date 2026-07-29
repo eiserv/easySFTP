@@ -89,6 +89,16 @@ on:
         description: "Also measure the candidate with advanced.connections set to this many SSH connections (issue #158), as a third build. Empty = single connection only."
         required: false
         type: string
+      link-profiles:
+        description: "Network profiles to measure over, space separated (issue #184): baseline, +50ms, +50ms/5mbit, baseline/5mbit. Empty = the real line only. Shaping needs NET_ADMIN on the runner and is skipped, recorded, when it is missing."
+        required: false
+        default: ""
+        type: string
+      link-iface:
+        description: "Interface to shape. Empty derives it from the route to the benchmark host."
+        required: false
+        default: ""
+        type: string
       remote-base:
         description: "Remote directory the benchmark owns. Everything below it is disposable."
         required: false
@@ -224,6 +234,10 @@ jobs:
             ( cd "$dir" && go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/$name" ./cmd/easysftp )
           }
           build builds/candidate easysftp-candidate
+          # The link probe (issue #184). Built from the workflow's own checkout,
+          # not from the candidate: it measures the path, and the path must be
+          # measured the same way no matter which ref is under test.
+          go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/linkprobe" ./cmd/linkprobe
           candidate_sha=$(git -C builds/candidate rev-parse HEAD)
           {
             echo "candidate-ref=$CANDIDATE_REF_INPUT ($(git -C builds/candidate rev-parse --short HEAD))"
@@ -246,6 +260,9 @@ jobs:
           REPEATS: ${{ inputs.repeats || '3' }}
           REMOTE_BASE: ${{ inputs.remote-base || '/easysftp-benchmark' }}
           BENCH_CONNECTIONS: ${{ inputs.connections }}
+          BENCH_LINK_PROFILES: ${{ inputs.link-profiles }}
+          LINKPROBE_BIN: ${{ runner.temp }}/bin/linkprobe
+          LINK_IFACE: ${{ inputs.link-iface }}
           # OUT_DIR is uploaded as an artifact; LOG_DIR (which holds logs that
           # name the host and user) deliberately is not.
           OUT_DIR: ${{ runner.temp }}/benchmark-results

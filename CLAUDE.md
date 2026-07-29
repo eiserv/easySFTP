@@ -174,7 +174,8 @@ granularity is a separate, later decision; don't build it speculatively.
 `scripts/benchmark.sh` measures throughput at the default settings,
 `scripts/benchmark-matrix.sh` sweeps `advanced.connections` against
 `advanced.concurrency`, both on top of the shared `scripts/benchmark-lib.sh`
-(payload generation, running a build, reading its outputs, the jq statistics).
+(payload generation, running a build, reading its outputs, the jq statistics)
+and `scripts/benchmark-link.sh` (the probed link profile and `tc` shaping).
 `scripts/benchmark-store.sh` files a result under `benchmarks/`;
 `benchmarks/README.md` documents the layout and the JSON schema and is the page
 to keep in sync when any of those change. Read `benchmarks/index.json` before
@@ -195,6 +196,17 @@ the retention window, archiving and the invariants, and
 against a stub binary so the jq aggregation, schema and CSV columns are checked
 without an SFTP server. The other half (that a *real* run produces the metrics
 those scripts aggregate) is asserted by the container self-test in `ci.yml`.
+
+The link a result was measured over is recorded in a top-level `link` object
+(issue #184, phase 1) by `cmd/linkprobe`, a separate binary that imports nothing
+from `internal/uploader`: a control measurement taken through the code under test
+would not be a control. Three things to keep true when touching it: `environment`
+stays the comparability key and `link` stays a measurement (so it must not move
+into `environment`), the probe report never names the host or the user (it lands
+in `results.json`, which is an artifact and is committed), and `tc` shaping is
+applied only behind the EXIT/INT/TERM trap in `benchmark-link.sh`, because a
+runner left shaped makes every later measurement on it quietly wrong. Shaping
+that is unavailable is recorded, never fatal.
 
 Instrumentation lives in `internal/metrics` and is off unless
 `EASYSFTP_METRICS_FILE` names a path. It is deliberately **not** an
