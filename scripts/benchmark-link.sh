@@ -33,7 +33,7 @@
 # Set by link_shape_probe, read by link_shaping_json and the callers.
 # shellcheck disable=SC2034
 LINK_SHAPING_AVAILABLE=0
-LINK_SHAPING_REASON="not probed"
+LINK_SHAPING_REASON="no profile asked for shaping, so it was never probed for"
 LINK_APPLIED=()
 LINK_REQUESTED=()
 
@@ -64,6 +64,13 @@ link_profile_delay() {
   baseline | unshaped) ;;
   +*) echo "${head#+}" ;;
   esac
+}
+
+# link_profile_slug <profile>: the profile as a filename component. Profiles
+# contain "+" and "/", and a log file called "+50ms/5mbit-small-1.log" is a
+# missing directory, not a log.
+link_profile_slug() {
+  echo "${1//[^a-zA-Z0-9]/_}"
 }
 
 # link_profile_rate <profile>: the tbf rate, empty when the profile has none.
@@ -322,9 +329,18 @@ link_markdown() {
     echo "No link probe ran for this result, so the numbers above cannot be told apart from the line they were measured on."
   fi
   echo
+  # Three distinct states, and conflating the first two is exactly the kind of
+  # thing that makes a stored result unreadable a month later: nothing was
+  # asked for, something was asked for and could not be done, or it was done.
   jq -r '.link.shaping
-    | if .available then "Link shaping was available on the runner. Requested profiles: \(.requested | join(", ")); applied: \(.applied | join(", ") // "none")."
-      else "Link shaping was **not** available (\(.reason // "unknown")), so every profile was measured on the real line." end' "$result"
+    | if ((.requested // []) | map(select(test("[+/]"))) | length) == 0 then
+        "No link shaping was requested: every profile here is the real line."
+      elif .available then
+        "Link shaping was available. Requested profiles: \(.requested | join(", ")); applied: \((.applied | join(", ")) // "none")."
+      else
+        "Link shaping was **not** available (\(.reason // "unknown")), so every profile was measured on the real line and the profile names say what was asked for, not what happened."
+      end' "$result"
   echo
   echo "The control measurement uses \`x/crypto/ssh\` and \`pkg/sftp\` directly, never easySFTP's uploader. It separates \"the line is slow\" from \"easySFTP is slow\", and a single-stream control close to a scenario's own MiB/s means the run was network bound, where a code delta says nothing."
+  echo
 }

@@ -41,6 +41,9 @@ expect_equal() {
 expect_nonempty() {
   if [[ -n "$2" && "$2" != "null" ]]; then pass "$1"; else fail "$1 is empty"; fi
 }
+# line_count: "wc -l" pads its output on the BSDs, and an expectation of "10"
+# must not fail against "      10" just because the check ran on a Mac.
+line_count() { echo $(($(wc -l <"$1"))); }
 
 # The stub. It reads the two settings the scripts vary (the source tree and,
 # from the generated config file, advanced.*), reports a duration derived from
@@ -66,8 +69,10 @@ fi
 files=0
 bytes=0
 if [[ -d "$source_dir" ]]; then
-  files=$(find "$source_dir" -type f | wc -l)
-  bytes=$(find "$source_dir" -type f -printf '%s\n' | awk '{ s += $1 } END { print s + 0 }')
+  files=$(find "$source_dir" -type f | wc -l | tr -d ' ')
+  # "wc -c" rather than "find -printf '%s'": the latter is GNU-only, and this
+  # self-check should be runnable on a maintainer's machine as well as in CI.
+  bytes=$(find "$source_dir" -type f -exec wc -c {} + | awk '$2 != "total" { s += $1 } END { print s + 0 }')
 fi
 
 # More connections and more workers finish sooner, with a floor: exactly the
@@ -176,7 +181,7 @@ expect_equal 'the MAD of the repeats is reported' 3 \
   "$(jq '[.results[] | select(.label == "candidate") | .mad_ms] | length' "$results")"
 
 expect_equal 'the CSV has a header plus one row per build and scenario' 10 \
-  "$(wc -l <"$OUT_DIR/results.csv")"
+  "$(line_count "$OUT_DIR/results.csv")"
 expect_equal 'the CSV names its columns' '"scenario","build"' \
   "$(head -1 "$OUT_DIR/results.csv" | cut -d, -f1,2)"
 
@@ -187,12 +192,12 @@ for needle in '## easySFTP benchmark' '### Throughput' '### Resources' '### Wher
     fail "summary.md is missing '$needle'"
   fi
 done
-# The file count in the third column is what distinguishes a throughput row
-# from the resources table's row for the same scenario and build.
+# The file count in the fourth column is what distinguishes a throughput row
+# from the resources table's row for the same scenario, build and link profile.
 expect_equal 'summary.md has a throughput row for every build and scenario' 9 \
-  "$(grep -cE '^\| (small|mixed|large) \| (candidate|baseline|pool2) \| [0-9]+ \|' "$OUT_DIR/summary.md")"
+  "$(grep -cE '^\| (small|mixed|large) \| (candidate|baseline|pool2) \| baseline \| [0-9]+ \|' "$OUT_DIR/summary.md")"
 expect_equal 'summary.md has a resources row for every build and scenario' 9 \
-  "$(grep -cE '^\| (small|mixed|large) \| (candidate|baseline|pool2) \| [0-9.]+ ms \|' "$OUT_DIR/summary.md")"
+  "$(grep -cE '^\| (small|mixed|large) \| (candidate|baseline|pool2) \| baseline \| [0-9.]+ ms \|' "$OUT_DIR/summary.md")"
 
 echo
 echo "== scripts/benchmark-matrix.sh =="
@@ -230,7 +235,7 @@ expect_equal 'the axes are declared' '1 2' "$(jq -r '.axes.connections | join(" 
 expect_equal 'the concurrency axis is declared' '1 4' "$(jq -r '.axes.concurrency | join(" ")' "$matrix")"
 
 expect_equal 'the matrix CSV has a header plus one row per cell' 17 \
-  "$(wc -l <"$OUT_DIR/matrix.csv")"
+  "$(line_count "$OUT_DIR/matrix.csv")"
 if grep -qF '## easySFTP connections/concurrency matrix' "$OUT_DIR/matrix.md"; then
   pass "matrix.md has its heading"
 else

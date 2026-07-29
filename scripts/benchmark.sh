@@ -22,6 +22,12 @@
 #                                 with advanced.connections set to this many SSH
 #                                 connections (issue #158), as a third build
 #                                 label "poolN"
+#   BENCH_LINK_PROFILES           optional network profiles to measure over
+#                                 (issue #184); empty means the real line only.
+#                                 See scripts/benchmark-link.sh for the grammar
+#   LINKPROBE_BIN                 optional built cmd/linkprobe; without it the
+#                                 result carries an empty probe list
+#   LINK_IFACE, LINK_SUDO         see scripts/benchmark-link.sh
 #   REPEATS                       measured repeats per scenario (default 3)
 #   REMOTE_BASE                   remote directory this benchmark owns
 #   OUT_DIR                       results.json and summary.md land here
@@ -38,6 +44,8 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # shellcheck source=scripts/benchmark-lib.sh disable=SC1091
 source "$script_dir/benchmark-lib.sh"
+# shellcheck source=scripts/benchmark-link.sh disable=SC1091
+source "$script_dir/benchmark-link.sh"
 
 # The standard benchmark's scenario set is fixed: adding one here would make
 # every stored result before it incomparable. The matrix benchmark
@@ -64,19 +72,35 @@ if [[ -n "$BENCH_CONNECTIONS" && ! "$BENCH_CONNECTIONS" =~ ^[1-9][0-9]*$ ]]; the
   exit 1
 fi
 
+# Parsed before anything is measured: a typo in a profile must not surface after
+# minutes of uploading. Through a command substitution and not a process
+# substitution, so a rejected profile actually stops the run under "set -e".
+link_profiles_raw=$(link_parse_profiles "${BENCH_LINK_PROFILES:-}")
+mapfile -t link_profiles <<<"$link_profiles_raw"
+LINK_REQUESTED=("${link_profiles[@]}")
+
 check_remote_base
 mkdir -p "$OUT_DIR" "$DATASET_DIR" "$LOG_DIR"
 check_log_dir
 
 runs_file="$LOG_DIR/runs.jsonl"
 aggregate_file="$LOG_DIR/aggregate.json"
+probes_file="$LOG_DIR/link-probes.jsonl"
 : >"$runs_file"
+: >"$probes_file"
+
+# The profile every run below is measured on. Set by the profile loop; a run
+# always carries it, so "baseline" in a stored result means "the real line" and
+# not "unknown".
+link_profile=baseline
 
 # measure <label> <binary> <ref> <scenario> <repeat> <advanced-yaml>
 measure() {
   local label=$1 binary=$2 ref=$3 scenario=$4 repeat=$5 advanced=$6
   local remote="$REMOTE_BASE/$label/$scenario"
-  local stem="$LOG_DIR/$label-$scenario-$repeat"
+  local slug
+  slug=$(link_profile_slug "$link_profile")
+  local stem="$LOG_DIR/$slug-$label-$scenario-$repeat"
   local code=0
 
   # Unmeasured: every repeat starts from the same empty remote directory, so
@@ -101,6 +125,7 @@ measure() {
     --arg label "$label" \
     --arg ref "$ref" \
     --arg scenario "$scenario" \
+    --arg link_profile "$link_profile" \
     --argjson repeat "$repeat" \
     --argjson exit_code "$code" \
     --argjson duration_ms "$(step_number "$stem.out" duration-ms)" \
@@ -112,7 +137,7 @@ measure() {
     --argjson metrics "$(metrics_json "$stem.metrics.json")" \
     '$ARGS.named' >>"$runs_file"
 
-  echo "$label/$scenario repeat $repeat: $(step_number "$stem.out" duration-ms) ms, exit $code"
+  echo "$link_profile $label/$scenario repeat $repeat: $(step_number "$stem.out" duration-ms) ms, exit $code"
 }
 
 labels=(candidate)
@@ -137,13 +162,37 @@ fi
 
 generate_dataset "${SCENARIOS[@]}"
 
-for scenario in "${SCENARIOS[@]}"; do
-  for ((repeat = 1; repeat <= REPEATS; repeat++)); do
-    for i in "${!labels[@]}"; do
-      measure "${labels[$i]}" "${binaries[$i]}" "${refs[$i]}" "$scenario" "$repeat" "${advanced[$i]}"
+# Shaping is only probed for when a profile actually asks for it: a run on the
+# real line must not need tc, sudo or NET_ADMIN.
+if link_shape_needed "${link_profiles[@]}"; then
+  link_shape_probe
+  if ((LINK_SHAPING_AVAILABLE != 1)); then
+    echo "::warning::link profiles were requested but shaping is unavailable ($LINK_SHAPING_REASON); every profile is measured on the real line" >&2
+  fi
+fi
+
+# The profile loop is the outermost one: re-applying tc per measured run would
+# itself be noise. The price is that drift over the hours falls onto this axis
+# instead of spreading across it, which is why each profile is probed twice,
+# before and after its own runs, and still shaped for both. A start and an end
+# probe of the same profile are comparable; two probes of different profiles are
+# not, which is what makes drift visible here at all.
+for link_profile in "${link_profiles[@]}"; do
+  link_shape_apply "$link_profile" || true
+  link_probe "$link_profile" start "$probes_file"
+  for scenario in "${SCENARIOS[@]}"; do
+    for ((repeat = 1; repeat <= REPEATS; repeat++)); do
+      for i in "${!labels[@]}"; do
+        measure "${labels[$i]}" "${binaries[$i]}" "${refs[$i]}" "$scenario" "$repeat" "${advanced[$i]}"
+      done
     done
   done
+  link_probe "$link_profile" end "$probes_file"
 done
+
+# The trap does this too, but only on the way out: doing it here keeps the
+# cleanup runs below on the same unshaped line every run ends on.
+link_shape_clear
 
 # Leave the benchmark directories empty so the payload does not linger on the
 # server. Best effort: a cleanup hiccup must not hide the results.
@@ -155,10 +204,19 @@ for scenario in "${SCENARIOS[@]}"; do
       echo "::warning::cleanup of ${labels[$i]}/$scenario failed"
   done
 done
+# The probe removes its own payload, but a probe that was killed mid-write does
+# not, and a leftover would be counted by the next run's remote scan.
+if [[ -n "${LINKPROBE_BIN:-}" ]]; then
+  METRICS_FILE='' run_easysftp "$CANDIDATE_BIN" "$DATASET_DIR/empty" \
+    "$REMOTE_BASE/linkprobe" clean "$LOG_DIR/cleanup-linkprobe.log" "$LOG_DIR/cleanup-linkprobe.out" ||
+    echo "::warning::cleanup of the link probe directory failed"
+fi
 
-# One aggregate row per (build, scenario). The timing fields at the top level
-# are exactly the ones results.json v1 had, so anything already reading a
-# stored benchmark keeps working; everything new sits in its own sub-object.
+# One aggregate row per (link profile, build, scenario). The timing fields at the
+# top level are exactly the ones results.json v1 had, so anything already reading
+# a stored benchmark keeps working; everything new sits in its own sub-object.
+# With no profiles requested there is exactly one profile, "baseline", and the
+# row count is what it always was.
 #
 # duration_ms.* is wall clock. process.* is what the run cost the machine.
 # phases[] is wall clock per phase and adds up to roughly the duration.
@@ -166,13 +224,14 @@ done
 # "note" field the metrics file carries.
 jq -s "
   $JQ_STATS
-  group_by([.label, .scenario])
+  group_by([.link_profile, .label, .scenario])
   | map(
       (map(select(.metrics != null)) | map(.metrics)) as \$m
       | {
         label: .[0].label,
         ref: .[0].ref,
         scenario: .[0].scenario,
+        link_profile: .[0].link_profile,
         repeats: length,
         failed_runs: (map(select(.exit_code != 0)) | length),
         files: (map(.files) | max),
@@ -240,6 +299,9 @@ settings="easySFTP defaults (no advanced.* overrides): concurrency 4, request_co
 if [[ -n "$BENCH_CONNECTIONS" ]]; then
   settings="$settings; the pool$BENCH_CONNECTIONS build is the same binary with advanced.connections: $BENCH_CONNECTIONS"
 fi
+if [[ -n "${BENCH_LINK_PROFILES:-}" ]]; then
+  settings="$settings; measured over the link profiles ${link_profiles[*]}"
+fi
 
 scenario_docs=$(for scenario in "${SCENARIOS[@]}"; do
   jq -nc --arg k "$scenario" --arg v "$(scenario_description "$scenario")" '{key: $k, value: $v}'
@@ -265,6 +327,7 @@ jq -n \
   --argjson repeats "$REPEATS" \
   --arg runner "${RUNNER_ENVIRONMENT:-local}, $(uname -sr), $(nproc) cpu" \
   --argjson environment "$(bench_environment)" \
+  --argjson link "$(link_json "$probes_file")" \
   --arg settings "$settings" \
   --argjson scenarios "$scenario_docs" \
   "
@@ -278,6 +341,7 @@ jq -n \
      repeats: \$repeats,
      runner: \$runner,
      environment: \$environment,
+     link: \$link,
      settings: \$settings,
      reference_label: \$reference_label,
      scenarios: \$scenarios,
@@ -285,10 +349,12 @@ jq -n \
      results: \$r,
      comparison: [
        \$r[] | select(.label != \$reference_label) as \$c
-       | (\$r[] | select(.label == \$reference_label and .scenario == \$c.scenario)) as \$b
+       | (\$r[] | select(.label == \$reference_label and .scenario == \$c.scenario
+            and .link_profile == \$c.link_profile)) as \$b
        | {
            scenario: \$c.scenario,
            label: \$c.label,
+           link_profile: \$c.link_profile,
            reference_label: \$reference_label,
            median_ms: \$c.median_ms,
            reference_median_ms: \$b.median_ms,
@@ -305,13 +371,25 @@ jq -n \
 # CSV alongside the JSON: one row per (build, scenario), so a spreadsheet or a
 # plot can read a stored result without a JSON parser. Deliberately flat and
 # aggregate-only; the raw repeats stay in results.json.
+#
+# link_profile, rtt_p50_ms and control_single_mib_per_s make a row readable on
+# its own: without them a throughput number cannot be told apart from the line
+# it was measured on. The two link numbers come from the profile's own start
+# probe, which is the one taken right before these runs.
 jq -r '
-  ["scenario","build","ref","repeats","files","bytes","median_ms","min_ms","max_ms","mad_ms",
-   "mib_per_s","files_per_s","user_cpu_ms","sys_cpu_ms","cpu_percent","max_rss_bytes",
-   "go_gc_count","go_peak_goroutines","net_write_bytes","connections_opened","connections_refused",
-   "retries","errors","failed_runs"],
-  (.results[] | [
-    .scenario, .label, .ref, .repeats, .files, .bytes, .median_ms, .min_ms, .max_ms, .mad_ms,
+  (.link.probes // []) as $probes
+  | ["scenario","build","ref","link_profile","rtt_p50_ms","control_single_mib_per_s",
+     "repeats","files","bytes","median_ms","min_ms","max_ms","mad_ms",
+     "mib_per_s","files_per_s","user_cpu_ms","sys_cpu_ms","cpu_percent","max_rss_bytes",
+     "go_gc_count","go_peak_goroutines","net_write_bytes","connections_opened","connections_refused",
+     "retries","errors","failed_runs"],
+  (.results[]
+   | . as $row
+   | ([$probes[] | select(.profile == $row.link_profile and .at == "start")] | first) as $p
+   | [
+    .scenario, .label, .ref, .link_profile,
+    ($p.rtt_ms.p50 // null), ($p.control.single_stream_mib_per_s // null),
+    .repeats, .files, .bytes, .median_ms, .min_ms, .max_ms, .mad_ms,
     .mib_per_s, .files_per_s, .process.user_cpu_ms, .process.sys_cpu_ms, .process.cpu_percent,
     .process.max_rss_bytes, .process.go_gc_count, .process.go_peak_goroutines, .process.net_write_bytes,
     (.counters.connections_opened // 0), (.counters.connections_refused // 0),
@@ -331,46 +409,53 @@ jq -r '
   echo "| Baseline | \`${BASELINE_REF:-none}\` |"
   echo "| Repeats per scenario | $REPEATS |"
   echo "| Runner | $(uname -sr), $(nproc) cpu |"
+  echo "| Link profiles | ${BENCH_LINK_PROFILES:-the real line} |"
   echo "| Settings | $settings |"
   echo
+  link_markdown "$OUT_DIR/results.json"
   echo "### Throughput"
   echo
-  echo "| Scenario | Build | Files | Size | Median | Min | Max | MAD | MiB/s | files/s | Retries | Errors | Failed runs | Delta |"
-  echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+  echo "| Scenario | Build | Profile | Files | Size | Median | Min | Max | MAD | MiB/s | files/s | Retries | Errors | Failed runs | Delta |"
+  echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
   for scenario in "${SCENARIOS[@]}"; do
     for label in "${labels[@]}"; do
-      jq -r --arg s "$scenario" --arg l "$label" '
-        (.results[] | select(.scenario == $s and .label == $l)) as $row
+      for profile in "${link_profiles[@]}"; do
+        jq -r --arg s "$scenario" --arg l "$label" --arg p "$profile" '
+        (.results[] | select(.scenario == $s and .label == $l and .link_profile == $p)) as $row
         # Through a list: the reference build has no comparison entry, and a
         # bare "as" over an empty generator would drop its whole row.
-        | ([.comparison[] | select(.scenario == $s and .label == $l) | .delta_percent] | first) as $delta
-        | "| \($s) | \($l) | \($row.files) | \((($row.bytes / 1048576) * 10 | round / 10)) MiB "
+        | ([.comparison[] | select(.scenario == $s and .label == $l and .link_profile == $p) | .delta_percent] | first) as $delta
+        | "| \($s) | \($l) | \($p) | \($row.files) | \((($row.bytes / 1048576) * 10 | round / 10)) MiB "
           + "| \($row.median_ms) ms | \($row.min_ms) ms | \($row.max_ms) ms | \($row.mad_ms) ms "
           + "| \($row.mib_per_s) | \($row.files_per_s) | \($row.retries) | \($row.errors) | \($row.failed_runs) "
           + "| \(if $delta == null then "-" else (if $delta > 0 then "+" else "" end) + ($delta | tostring) + "%" end) |"
-      ' "$OUT_DIR/results.json"
+        ' "$OUT_DIR/results.json"
+      done
     done
   done
   echo
-  echo "Delta compares each build's median against the \`$reference_label\` build; negative is faster. MAD is the median absolute deviation of the repeats: a delta smaller than it is inside this host's own noise."
+  echo "Delta compares each build's median against the \`$reference_label\` build **on the same link profile**; negative is faster. MAD is the median absolute deviation of the repeats: a delta smaller than it is inside this host's own noise."
 
   echo
   echo "### Resources (median per run)"
   echo
-  echo "| Scenario | Build | User CPU | Sys CPU | CPU % | Peak RSS | Go allocs | GCs | GC pause | Peak goroutines | Net sent |"
-  echo "|---|---|---|---|---|---|---|---|---|---|---|"
+  echo "| Scenario | Build | Profile | User CPU | Sys CPU | CPU % | Peak RSS | Go allocs | GCs | GC pause | Peak goroutines | Net sent |"
+  echo "|---|---|---|---|---|---|---|---|---|---|---|---|"
   # Looped rather than one jq pass over .results, so the rows come out in
   # scenario order like the throughput table above instead of in jq's
   # group_by order.
   for scenario in "${SCENARIOS[@]}"; do
     for label in "${labels[@]}"; do
-      jq -r --arg s "$scenario" --arg l "$label" '.results[] | select(.scenario == $s and .label == $l)
-        | "| \(.scenario) | \(.label) | \(.process.user_cpu_ms) ms | \(.process.sys_cpu_ms) ms | \(.process.cpu_percent)% "
+      for profile in "${link_profiles[@]}"; do
+        jq -r --arg s "$scenario" --arg l "$label" --arg p "$profile" \
+          '.results[] | select(.scenario == $s and .label == $l and .link_profile == $p)
+        | "| \(.scenario) | \(.label) | \(.link_profile) | \(.process.user_cpu_ms) ms | \(.process.sys_cpu_ms) ms | \(.process.cpu_percent)% "
           + "| \(((.process.max_rss_bytes / 1048576) * 10 | round / 10)) MiB "
           + "| \(((.process.go_total_alloc_bytes / 1048576) * 10 | round / 10)) MiB | \(.process.go_gc_count) "
           + "| \(.process.go_gc_pause_total_ms) ms | \(.process.go_peak_goroutines) "
           + "| \(((.process.net_write_bytes / 1048576) * 10 | round / 10)) MiB |"
-      ' "$OUT_DIR/results.json"
+        ' "$OUT_DIR/results.json"
+      done
     done
   done
 
@@ -382,17 +467,17 @@ jq -r '
   for scenario in "${SCENARIOS[@]}"; do
     echo "<details><summary><code>$scenario</code> phases and round-trips</summary>"
     echo
-    echo "| Build | Phase | Wall |"
-    echo "|---|---|---|"
+    echo "| Build | Profile | Phase | Wall |"
+    echo "|---|---|---|---|"
     jq -r --arg s "$scenario" '.results[] | select(.scenario == $s) as $row
       | $row.phases[] | select(.median_ms > 0)
-      | "| \($row.label) | \(.name) | \(.median_ms) ms |"' "$OUT_DIR/results.json"
+      | "| \($row.label) | \($row.link_profile) | \(.name) | \(.median_ms) ms |"' "$OUT_DIR/results.json"
     echo
-    echo "| Build | Operation | Count | Cumulative | Avg | p50 | p90 | p99 | Max |"
-    echo "|---|---|---|---|---|---|---|---|---|"
+    echo "| Build | Profile | Operation | Count | Cumulative | Avg | p50 | p90 | p99 | Max |"
+    echo "|---|---|---|---|---|---|---|---|---|---|"
     jq -r --arg s "$scenario" '.results[] | select(.scenario == $s) as $row
       | $row.operations[] | select(.count > 0)
-      | "| \($row.label) | \(.name) | \(.count) | \(.median_total_ms) ms | \(.avg_ms) ms | \(.p50_ms) ms | \(.p90_ms) ms | \(.p99_ms) ms | \(.max_ms) ms |"' "$OUT_DIR/results.json"
+      | "| \($row.label) | \($row.link_profile) | \(.name) | \(.count) | \(.median_total_ms) ms | \(.avg_ms) ms | \(.p50_ms) ms | \(.p90_ms) ms | \(.p99_ms) ms | \(.max_ms) ms |"' "$OUT_DIR/results.json"
     echo
     echo "</details>"
     echo
