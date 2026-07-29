@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -117,7 +118,11 @@ func hostKeyCallback(data string) (ssh.HostKeyCallback, error) {
 	}
 	cb, err := knownhosts.New(f.Name())
 	if err != nil {
-		return nil, fmt.Errorf("parsing known-hosts: %w", err)
+		// The parser reports the staging file it read, whose name is a temp path
+		// that is already gone by the time anybody reads the report. The line
+		// number in it is the useful part, so keep the message and drop the path.
+		return nil, fmt.Errorf("parsing known-hosts: %s",
+			strings.ReplaceAll(err.Error(), f.Name(), "known-hosts"))
 	}
 	return cb, nil
 }

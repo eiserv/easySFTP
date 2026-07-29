@@ -198,6 +198,67 @@ func TestNoKnownHostsIsRefused(t *testing.T) {
 	}
 }
 
+// The stored report must not name the server. A dial failure reads
+// "dial tcp <host>:22: connection refused", the host is a repository secret, and
+// results.json is both an artifact and a committed file.
+func TestUnreachableHostIsReportedWithoutNamingIt(t *testing.T) {
+	// Port 1 on the loopback: refused immediately, no waiting.
+	srv := startTestServer(t)
+	cfg := srv.config(t)
+	cfg.Host = "benchmark-host.invalid"
+	cfg.Port = 1
+	cfg.User = "benchuser"
+	cfg.Password = "benchpassword"
+
+	rep, err := Run(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("Run reported success against a port nothing listens on")
+	}
+	if len(rep.Errors) != 1 {
+		t.Fatalf("errors = %v, want exactly one", rep.Errors)
+	}
+	for _, secret := range []string{cfg.Host, cfg.User, cfg.Password} {
+		if strings.Contains(rep.Errors[0], secret) {
+			t.Errorf("the stored error names %q: %s", secret, rep.Errors[0])
+		}
+	}
+	if !strings.Contains(rep.Errors[0], "<redacted>") {
+		t.Errorf("nothing was redacted, so the message may have changed shape: %s", rep.Errors[0])
+	}
+	// The unredacted message still has to reach the caller, which prints it to
+	// stderr, where the job log does mask secrets.
+	if !strings.Contains(err.Error(), cfg.Host) {
+		t.Errorf("the returned error lost the detail: %v", err)
+	}
+}
+
+// A short user name must not be substituted out of every message it happens to
+// be a substring of.
+func TestRedactLeavesShortValuesAlone(t *testing.T) {
+	cfg := Config{Host: "example.invalid", Port: 22, User: "u", Password: "pw"}
+	got := redact(cfg, "unable to authenticate as u with pw on example.invalid:22")
+	want := "unable to authenticate as u with pw on <redacted>"
+	if got != want {
+		t.Errorf("redact() = %q, want %q", got, want)
+	}
+}
+
+// The report is stored in benchmarks/, so an error in it has to be readable a
+// month later. The staging file the parser complains about is gone by then.
+func TestMalformedKnownHostsErrorNamesNoTempFile(t *testing.T) {
+	_, err := hostKeyCallback("example.invalid ssh-ed25519 not-base64")
+	if err == nil {
+		t.Fatal("malformed known-hosts material was accepted")
+	}
+	if strings.Contains(err.Error(), "linkprobe-known-hosts-") {
+		t.Errorf("the error names the staging file: %v", err)
+	}
+	// The line number is the part worth keeping.
+	if !strings.Contains(err.Error(), "known-hosts:1") {
+		t.Errorf("the error lost which line failed: %v", err)
+	}
+}
+
 func TestParseUptime(t *testing.T) {
 	cases := []struct {
 		name string

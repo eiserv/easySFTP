@@ -26,7 +26,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -171,7 +174,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	start := time.Now()
 	conn, err := dial(ctx, cfg)
 	if err != nil {
-		rep.Errors = append(rep.Errors, fmt.Sprintf("connect: %v", err))
+		rep.addError(cfg, "connect", err)
 		return rep, err
 	}
 	rep.HandshakeMS = milliseconds(time.Since(start))
@@ -184,14 +187,14 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	statTarget := "/"
 	if cfg.RemotePath != "" {
 		if err := conn.sftp.MkdirAll(cfg.RemotePath); err != nil {
-			rep.Errors = append(rep.Errors, fmt.Sprintf("remote path: %v", err))
+			rep.addError(cfg, "remote path", err)
 		} else {
 			statTarget = cfg.RemotePath
 		}
 	}
 
 	if rtt, err := measureRTT(ctx, conn, statTarget, cfg.RTTSamples); err != nil {
-		rep.Errors = append(rep.Errors, fmt.Sprintf("rtt: %v", err))
+		rep.addError(cfg, "rtt", err)
 	} else {
 		rep.RTT = rtt
 	}
@@ -201,12 +204,44 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	rep.HostLoad = measureHostLoad(ctx, conn, cfg)
 
 	if control, err := measureControl(ctx, conn, cfg); err != nil {
-		rep.Errors = append(rep.Errors, fmt.Sprintf("control: %v", err))
+		rep.addError(cfg, "control", err)
 	} else {
 		rep.Control = control
 	}
 
 	return rep, nil
+}
+
+// addError records a failed measurement, with anything identifying taken out.
+//
+// This is not decoration. A dial failure reads "dial tcp <host>:22: connection
+// refused", the host is a repository secret, and Errors is stored in
+// results.json, which is uploaded as an artifact and committed to benchmarks/.
+// Neither masks anything. The unredacted message still goes to the caller as an
+// error, which cmd/linkprobe prints to stderr, where the job log does mask.
+func (r *Report) addError(cfg Config, stage string, err error) {
+	r.Errors = append(r.Errors, fmt.Sprintf("%s: %s", stage, redact(cfg, err.Error())))
+}
+
+// redact replaces the connection's identifying parts with a placeholder.
+//
+// The address goes first, since it contains the host. User and password are only
+// replaced when they are long enough to be distinctive: substituting a two-letter
+// user name would turn every message into confetti, and a password has no
+// business appearing in an SSH error in the first place.
+func redact(cfg Config, msg string) string {
+	replace := []string{net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), cfg.Host}
+	for _, value := range []string{cfg.User, cfg.Password} {
+		if len(value) >= 4 {
+			replace = append(replace, value)
+		}
+	}
+	for _, value := range replace {
+		if value != "" {
+			msg = strings.ReplaceAll(msg, value, "<redacted>")
+		}
+	}
+	return msg
 }
 
 // percentile returns the p-quantile of an ascending slice by nearest rank, the
