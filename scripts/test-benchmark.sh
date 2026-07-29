@@ -126,12 +126,49 @@ fi
 STUB
 chmod +x "$stub"
 
+# The link probe stub. cmd/linkprobe writes one JSON document to stdout and the
+# scripts only wrap it, so a stub document is enough to check the wrapping, the
+# CSV columns and the summary section without a network.
+probe_stub=$work/linkprobe-stub
+cat >"$probe_stub" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+for name in LINKPROBE_HOST LINKPROBE_USERNAME LINKPROBE_PASSWORD LINKPROBE_KNOWN_HOSTS; do
+  if [[ -z ${!name:-} ]]; then
+    echo "::error::$name is required but empty" >&2
+    exit 1
+  fi
+done
+cat <<JSON
+{
+  "schema_version": 1,
+  "note": "stub",
+  "measured_at": "2026-07-30T12:00:00Z",
+  "handshake_ms": 41.2,
+  "rtt_ms": {"p50": 18.4, "p90": 21, "min": 17.1, "max": 44.2, "samples": 21},
+  "control": {"streams": 4, "bytes": 8388608,
+              "single_stream_mib_per_s": 0.41, "n_stream_mib_per_s": 1.6, "note": "stub"},
+  "host_load": {"available": true, "method": "sftp:/proc/loadavg",
+                "load1": 0.9, "load5": 1.1, "load15": 1.0},
+  "errors": []
+}
+JSON
+PROBE
+chmod +x "$probe_stub"
+
 export CANDIDATE_BIN="$stub" CANDIDATE_REF="candidate-ref"
 export BASELINE_BIN="$stub" BASELINE_REF="baseline-ref"
 export REMOTE_BASE=/easysftp-benchmark-test
 export BENCH_HOST=example.invalid BENCH_PORT=22 BENCH_USERNAME=tester
 export BENCH_PASSWORD=secret BENCH_KNOWN_HOSTS="example.invalid ssh-ed25519 AAAA"
 export DATASET_DIR="$work/data"
+
+# Shaping must never actually happen here. This check may run as root on a
+# maintainer's box or on a self-hosted runner, and a netem qdisc left on a real
+# interface by a test is a broken machine, not a failed assertion. A name no
+# interface has plus a refused sudo makes every "tc" call fail, which is exactly
+# the degradation path the checks below assert on.
+export LINK_IFACE=easysftp-selfcheck0 LINK_SUDO=0
 
 echo "== scripts/benchmark.sh =="
 export OUT_DIR="$work/out" LOG_DIR="$work/logs" REPEATS=3 BENCH_CONNECTIONS=2
@@ -199,8 +236,79 @@ expect_equal 'summary.md has a throughput row for every build and scenario' 9 \
 expect_equal 'summary.md has a resources row for every build and scenario' 9 \
   "$(grep -cE '^\| (small|mixed|large) \| (candidate|baseline|pool2) \| baseline \| [0-9.]+ ms \|' "$OUT_DIR/summary.md")"
 
+# Without LINKPROBE_BIN the result still has to carry a valid link object, with
+# an empty probe list rather than an invented entry.
+expect_equal 'a run without a probe binary reports no probes' 0 \
+  "$(jq '.link.probes | length' "$results")"
+expect_equal 'the implicit profile is named' baseline \
+  "$(jq -r '[.results[].link_profile] | unique | join(" ")' "$results")"
+expect_equal 'an unprobed run says shaping was never asked for' false \
+  "$(jq -r '.link.shaping.available' "$results")"
+if grep -qF 'No link probe ran for this result' "$OUT_DIR/summary.md"; then
+  pass "summary.md says when the link was not probed"
+else
+  fail "summary.md hides that the link was not probed"
+fi
+
+echo
+echo "== scripts/benchmark.sh over link profiles =="
+# A second, smaller run: two profiles, a probe binary, and shaping that cannot
+# be applied. That last part is the common case on a runner without NET_ADMIN,
+# and it must produce a complete result rather than a failed run.
+export OUT_DIR="$work/link-out" LOG_DIR="$work/link-logs" REPEATS=1
+export BENCH_LINK_PROFILES="baseline +50ms/5mbit" LINKPROBE_BIN="$probe_stub"
+unset BENCH_CONNECTIONS
+bash "$repo_root/scripts/benchmark.sh" >"$work/link.stdout" 2>&1 ||
+  fail "benchmark.sh over link profiles exited non-zero (see $work/link.stdout)"
+
+link_results="$OUT_DIR/results.json"
+if [[ ! -f $link_results ]]; then
+  echo "FAIL: the link profile run produced no results.json" >&2
+  cat "$work/link.stdout" >&2
+  exit 1
+fi
+
+# 2 builds x 3 scenarios x 2 profiles.
+expect_equal 'every build, scenario and profile was aggregated' 12 \
+  "$(jq '.results | length' "$link_results")"
+expect_equal 'both profiles appear in the results' '+50ms/5mbit baseline' \
+  "$(jq -r '[.results[].link_profile] | unique | sort | join(" ")' "$link_results")"
+# Two probes per profile, before and after that profile's own runs: a start and
+# an end of the same profile are what makes drift visible.
+expect_equal 'each profile is probed at its start and its end' 4 \
+  "$(jq '.link.probes | length' "$link_results")"
+expect_equal 'the probes say which profile and when' 'baseline/start baseline/end +50ms/5mbit/start +50ms/5mbit/end' \
+  "$(jq -r '[.link.probes[] | "\(.profile)/\(.at)"] | join(" ")' "$link_results")"
+expect_equal 'a probe document is kept whole' 18.4 \
+  "$(jq -r '.link.probes[0].rtt_ms.p50' "$link_results")"
+# The point of the whole exercise: shaping that could not be applied is recorded
+# as such, and the profile names then say what was asked for, not what happened.
+expect_equal 'unavailable shaping is recorded, not fatal' false \
+  "$(jq -r '.link.shaping.available' "$link_results")"
+expect_nonempty 'unavailable shaping carries a reason' \
+  "$(jq -r '.link.shaping.reason' "$link_results")"
+expect_equal 'the requested profiles are recorded even when unshaped' '+50ms/5mbit baseline' \
+  "$(jq -r '.link.shaping.requested | sort | join(" ")' "$link_results")"
+expect_equal 'only the unshaped profile counts as applied' baseline \
+  "$(jq -r '.link.shaping.applied | join(" ")' "$link_results")"
+# A comparison across profiles would be meaningless, so every entry must pair
+# two cells of the same one.
+expect_equal 'the comparison stays inside one profile' 6 \
+  "$(jq '[.comparison[] | select(.link_profile != null)] | length' "$link_results")"
+expect_equal 'the CSV carries the link a row was measured over' \
+  '"link_profile","rtt_p50_ms","control_single_mib_per_s"' \
+  "$(head -1 "$OUT_DIR/results.csv" | cut -d, -f4-6)"
+expect_equal 'the CSV fills those columns from the profile start probe' 12 \
+  "$(grep -c ',18.4,0.41,' "$OUT_DIR/results.csv")"
+if grep -qF '### The link' "$OUT_DIR/summary.md"; then
+  pass "summary.md has a link section"
+else
+  fail "summary.md is missing its link section"
+fi
+
 echo
 echo "== scripts/benchmark-matrix.sh =="
+unset BENCH_LINK_PROFILES LINKPROBE_BIN
 export OUT_DIR="$work/matrix-out" LOG_DIR="$work/matrix-logs" REPEATS=1
 export MATRIX_CONNECTIONS="1 2" MATRIX_CONCURRENCY="1 4" MATRIX_SCENARIOS="small single"
 unset BENCH_CONNECTIONS
@@ -246,6 +354,49 @@ if grep -qE '^\| *1 \|' "$OUT_DIR/matrix.md"; then
 else
   fail "matrix.md renders no grid"
 fi
+expect_equal 'the matrix declares its link axis too' baseline \
+  "$(jq -r '.axes.link_profiles | join(" ")' "$matrix")"
+expect_equal 'a sweep without a probe binary reports no probes' 0 \
+  "$(jq '.link.probes | length' "$matrix")"
+
+echo
+echo "== scripts/benchmark-matrix.sh over link profiles =="
+# A one-cell grid: what is under test here is the profile axis multiplying the
+# grid and the per-profile grouping, not the grid itself.
+export OUT_DIR="$work/matrix-link-out" LOG_DIR="$work/matrix-link-logs"
+export MATRIX_CONNECTIONS="1" MATRIX_CONCURRENCY="1" MATRIX_SCENARIOS="small"
+export MATRIX_LINK_PROFILES="baseline +150ms" LINKPROBE_BIN="$probe_stub"
+bash "$repo_root/scripts/benchmark-matrix.sh" >"$work/matrix-link.stdout" 2>&1 ||
+  fail "benchmark-matrix.sh over link profiles exited non-zero (see $work/matrix-link.stdout)"
+
+matrix_link="$OUT_DIR/matrix.json"
+if [[ ! -f $matrix_link ]]; then
+  echo "FAIL: the matrix link profile run produced no matrix.json" >&2
+  cat "$work/matrix-link.stdout" >&2
+  exit 1
+fi
+
+# 1 cell x 2 builds x 2 profiles: the profile axis multiplies the grid, which is
+# the cost the script warns about before it starts.
+expect_equal 'the profile axis multiplies the grid' 4 \
+  "$(jq '.cells | length' "$matrix_link")"
+expect_equal 'the link axis is declared in order' 'baseline +150ms' \
+  "$(jq -r '.axes.link_profiles | join(" ")' "$matrix_link")"
+expect_equal 'the scaling view is grouped per profile as well' 4 \
+  "$(jq '.scaling | length' "$matrix_link")"
+expect_equal 'the comparison pairs cells of the same profile' 2 \
+  "$(jq '[.comparison[] | select(.link_profile != null)] | length' "$matrix_link")"
+expect_equal 'each profile got its own pair of probes' 4 \
+  "$(jq '.link.probes | length' "$matrix_link")"
+expect_equal 'the matrix CSV carries the link columns' \
+  '"link_profile","rtt_p50_ms","control_single_mib_per_s"' \
+  "$(head -1 "$OUT_DIR/matrix.csv" | cut -d, -f4-6)"
+# cells[] has always carried net_write_bytes; benchmarks/README.md calls the CSV
+# the same cells flattened, so it belongs in there (issue #184, phase 2).
+expect_equal 'the matrix CSV carries net_write_bytes' 1 \
+  "$(head -1 "$OUT_DIR/matrix.csv" | grep -c 'net_write_bytes')"
+expect_equal 'the matrix renders one grid per build and profile' 4 \
+  "$(grep -c '^#### ' "$OUT_DIR/matrix.md")"
 
 if ((failures > 0)); then
   echo "$failures check(s) failed" >&2
