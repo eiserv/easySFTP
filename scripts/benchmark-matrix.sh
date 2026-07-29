@@ -21,6 +21,14 @@
 #                               advanced.request_concurrency at easySFTP's own
 #                               default and keeps the grid two-dimensional
 #   MATRIX_SCENARIOS            default "small large single"
+#   MATRIX_LINK_PROFILES        optional network profiles to sweep over (issue
+#                               #184); empty means the real line only. See
+#                               scripts/benchmark-link.sh for the grammar. This
+#                               axis multiplies the whole grid, so four profiles
+#                               are four times the hours
+#   LINKPROBE_BIN               optional built cmd/linkprobe; without it the
+#                               result carries an empty probe list
+#   LINK_IFACE, LINK_SUDO       see scripts/benchmark-link.sh
 #   REPEATS                     repeats per cell (default 1)
 #
 # Cost warning: the grid is measured in full. The default 4x5 grid over three
@@ -33,6 +41,8 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # shellcheck source=scripts/benchmark-lib.sh disable=SC1091
 source "$script_dir/benchmark-lib.sh"
+# shellcheck source=scripts/benchmark-link.sh disable=SC1091
+source "$script_dir/benchmark-link.sh"
 
 require_env CANDIDATE_BIN CANDIDATE_REF OUT_DIR DATASET_DIR LOG_DIR \
   REMOTE_BASE BENCH_HOST BENCH_USERNAME BENCH_PASSWORD BENCH_KNOWN_HOSTS
@@ -46,6 +56,7 @@ MATRIX_CONNECTIONS=${MATRIX_CONNECTIONS:-"1 2 4 8"}
 MATRIX_CONCURRENCY=${MATRIX_CONCURRENCY:-"1 2 4 8 16"}
 MATRIX_REQUEST_CONCURRENCY=${MATRIX_REQUEST_CONCURRENCY:-}
 MATRIX_SCENARIOS=${MATRIX_SCENARIOS:-"small large single"}
+MATRIX_LINK_PROFILES=${MATRIX_LINK_PROFILES:-}
 
 read -r -a connections_axis <<<"$MATRIX_CONNECTIONS"
 read -r -a concurrency_axis <<<"$MATRIX_CONCURRENCY"
@@ -70,13 +81,23 @@ done
 for scenario in "${scenarios[@]}"; do
   scenario_spec "$scenario" >/dev/null
 done
+# Through a command substitution and not a process substitution, so a rejected
+# profile stops the sweep under "set -e" instead of hours later.
+link_profiles_raw=$(link_parse_profiles "$MATRIX_LINK_PROFILES")
+mapfile -t link_profiles <<<"$link_profiles_raw"
+LINK_REQUESTED=("${link_profiles[@]}")
 
 check_remote_base
 mkdir -p "$OUT_DIR" "$DATASET_DIR" "$LOG_DIR"
 check_log_dir
 
 runs_file="$LOG_DIR/matrix-runs.jsonl"
+probes_file="$LOG_DIR/link-probes.jsonl"
 : >"$runs_file"
+: >"$probes_file"
+
+# The profile every cell below is measured on; set by the profile loop.
+link_profile=baseline
 
 labels=(candidate)
 binaries=("$CANDIDATE_BIN")
@@ -91,8 +112,8 @@ if [[ -n "$BASELINE_BIN" ]]; then
   reference_label=baseline
 fi
 
-total=$((${#scenarios[@]} * ${#connections_axis[@]} * ${#concurrency_axis[@]} * ${#request_axis[@]} * ${#labels[@]} * REPEATS))
-echo "matrix: ${#scenarios[@]} scenario(s) x ${#connections_axis[@]} connection value(s) x ${#concurrency_axis[@]} concurrency value(s) x ${#request_axis[@]} request-concurrency value(s) x ${#labels[@]} build(s) x $REPEATS repeat(s) = $total measured run(s)"
+total=$((${#scenarios[@]} * ${#connections_axis[@]} * ${#concurrency_axis[@]} * ${#request_axis[@]} * ${#labels[@]} * ${#link_profiles[@]} * REPEATS))
+echo "matrix: ${#scenarios[@]} scenario(s) x ${#connections_axis[@]} connection value(s) x ${#concurrency_axis[@]} concurrency value(s) x ${#request_axis[@]} request-concurrency value(s) x ${#link_profiles[@]} link profile(s) x ${#labels[@]} build(s) x $REPEATS repeat(s) = $total measured run(s)"
 
 generate_dataset "${scenarios[@]}"
 
@@ -104,7 +125,9 @@ generate_dataset "${scenarios[@]}"
 measure_cell() {
   local label=$1 binary=$2 ref=$3 scenario=$4 conns=$5 conc=$6 request=$7 repeat=$8
   local remote="$REMOTE_BASE/matrix/$label/$scenario"
-  local stem="$LOG_DIR/$label-$scenario-c$conns-w$conc-r${request:-default}-$repeat"
+  local slug
+  slug=$(link_profile_slug "$link_profile")
+  local stem="$LOG_DIR/$slug-$label-$scenario-c$conns-w$conc-r${request:-default}-$repeat"
   local code=0
 
   local advanced="connections: $conns
@@ -132,6 +155,7 @@ request_concurrency: $request"
     --arg label "$label" \
     --arg ref "$ref" \
     --arg scenario "$scenario" \
+    --arg link_profile "$link_profile" \
     --argjson connections "$conns" \
     --argjson concurrency "$conc" \
     --argjson request_concurrency "${request:-null}" \
@@ -145,25 +169,47 @@ request_concurrency: $request"
     --argjson metrics "$(metrics_json "$stem.metrics.json")" \
     '$ARGS.named' >>"$runs_file"
 
-  echo "$label/$scenario connections=$conns concurrency=$conc request=${request:-default} repeat $repeat: $(step_number "$stem.out" duration-ms) ms, exit $code"
+  echo "$link_profile $label/$scenario connections=$conns concurrency=$conc request=${request:-default} repeat $repeat: $(step_number "$stem.out" duration-ms) ms, exit $code"
 }
 
-for scenario in "${scenarios[@]}"; do
-  for ((repeat = 1; repeat <= REPEATS; repeat++)); do
-    for conns in "${connections_axis[@]}"; do
-      for conc in "${concurrency_axis[@]}"; do
-        for request in "${request_axis[@]}"; do
-          # Innermost, so candidate and baseline of one cell are measured
-          # within seconds of each other.
-          for i in "${!labels[@]}"; do
-            measure_cell "${labels[$i]}" "${binaries[$i]}" "${refs[$i]}" \
-              "$scenario" "$conns" "$conc" "$request" "$repeat"
+# Shaping is only probed for when a profile actually asks for it, so a sweep of
+# the real line needs neither tc nor NET_ADMIN.
+if link_shape_needed "${link_profiles[@]}"; then
+  link_shape_probe
+  if ((LINK_SHAPING_AVAILABLE != 1)); then
+    echo "::warning::link profiles were requested but shaping is unavailable ($LINK_SHAPING_REASON); every profile is swept on the real line" >&2
+  fi
+fi
+
+# The profile loop is the outermost one: re-applying tc per cell would itself be
+# noise, and a sweep already takes hours. Each profile is probed before and
+# after its own grid, so drift inside a profile is visible; two probes of
+# different profiles are not comparable and are not meant to be.
+for link_profile in "${link_profiles[@]}"; do
+  link_shape_apply "$link_profile" || true
+  link_probe "$link_profile" start "$probes_file"
+  for scenario in "${scenarios[@]}"; do
+    for ((repeat = 1; repeat <= REPEATS; repeat++)); do
+      for conns in "${connections_axis[@]}"; do
+        for conc in "${concurrency_axis[@]}"; do
+          for request in "${request_axis[@]}"; do
+            # Innermost, so candidate and baseline of one cell are measured
+            # within seconds of each other.
+            for i in "${!labels[@]}"; do
+              measure_cell "${labels[$i]}" "${binaries[$i]}" "${refs[$i]}" \
+                "$scenario" "$conns" "$conc" "$request" "$repeat"
+            done
           done
         done
       done
     done
   done
+  link_probe "$link_profile" end "$probes_file"
 done
+
+# The trap does this too, but only on the way out: doing it here keeps the
+# cleanup runs below on the unshaped line.
+link_shape_clear
 
 # Leave the server as we found it. Best effort: a cleanup hiccup must not hide
 # the results.
@@ -175,17 +221,25 @@ for scenario in "${scenarios[@]}"; do
       echo "::warning::cleanup of ${labels[$i]}/$scenario failed"
   done
 done
+# A probe that was killed mid-write leaves its payload behind, and the next
+# run's remote scan would count it.
+if [[ -n "${LINKPROBE_BIN:-}" ]]; then
+  METRICS_FILE='' run_easysftp "$CANDIDATE_BIN" "$DATASET_DIR/empty" \
+    "$REMOTE_BASE/linkprobe" clean "$LOG_DIR/cleanup-linkprobe.log" "$LOG_DIR/cleanup-linkprobe.out" "" ||
+    echo "::warning::cleanup of the link probe directory failed"
+fi
 
 cells_file="$LOG_DIR/cells.json"
 jq -s "
   $JQ_STATS
-  group_by([.label, .scenario, .connections, .concurrency, .request_concurrency])
+  group_by([.link_profile, .label, .scenario, .connections, .concurrency, .request_concurrency])
   | map(
       (map(select(.metrics != null)) | map(.metrics)) as \$m
       | {
         scenario: .[0].scenario,
         label: .[0].label,
         ref: .[0].ref,
+        link_profile: .[0].link_profile,
         connections: .[0].connections,
         concurrency: .[0].concurrency,
         request_concurrency: .[0].request_concurrency,
@@ -218,10 +272,13 @@ jq -s "
       mib_per_s: (if .median_ms > 0 then ((.bytes / 1048576) / (.median_ms / 1000) | round2) else 0 end),
       files_per_s: (if .median_ms > 0 then (.files / (.median_ms / 1000) | round2) else 0 end)
     })
-  | sort_by([.scenario, .label, .connections, .concurrency, .request_concurrency])
+  | sort_by([.link_profile, .scenario, .label, .connections, .concurrency, .request_concurrency])
 " "$runs_file" >"$cells_file"
 
 settings="matrix sweep; every other advanced.* setting stays at easySFTP's defaults (retries 2, timeout 30s, mode overlay)"
+if [[ -n "$MATRIX_LINK_PROFILES" ]]; then
+  settings="$settings; swept over the link profiles ${link_profiles[*]}"
+fi
 
 scenario_docs=$(for scenario in "${scenarios[@]}"; do
   jq -nc --arg k "$scenario" --arg v "$(scenario_description "$scenario")" '{key: $k, value: $v}'
@@ -241,8 +298,10 @@ jq -n \
   --argjson repeats "$REPEATS" \
   --arg runner "${RUNNER_ENVIRONMENT:-local}, $(uname -sr), $(nproc) cpu" \
   --argjson environment "$(bench_environment)" \
+  --argjson link "$(link_json "$probes_file")" \
   --arg settings "$settings" \
   --argjson scenarios "$scenario_docs" \
+  --argjson link_axis "$(printf '%s\n' "${link_profiles[@]}" | jq -Rs 'split("\n") | map(select(. != ""))')" \
   --argjson connections_axis "$(printf '%s\n' "${connections_axis[@]}" | jq -s '.')" \
   --argjson concurrency_axis "$(printf '%s\n' "${concurrency_axis[@]}" | jq -s '.')" \
   --argjson request_axis "$(printf '%s\n' "${request_axis[@]}" | jq -Rs 'split("\n") | map(select(. != "") | tonumber)')" \
@@ -258,19 +317,22 @@ jq -n \
      repeats: \$repeats,
      runner: \$runner,
      environment: \$environment,
+     link: \$link,
      settings: \$settings,
      scenarios: \$scenarios,
-     note: \"one cell per (scenario, build, connections, concurrency, request_concurrency); median_ms is wall clock over the cell's repeats\",
+     note: \"one cell per (link_profile, scenario, build, connections, concurrency, request_concurrency); median_ms is wall clock over the cell's repeats\",
      axes: {
+       link_profiles: \$link_axis,
        connections: \$connections_axis,
        concurrency: \$concurrency_axis,
        request_concurrency: \$request_axis
      },
      cells: \$c,
-     scaling: (\$c | group_by([.scenario, .label])
+     scaling: (\$c | group_by([.link_profile, .scenario, .label])
        | map({
            scenario: .[0].scenario,
            label: .[0].label,
+           link_profile: .[0].link_profile,
            points: (sort_by([.connections, .concurrency])
              | map({connections, concurrency, request_concurrency, median_ms, mib_per_s, files_per_s,
                     connections_used, connections_refused, max_rss_bytes, user_cpu_ms})),
@@ -280,10 +342,12 @@ jq -n \
      comparison: [
        \$c[] | select(.label != \$reference_label) as \$x
        | (\$c[] | select(.label == \$reference_label and .scenario == \$x.scenario
+            and .link_profile == \$x.link_profile
             and .connections == \$x.connections and .concurrency == \$x.concurrency
             and .request_concurrency == \$x.request_concurrency)) as \$b
        | {
            scenario: \$x.scenario, label: \$x.label, reference_label: \$reference_label,
+           link_profile: \$x.link_profile,
            connections: \$x.connections, concurrency: \$x.concurrency,
            request_concurrency: \$x.request_concurrency,
            median_ms: \$x.median_ms, reference_median_ms: \$b.median_ms,
@@ -294,16 +358,27 @@ jq -n \
    }" >"$OUT_DIR/matrix.json"
 
 # One flat row per cell: this is the file a heatmap or a scaling plot reads.
+#
+# link_profile, rtt_p50_ms and control_single_mib_per_s come along so a cell is
+# readable on its own. net_write_bytes is here too: cells[] has always carried
+# it, and it is the protocol-overhead number (117% of payload for "small").
 jq -r '
-  ["scenario","build","ref","connections","concurrency","request_concurrency","repeats",
-   "files","bytes","median_ms","min_ms","max_ms","mad_ms","mib_per_s","files_per_s",
-   "upload_phase_ms","user_cpu_ms","sys_cpu_ms","cpu_percent","max_rss_bytes","go_gc_count",
-   "go_peak_goroutines","connections_opened","connections_used","connections_refused",
-   "reconnects","retries","errors","failed_runs"],
-  (.cells[] | [
-    .scenario, .label, .ref, .connections, .concurrency, .request_concurrency, .repeats,
+  (.link.probes // []) as $probes
+  | ["scenario","build","ref","link_profile","rtt_p50_ms","control_single_mib_per_s",
+     "connections","concurrency","request_concurrency","repeats",
+     "files","bytes","median_ms","min_ms","max_ms","mad_ms","mib_per_s","files_per_s",
+     "upload_phase_ms","net_write_bytes","user_cpu_ms","sys_cpu_ms","cpu_percent","max_rss_bytes","go_gc_count",
+     "go_peak_goroutines","connections_opened","connections_used","connections_refused",
+     "reconnects","retries","errors","failed_runs"],
+  (.cells[]
+   | . as $cell
+   | ([$probes[] | select(.profile == $cell.link_profile and .at == "start")] | first) as $p
+   | [
+    .scenario, .label, .ref, .link_profile,
+    ($p.rtt_ms.p50 // null), ($p.control.single_stream_mib_per_s // null),
+    .connections, .concurrency, .request_concurrency, .repeats,
     .files, .bytes, .median_ms, .min_ms, .max_ms, .mad_ms, .mib_per_s, .files_per_s,
-    .upload_phase_ms, .user_cpu_ms, .sys_cpu_ms, .cpu_percent, .max_rss_bytes, .go_gc_count,
+    .upload_phase_ms, .net_write_bytes, .user_cpu_ms, .sys_cpu_ms, .cpu_percent, .max_rss_bytes, .go_gc_count,
     .go_peak_goroutines, .connections_opened, .connections_used, .connections_refused,
     .reconnects, .retries, .errors, .failed_runs
   ])
@@ -322,63 +397,70 @@ jq -r '
   echo "| connections | $MATRIX_CONNECTIONS |"
   echo "| concurrency | $MATRIX_CONCURRENCY |"
   echo "| request_concurrency | ${MATRIX_REQUEST_CONCURRENCY:-easySFTP default} |"
+  echo "| Link profiles | ${MATRIX_LINK_PROFILES:-the real line} |"
   echo "| Scenarios | ${scenarios[*]} |"
   echo
+  link_markdown "$OUT_DIR/matrix.json"
   echo "Each grid below is median wall-clock milliseconds: rows are \`advanced.connections\`, columns are \`advanced.concurrency\`. Lower is better. \`connections > concurrency\` is measured, not skipped; easySFTP caps the pool at the concurrency (a connection no worker picks is a handshake for nothing), so those cells are expected to flatten out rather than improve."
   echo
 
   for scenario in "${scenarios[@]}"; do
     for label in "${labels[@]}"; do
-      for request in "${request_axis[@]}"; do
-        title="\`$scenario\` / $label"
-        if [[ -n "$request" ]]; then
-          title="$title / request_concurrency $request"
-        fi
-        echo "#### $title"
-        echo
-        printf '| connections \\ concurrency |'
-        for conc in "${concurrency_axis[@]}"; do printf ' %s |' "$conc"; done
-        printf '\n|---|'
-        # "%s": bash's printf reads a leading "-" in the format as an option.
-        for _ in "${concurrency_axis[@]}"; do printf '%s' '---|'; done
-        printf '\n'
-        for conns in "${connections_axis[@]}"; do
-          printf '| %s |' "$conns"
-          for conc in "${concurrency_axis[@]}"; do
-            cell=$(jq -r --arg s "$scenario" --arg l "$label" \
-              --argjson conns "$conns" --argjson conc "$conc" \
-              --argjson req "${request:-null}" '
-              [.cells[] | select(.scenario == $s and .label == $l and .connections == $conns
+      for profile in "${link_profiles[@]}"; do
+        for request in "${request_axis[@]}"; do
+          title="\`$scenario\` / $label / $profile"
+          if [[ -n "$request" ]]; then
+            title="$title / request_concurrency $request"
+          fi
+          echo "#### $title"
+          echo
+          printf '| connections \\ concurrency |'
+          for conc in "${concurrency_axis[@]}"; do printf ' %s |' "$conc"; done
+          printf '\n|---|'
+          # "%s": bash's printf reads a leading "-" in the format as an option.
+          for _ in "${concurrency_axis[@]}"; do printf '%s' '---|'; done
+          printf '\n'
+          for conns in "${connections_axis[@]}"; do
+            printf '| %s |' "$conns"
+            for conc in "${concurrency_axis[@]}"; do
+              cell=$(jq -r --arg s "$scenario" --arg l "$label" --arg p "$profile" \
+                --argjson conns "$conns" --argjson conc "$conc" \
+                --argjson req "${request:-null}" '
+              [.cells[] | select(.scenario == $s and .label == $l and .link_profile == $p
+                 and .connections == $conns
                  and .concurrency == $conc and .request_concurrency == $req)] | first
               | if . == null then "-"
                 else "\(.median_ms) ms<br>\(.mib_per_s) MiB/s"
                   + (if .connections_refused > 0 then "<br>\(.connections_refused) refused" else "" end)
                 end' "$OUT_DIR/matrix.json")
-            printf ' %s |' "$cell"
+              printf ' %s |' "$cell"
+            done
+            printf '\n'
           done
-          printf '\n'
+          echo
         done
-        echo
       done
     done
   done
 
-  echo "### Best cell per scenario and build"
+  echo "### Best cell per scenario, build and link profile"
   echo
-  echo "| Scenario | Build | connections | concurrency | request_concurrency | Median | MiB/s | files/s |"
-  echo "|---|---|---|---|---|---|---|---|"
-  jq -r '.scaling[] | "| \(.scenario) | \(.label) | \(.best.connections) | \(.best.concurrency) | \(.best.request_concurrency // "default") | \(.best.median_ms) ms | \(.best.mib_per_s) | \(.best.files_per_s) |"' \
+  echo "| Scenario | Build | Profile | connections | concurrency | request_concurrency | Median | MiB/s | files/s |"
+  echo "|---|---|---|---|---|---|---|---|---|"
+  jq -r '.scaling[] | "| \(.scenario) | \(.label) | \(.link_profile) | \(.best.connections) | \(.best.concurrency) | \(.best.request_concurrency // "default") | \(.best.median_ms) ms | \(.best.mib_per_s) | \(.best.files_per_s) |"' \
     "$OUT_DIR/matrix.json"
 
   if [[ -n "$BASELINE_BIN" ]]; then
     echo
     echo "### Candidate against baseline, worst and best cell"
     echo
-    echo "| Scenario | connections | concurrency | Candidate | Baseline | Delta |"
-    echo "|---|---|---|---|---|---|"
-    jq -r '.comparison | group_by(.scenario)
-      | map(sort_by(.delta_percent // 0) | [.[0], .[-1]]) | flatten | unique_by([.scenario, .connections, .concurrency])
-      | .[] | "| \(.scenario) | \(.connections) | \(.concurrency) | \(.median_ms) ms | \(.reference_median_ms) ms | \(if .delta_percent == null then "-" else (if .delta_percent > 0 then "+" else "" end) + (.delta_percent | tostring) + "%" end) |"' \
+    echo "| Scenario | Profile | connections | concurrency | Candidate | Baseline | Delta |"
+    echo "|---|---|---|---|---|---|---|"
+    # Grouped per profile as well: the worst cell of one profile and the best of
+    # another are not two ends of one distribution.
+    jq -r '.comparison | group_by([.link_profile, .scenario])
+      | map(sort_by(.delta_percent // 0) | [.[0], .[-1]]) | flatten | unique_by([.link_profile, .scenario, .connections, .concurrency])
+      | .[] | "| \(.scenario) | \(.link_profile) | \(.connections) | \(.concurrency) | \(.median_ms) ms | \(.reference_median_ms) ms | \(if .delta_percent == null then "-" else (if .delta_percent > 0 then "+" else "" end) + (.delta_percent | tostring) + "%" end) |"' \
       "$OUT_DIR/matrix.json"
   fi
 
