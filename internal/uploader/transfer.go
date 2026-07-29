@@ -224,8 +224,10 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 	// preserve-times (timesWarned non-nil): keep the local modification time
 	// instead of "now". After the rename, so the request targets the final
 	// path; a failure warns once per deployment and never fails the deploy.
+	// f.mtime is unix nanoseconds; the SFTP SETSTAT request carries whole
+	// seconds, so the sub-second part is truncated on the wire either way.
 	if env.timesWarned != nil {
-		mtime := time.Unix(f.mtime, 0)
+		mtime := time.Unix(0, f.mtime)
 		doneTimes := metrics.Op("sftp_chtimes")
 		cerr := client.Chtimes(f.remotePath, mtime, mtime)
 		doneTimes(cerr)

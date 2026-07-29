@@ -105,9 +105,12 @@ for it last time, its stored hash is reused and the file is never re-read.
 This is the same trade rsync's "quick check" makes.
 
 **The trade-off, precisely:** a file whose content changed *without* its size
-or modification time changing is invisible to this check and will be missed;
-for example, two edits that happen to produce the same file size within the
-same mtime second (mtimes have one-second resolution on most filesystems).
+or modification time changing is invisible to this check and will be missed.
+Modification times are compared at nanosecond resolution, so on common
+filesystems (ext4, APFS, NTFS) that takes two same-size edits with
+bit-identical timestamps; on filesystems with coarse timestamps (FAT stores
+2-second mtimes, and some network filesystems round to seconds), the window
+stays as wide as the filesystem's own clock.
 Without `fast_path`, `sync` never misses a content change, because it
 always compares actual content hashes; this is what you give up in exchange
 for skipping local reads.
@@ -124,9 +127,10 @@ If you suspect a stale hash was reused for the wrong reason, delete the
 target's `.easysftp-manifest.json` (or run `mode: clean` once) to force a
 full re-hash on the next sync.
 
-Manifests written before this option existed have no recorded modification
-time; the first sync after upgrading re-hashes everything once and then
-starts recording it. (A v2 manifest is read seamlessly.)
+Manifests written by older easySFTP versions are read seamlessly, but their
+recorded modification times are not comparable (v1 recorded none, v2 recorded
+whole seconds); the first sync after upgrading re-hashes everything once and
+then records nanosecond times from there on.
 
 ## `clean`
 

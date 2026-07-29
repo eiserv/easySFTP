@@ -253,9 +253,9 @@ func TestHashPlanFilesFastPathReusesCachedHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := []fileItem{{localPath: p, rel: "a.txt", size: fi.Size(), mtime: fi.ModTime().Unix()}}
+	files := []fileItem{{localPath: p, rel: "a.txt", size: fi.Size(), mtime: fi.ModTime().UnixNano()}}
 	cached := map[string]manifestEntry{
-		"a.txt": {Hash: "stale-cached-hash", Size: fi.Size(), MTime: fi.ModTime().Unix()},
+		"a.txt": {Hash: "stale-cached-hash", Size: fi.Size(), MTime: fi.ModTime().UnixNano()},
 	}
 
 	if err := hashPlanFiles(context.Background(), files, 4, cached); err != nil {
@@ -284,12 +284,13 @@ func TestHashPlanFilesFastPathMissOnMismatch(t *testing.T) {
 	}
 
 	cases := []manifestEntry{
-		{Hash: "stale", Size: fi.Size() + 1, MTime: fi.ModTime().Unix()}, // size mismatch
-		{Hash: "stale", Size: fi.Size(), MTime: fi.ModTime().Unix() + 1}, // mtime mismatch
-		{Hash: "stale", Size: fi.Size(), MTime: 0},                       // v1 upgrade: MTime unknown
+		{Hash: "stale", Size: fi.Size() + 1, MTime: fi.ModTime().UnixNano()}, // size mismatch
+		{Hash: "stale", Size: fi.Size(), MTime: fi.ModTime().UnixNano() + 1}, // mtime mismatch (one nanosecond off)
+		{Hash: "stale", Size: fi.Size(), MTime: fi.ModTime().Unix()},         // v2 upgrade: whole seconds, never comparable
+		{Hash: "stale", Size: fi.Size(), MTime: 0},                           // v1 upgrade: MTime unknown
 	}
 	for _, entry := range cases {
-		files := []fileItem{{localPath: p, rel: "a.txt", size: fi.Size(), mtime: fi.ModTime().Unix()}}
+		files := []fileItem{{localPath: p, rel: "a.txt", size: fi.Size(), mtime: fi.ModTime().UnixNano()}}
 		cached := map[string]manifestEntry{"a.txt": entry}
 		if err := hashPlanFiles(context.Background(), files, 4, cached); err != nil {
 			t.Fatal(err)
@@ -340,13 +341,60 @@ func TestSyncFastPathSkipsUnchangedFile(t *testing.T) {
 	}
 }
 
-// Documents the known limitation: with sync-fast-path on, a same-size edit
-// that lands within the same mtime second as the file it replaces is
-// invisible to the size+mtime check and is missed, which is exactly the
-// tradeoff action.yml and docs/strategies.md describe. This is not a "should"
-// test; it pins the documented behavior so a future change to the comparison
-// doesn't silently alter it either way.
-func TestSyncFastPathMissesSameSecondSameSizeEdit(t *testing.T) {
+// The regression #162 fixes: with sync-fast-path on, a same-size edit landing
+// in the same wall-clock second as the recorded upload was invisible to the
+// old whole-second mtime comparison and silently never deployed. Nanosecond
+// mtimes make the second run see the changed timestamp, re-hash and upload.
+func TestSyncFastPathCatchesSameSecondSameSizeEdit(t *testing.T) {
+	srv := startTestServer(t)
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "1"})
+	file := filepath.Join(local, "a.txt")
+
+	// Pin the first upload's mtime to a known sub-second timestamp, and skip
+	// on filesystems that round it away (FAT and some network filesystems):
+	// there the window simply stays as wide as the filesystem's clock.
+	first := time.Now().Truncate(time.Second).Add(100 * time.Millisecond)
+	if err := os.Chtimes(file, first, first); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(file); err != nil || fi.ModTime().Nanosecond() == 0 {
+		t.Skipf("filesystem stores whole-second mtimes (stat err %v); sub-second detection cannot apply here", err)
+	}
+
+	cfg := syncConfig(srv, local)
+	cfg.SyncFastPath = true
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same size ("1" -> "2"), 200ms later within the same second: exactly the
+	// build-then-postprocess churn CI produces.
+	writeTree(t, local, map[string]string{"a.txt": "2"})
+	second := first.Add(200 * time.Millisecond)
+	if err := os.Chtimes(file, second, second); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FilesUploaded != 1 {
+		t.Fatalf("same-second same-size edit: got %d uploads, want 1", stats.FilesUploaded)
+	}
+	if got := readRemote(t, srv, "/www/a.txt"); got != "2" {
+		t.Fatalf("same-second same-size edit was not deployed: remote content %q", got)
+	}
+}
+
+// Documents the remaining (much narrower) limitation: a same-size edit whose
+// mtime is bit-for-bit identical to the recorded one, down to the nanosecond,
+// is still invisible to the size+mtime check, which is the tradeoff
+// docs/strategies.md describes. This is not a "should" test; it pins the
+// documented behavior so a future change to the comparison doesn't silently
+// alter it either way.
+func TestSyncFastPathMissesIdenticalMtimeSameSizeEdit(t *testing.T) {
 	srv := startTestServer(t)
 	local := t.TempDir()
 	writeTree(t, local, map[string]string{"a.txt": "1"})
@@ -365,8 +413,7 @@ func TestSyncFastPathMissesSameSecondSameSizeEdit(t *testing.T) {
 	mtime := fi.ModTime()
 
 	// Same size ("1" -> "2"), mtime forced back to exactly what the manifest
-	// already recorded, simulating two same-size edits landing in the same
-	// mtime second, which second-granularity filesystem clocks make common.
+	// already recorded, nanoseconds included.
 	writeTree(t, local, map[string]string{"a.txt": "2"})
 	if err := os.Chtimes(filepath.Join(local, "a.txt"), mtime, mtime); err != nil {
 		t.Fatal(err)
@@ -376,7 +423,7 @@ func TestSyncFastPathMissesSameSecondSameSizeEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := readRemote(t, srv, "/www/a.txt"); got != "1" {
-		t.Fatalf("expected the fast path to miss the edit and leave the old content, got %q", got)
+		t.Fatalf("expected the fast path to miss the identical-mtime edit and leave the old content, got %q", got)
 	}
 }
 
@@ -439,6 +486,66 @@ func TestSyncUpgradesV1Manifest(t *testing.T) {
 	}
 	if e := got.Files["a.txt"]; e.Size == 0 || e.MTime == 0 {
 		t.Errorf("rewritten manifest entry missing size/mtime: %+v", e)
+	}
+}
+
+// A v2 manifest recorded mtimes in whole seconds; those must never be taken
+// for the nanosecond values v3 records, or a stale hash could be reused. Here
+// the v2 entry carries a stale hash with a matching size and (whole-second)
+// mtime: the upgrade must drop the second-resolution mtime, re-hash the file
+// for real, catch the mismatch and re-upload, then write a v3 manifest with
+// the nanosecond mtime recorded.
+func TestSyncUpgradesV2ManifestWithFullRehash(t *testing.T) {
+	srv := startTestServer(t)
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"a.txt": "2"})
+	fi, err := os.Stat(filepath.Join(local, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := srv.verifyClient(t)
+	if err := client.MkdirAll("/www"); err != nil {
+		t.Fatal(err)
+	}
+	// What a pre-v3 easySFTP left behind after uploading the old content "1":
+	// its hash, the (same) size, and the mtime truncated to whole seconds.
+	v2 := fmt.Sprintf(`{"version":2,"files":{"a.txt":{"hash":"stale-hash-of-old-content","size":%d,"mtime":%d}}}`,
+		fi.Size(), fi.ModTime().Unix())
+	f, err := client.Create("/www/" + manifestName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte(v2)); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	wf, err := client.Create("/www/a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf.Write([]byte("1"))
+	wf.Close()
+
+	cfg := syncConfig(srv, local)
+	cfg.SyncFastPath = true
+	stats, err := Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FilesUploaded != 1 {
+		t.Fatalf("upgrading a v2 manifest: got %d uploads, want 1 (the stale hash must not be reused)", stats.FilesUploaded)
+	}
+	if got := readRemote(t, srv, "/www/a.txt"); got != "2" {
+		t.Fatalf("changed file was not deployed during the v2 upgrade: %q", got)
+	}
+
+	m := readRemoteManifest(t, srv)
+	if m.Version != manifestVersion {
+		t.Errorf("rewritten manifest version = %d, want %d", m.Version, manifestVersion)
+	}
+	if e := m.Files["a.txt"]; e.MTime != fi.ModTime().UnixNano() {
+		t.Errorf("rewritten manifest mtime = %d, want the nanosecond %d", e.MTime, fi.ModTime().UnixNano())
 	}
 }
 

@@ -22,7 +22,7 @@ type fileItem struct {
 	remotePath string // slash-separated remote path
 	rel        string // slash path relative to the remote base (manifest key)
 	size       int64
-	mtime      int64 // local modification time, unix seconds
+	mtime      int64 // local modification time, unix nanoseconds
 	mode       fs.FileMode
 	hash       string // sha256 hex of the local content; only set for the sync strategy
 }
@@ -111,7 +111,7 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, opts planOption
 			remotePath: remotePath,
 			rel:        filepath.Base(pair.Local),
 			size:       info.Size(),
-			mtime:      info.ModTime().Unix(),
+			mtime:      info.ModTime().UnixNano(),
 			mode:       info.Mode(),
 		})
 		p.remoteDirs = parentDirs(remotePath)
@@ -162,7 +162,7 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, opts planOption
 			remotePath: path.Join(remoteBase, rel),
 			rel:        rel,
 			size:       fi.Size(),
-			mtime:      fi.ModTime().Unix(),
+			mtime:      fi.ModTime().UnixNano(),
 			mode:       fi.Mode(),
 		}
 		p.files = append(p.files, item)
@@ -199,11 +199,13 @@ func dirsForFiles(files []fileItem) []string {
 // the sync strategy, whose changed-file detection compares content hashes.
 //
 // cached is the previous sync's manifest entries, keyed by relative path. When
-// a file's size and mtime still match its cached entry, its hash is reused
-// instead of re-reading the file (the same fast path rsync's "quick check"
-// uses). A cached entry with mtime 0 (a manifest written before this fast
-// path existed) never matches, so upgrading from an older manifest costs one
-// full re-hash and nothing more.
+// a file's size and mtime (nanosecond resolution, see fileItem.mtime) still
+// match its cached entry, its hash is reused instead of re-reading the file
+// (the same fast path rsync's "quick check" uses). A cached entry with mtime 0
+// never matches; readManifest hands over v1 entries (no mtime recorded) and
+// v2 entries (whole-second mtimes, not comparable to the nanosecond values
+// recorded now) that way, so upgrading from an older manifest costs one full
+// re-hash and nothing more.
 func hashPlanFiles(ctx context.Context, files []fileItem, concurrency int, cached map[string]manifestEntry) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(concurrency)

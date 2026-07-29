@@ -197,7 +197,7 @@
       "additionalProperties": false,
       "properties": {
         "fast_path": {
-          "description": "Reuse a file's manifest hash instead of re-reading it when size and modification time still match (rsync-style quick check; can miss same-size same-second edits).",
+          "description": "Reuse a file's manifest hash instead of re-reading it when size and modification time (nanosecond resolution) still match (rsync-style quick check; can miss a same-size edit only when the timestamp is also identical).",
           "type": "boolean"
         },
         "manifest": {

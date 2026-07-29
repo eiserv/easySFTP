@@ -19,18 +19,23 @@ import (
 )
 
 // manifestVersion is written to every manifest this version of easySFTP
-// produces. v1 manifests (hash only, no size/mtime) are still read; see
-// readManifest.
-const manifestVersion = 2
+// produces. Older manifests are still read: v1 (hash only, no size/mtime)
+// and v2 (mtime in whole seconds); see readManifest.
+const manifestVersion = 3
 
 // manifestEntry records what is known about one file from the last sync.
-// Size and MTime enable the size+mtime fast path in hashPlanFiles: a v1
-// manifest entry has MTime 0, which never matches and always falls back to a
-// full re-hash.
+// Size and MTime enable the size+mtime fast path in hashPlanFiles: an entry
+// with MTime 0 never matches and always falls back to a full re-hash.
+//
+// v3 records MTime in nanoseconds. v2 recorded whole seconds, which made a
+// same-size edit landing in the same wall-clock second as the recorded time
+// invisible to the fast path, so the file was silently never re-uploaded
+// (issue #162). Nanoseconds narrow that window to the filesystem's actual
+// timestamp granularity.
 type manifestEntry struct {
 	Hash  string `json:"hash"`
 	Size  int64  `json:"size"`
-	MTime int64  `json:"mtime"` // local modification time at upload, unix seconds
+	MTime int64  `json:"mtime"` // local modification time at upload, unix nanoseconds
 }
 
 // manifest records what the last sync uploaded, keyed by relative path.
@@ -237,10 +242,12 @@ func writeRecoveryManifest(ctx context.Context, cfg *config.Config, sess *sessio
 // into "first sync": the caller (sess.do) reconnects and retries the read, so
 // a mid-run drop cannot silently discard the manifest.
 //
-// Both the current (v2: hash+size+mtime) and old (v1: hash only) formats are
-// accepted; a v1 entry decodes with MTime 0, which never matches the fast
-// path in hashPlanFiles, so upgrading from a v1 manifest costs one full
-// re-hash and then writes v2 from then on.
+// All three formats are accepted: v3 (hash+size+mtime in nanoseconds), v2
+// (hash+size+mtime in whole seconds) and v1 (hash only). A v1 entry decodes
+// with MTime 0 and a v2 entry has its whole-second MTime dropped to 0, since
+// it must never be compared against the nanosecond values recorded now.
+// MTime 0 never matches the fast path in hashPlanFiles, so upgrading from an
+// older manifest costs one full re-hash and then writes v3 from then on.
 func readManifest(client *sftp.Client, dir, name string, log Logger) (manifest, error) {
 	empty := manifest{Version: manifestVersion, Files: map[string]manifestEntry{}}
 	f, err := client.Open(path.Join(dir, name))
@@ -264,9 +271,19 @@ func readManifest(client *sftp.Client, dir, name string, log Logger) (manifest, 
 		return empty, nil
 	}
 
-	var v2 manifest
-	if err := json.Unmarshal(data, &v2); err == nil && v2.Files != nil {
-		return v2, nil
+	var m manifest
+	if err := json.Unmarshal(data, &m); err == nil && m.Files != nil {
+		if m.Version < 3 {
+			// A v2 manifest recorded mtimes in whole seconds. Zero them so
+			// the fast path in hashPlanFiles never takes a second-resolution
+			// value for a nanosecond one; the hashes stay valid, only the
+			// one-time full re-hash is paid (exactly like the v1 upgrade).
+			for rel, e := range m.Files {
+				e.MTime = 0
+				m.Files[rel] = e
+			}
+		}
+		return m, nil
 	}
 
 	var v1 struct {
