@@ -122,6 +122,30 @@ Changing the name mid-life starts a fresh manifest: the next sync re-uploads
 everything, tracks deletions from scratch, and leaves the old manifest file
 behind; delete the old file manually.
 
+## Temporary upload files in web roots
+
+Uploads stream into a temporary sibling file (`<name>.easysftp-tmp.<n>`) that
+is renamed over the target on success. A run killed hard (cancelled workflow,
+job timeout, reclaimed runner) can leave such files behind, and until the
+next deploy sweeps them (see
+[troubleshooting.md](troubleshooting.md#replacing-path--or-leftover-easysftp-tmp-files))
+a partially written copy of the file sits in the target, served over HTTP
+when the target is a public web root, possibly as plain text depending on
+MIME handling. Deny the pattern in the web server, next to the manifest rule
+above. nginx:
+
+```nginx
+location ~ \.easysftp-tmp(\.\d+)?$ { deny all; }
+```
+
+Apache (vhost or `.htaccess`):
+
+```apache
+<FilesMatch "\.easysftp-tmp(\.[0-9]+)?$">
+    Require all denied
+</FilesMatch>
+```
+
 ## Least privilege on the server
 
 - Use a dedicated deploy user that can only write to the deployment target,

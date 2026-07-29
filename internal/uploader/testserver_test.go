@@ -84,6 +84,26 @@ func withFailOpen(path string) serverOption {
 	}
 }
 
+// faultyList rejects directory listings ("List" requests) of one exact path
+// while delegating everything else, Stat included, to the in-memory handler.
+type faultyList struct {
+	inner sftp.FileLister
+	path  string
+}
+
+func (f *faultyList) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
+	if r.Method == "List" && r.Filepath == f.path {
+		return nil, errors.New("injected list failure")
+	}
+	return f.inner.Filelist(r)
+}
+
+func withFailList(path string) serverOption {
+	return func(s *testServer) {
+		s.handlers.FileList = &faultyList{inner: s.handlers.FileList, path: path}
+	}
+}
+
 // withFailRename makes the server reject every (Posix)Rename, simulating a
 // server that lets the temp upload through but cannot swap it into place.
 func withFailRename() serverOption { return func(s *testServer) { s.failRename = true } }
