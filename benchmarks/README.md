@@ -139,6 +139,45 @@ purpose, so canaries are comparable both within one run and across runs.
 The middle canary needs a middle to sit in; a grid of a single measured run per
 profile only gets a start and an end.
 
+### The deploy shapes
+
+A scenario is not only a payload. Every result up to issue #184 was a full
+upload into an empty target in `mode: overlay`, which is the rarest deploy there
+is; phase 3 added the shapes a real deploy actually has. The mode and the
+layout live in `scenario_shape`
+([`scripts/benchmark-lib.sh`](../scripts/benchmark-lib.sh)), and `matrix.md`
+prints them in a table next to the grids so a number is readable without going
+back to the script.
+
+| Scenario | What it is | Why |
+|---|---|---|
+| `small`, `mixed`, `large`, `single` | full upload into an empty target, `overlay` | the original set, unchanged, so stored results stay comparable |
+| `redeploy` | 500 x 4 KiB deployed twice, 3 files changed, `overlay` plus `advanced.skip_unchanged` | the common CI case; the only shape where `remote_scan` and the skip path are measured against a populated target |
+| `sync` | the same, in `mode: sync` | `manifest_read`, `hash`, `manifest_write` and `prune_dirs` are empty in every result measured in `overlay`, and sync is the only CPU-bound path in the product |
+| `deep` | 400 x 4 KiB, 7 directory levels, a handful of files per directory | separates `create_dirs` and `sftp_mkdirall` cost from transfer cost, which at this RTT is a large share of a `node_modules`-shaped deploy |
+| `bulk` | 2000 x 4 KiB | enough files for the per-run fixed costs to fall away against the per-file cost |
+| `calib-<count>x<size>` | uniform, e.g. `calib-100x64k`, `calib-10x16m` | not meant to be realistic: one size per scenario is what `t_file = r · RTT + size / B` can be fitted against, and `mixed` mixes three sizes and structurally cannot give that |
+
+Only the matrix benchmark takes them, through `MATRIX_SCENARIOS` (the
+`scenarios` workflow input); the standard benchmark's set stays fixed, because
+adding to it would make every stored release result incomparable.
+
+Two things to know before reading a `redeploy` or `sync` cell:
+
+- **Its cell cost roughly twice its measured time.** The tree is deployed once
+  unmeasured to create the state the measured run redeploys over, and only the
+  second run is measured. The script says which scenarios do this before it
+  starts.
+- **Its MiB/s is over the changed files, not over the tree.** Three files
+  changed out of 500 is the point; the duration is mostly scan and manifest
+  work, and reading its throughput as transfer throughput is a mistake.
+
+The change between the two deploys appends a few hundred bytes rather than
+rewriting in place, because it has to be visible to both detectors:
+`mode: sync` compares content hashes, but `advanced.skip_unchanged` compares the
+remote file's *size* only, and a same-size rewrite would be skipped as
+unchanged.
+
 ### The link profile
 
 `environment` says which machine measured. It said nothing at all about the path
@@ -338,6 +377,9 @@ The **`SFTP benchmark matrix`** workflow
 ([`.github/workflows/benchmark-matrix.yml`](../.github/workflows/benchmark-matrix.yml))
 runs the sweep. Its `connections` and `concurrency` inputs are the axes,
 `request-concurrency` adds an optional third one and `link-profiles` a fourth.
+Its `scenarios` input is where the deploy shapes above are requested; the
+default stays `small large single`, since each added scenario multiplies the
+grid the same way a link profile does.
 Candidate and baseline are measured cell by cell, back to back, for the same
 reason the standard benchmark interleaves its repeats. The default grid is over a
 hundred measured runs and takes hours, and each extra link profile multiplies

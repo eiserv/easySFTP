@@ -56,15 +56,26 @@ cat >"$stub" <<'STUB'
 set -euo pipefail
 
 source_dir=${EASYSFTP_SOURCE:-}
+mode=${EASYSFTP_MODE:-}
 connections=1
 concurrency=4
+skip_unchanged=false
 if [[ -n "${EASYSFTP_CONFIG:-}" ]]; then
   source_dir=$(awk -F'"' '/source:/ { print $2; exit }' "$EASYSFTP_CONFIG")
+  mode=$(awk '/^    mode:/ { print $2; exit }' "$EASYSFTP_CONFIG")
   connections=$(awk '/^  connections:/ { print $2; exit }' "$EASYSFTP_CONFIG")
   concurrency=$(awk '/^  concurrency:/ { print $2; exit }' "$EASYSFTP_CONFIG")
   connections=${connections:-1}
   concurrency=${concurrency:-4}
+  if grep -q '^  skip_unchanged: true' "$EASYSFTP_CONFIG"; then
+    skip_unchanged=true
+  fi
 fi
+
+# Into the run log, which is what the checks on the deploy shapes read: the mode
+# and skip_unchanged are chosen per scenario, and nothing else in the output
+# would show which ones a cell actually ran with.
+echo "stub: mode=${mode:-none} skip_unchanged=$skip_unchanged source=$source_dir"
 
 files=0
 bytes=0
@@ -431,6 +442,84 @@ expect_equal 'the matrix CSV carries net_write_bytes' 1 \
   "$(head -1 "$OUT_DIR/matrix.csv" | grep -c 'net_write_bytes')"
 expect_equal 'the matrix renders one grid per build and profile' 4 \
   "$(grep -c '^#### ' "$OUT_DIR/matrix.md")"
+
+echo
+echo "== scenario shapes (issue #184, phase 3) =="
+# The payload side, checked directly against the library: the deep layout, the
+# calibration grammar and the mutation are all logic a stub run would only
+# exercise by accident.
+# shellcheck source=scripts/benchmark-lib.sh disable=SC1091
+source "$repo_root/scripts/benchmark-lib.sh"
+
+expect_equal 'the calibration grammar parses a KiB size' '10:64' "$(scenario_spec calib-10x64k)"
+expect_equal 'the calibration grammar parses a MiB size' '1000:16384' "$(scenario_spec calib-1000x16m)"
+if scenario_spec calib-nonsense >/dev/null 2>&1; then
+  fail "a malformed calibration scenario is accepted"
+else
+  pass "a malformed calibration scenario is rejected"
+fi
+expect_equal 'a redeploy scenario declares its shape' 'overlay 1 flat' "$(scenario_shape redeploy)"
+expect_equal 'the sync scenario is measured in mode sync' 'sync 1 flat' "$(scenario_shape sync)"
+expect_equal 'the scenarios that predate this keep the old shape' 'overlay 0 flat' "$(scenario_shape small)"
+
+shapes="$work/shapes"
+(DATASET_DIR="$shapes" && generate_dataset deep calib-10x64k >/dev/null)
+expect_equal 'the deep payload has the file count of its spec' 400 \
+  "$(find "$shapes/deep" -type f | wc -l | tr -d ' ')"
+# 7 levels of two directories each: many directories holding a handful of files,
+# which is what separates create_dirs cost from transfer cost.
+expect_equal 'the deep payload nests 7 levels' 128 \
+  "$(find "$shapes/deep" -mindepth 7 -maxdepth 7 -type d | wc -l | tr -d ' ')"
+expect_equal 'nothing sits deeper than that' 0 \
+  "$(find "$shapes/deep" -mindepth 8 -type d | wc -l | tr -d ' ')"
+expect_equal 'a calibration payload is uniform' '10 65536' \
+  "$(find "$shapes/calib-10x64k" -type f -exec wc -c {} + | awk '$2 != "total" { n += 1; s[$1] = 1 } END { for (k in s) u = k; print n, u }')"
+
+scenario_mutate "$shapes/calib-10x64k" "$SCENARIO_CHANGED_FILES"
+expect_equal 'the mutation changes exactly the files it says' 3 \
+  "$(find "$shapes/calib-10x64k" -type f -exec wc -c {} + | awk '$2 != "total" && $1 == 66048 { n += 1 } END { print n + 0 }')"
+
+echo
+echo "== scripts/benchmark-matrix.sh over the deploy shapes =="
+# One cell, one build, three scenarios: what is under test is that a scenario
+# carries a mode and a base deploy, not the grid.
+export OUT_DIR="$work/shape-out" LOG_DIR="$work/shape-logs" REPEATS=1
+export MATRIX_CONNECTIONS="1" MATRIX_CONCURRENCY="2"
+export MATRIX_SCENARIOS="redeploy sync calib-10x64k"
+unset MATRIX_LINK_PROFILES LINKPROBE_BIN BASELINE_BIN BASELINE_REF
+bash "$repo_root/scripts/benchmark-matrix.sh" >"$work/matrix-shapes.stdout" 2>&1 ||
+  fail "benchmark-matrix.sh over the deploy shapes exited non-zero (see $work/matrix-shapes.stdout)"
+
+shape_matrix="$OUT_DIR/matrix.json"
+if [[ ! -f $shape_matrix ]]; then
+  echo "FAIL: the deploy shape run produced no matrix.json" >&2
+  cat "$work/matrix-shapes.stdout" >&2
+  exit 1
+fi
+
+expect_equal 'every deploy shape produced a cell' 'calib-10x64k redeploy sync' \
+  "$(jq -r '[.cells[].scenario] | unique | join(" ")' "$shape_matrix")"
+expect_equal 'the sync scenario was measured in mode sync' 1 \
+  "$(grep -lc 'stub: mode=sync' "$LOG_DIR"/baseline-candidate-sync-*[0-9].log | wc -l | tr -d ' ')"
+expect_equal 'the redeploy scenario was measured with skip_unchanged' 1 \
+  "$(grep -lc 'stub: mode=overlay skip_unchanged=true' "$LOG_DIR"/baseline-candidate-redeploy-*[0-9].log | wc -l | tr -d ' ')"
+# The unmeasured deploy the measured run redeploys over. Its metrics must not
+# exist: a base deploy counted as a measurement would report the fresh upload
+# this scenario exists to *not* measure.
+expect_equal 'a redeploy cell laid down an unmeasured base deploy first' 2 \
+  "$(find "$LOG_DIR" -name '*.base.log' | wc -l | tr -d ' ')"
+expect_equal 'a scenario without a base deploy runs one deploy only' 0 \
+  "$(find "$LOG_DIR" -name '*calib-10x64k*.base.log' | wc -l | tr -d ' ')"
+expect_equal 'the calibration scenario is documented by its spec' \
+  '10 files x 64 KiB, uniform (calibration)' \
+  "$(jq -r '.scenarios["calib-10x64k"]' "$shape_matrix")"
+# The backticks around the scenario name are matched as "." so this pattern
+# stays a single-quoted string shellcheck does not read as an expansion.
+if grep -qE '^\| .sync. \| sync, redeployed \|' "$OUT_DIR/matrix.md"; then
+  pass "matrix.md says which mode a scenario was measured in"
+else
+  fail "matrix.md does not say which mode a scenario was measured in"
+fi
 
 if ((failures > 0)); then
   echo "$failures check(s) failed" >&2

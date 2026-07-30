@@ -20,7 +20,13 @@
 #   MATRIX_REQUEST_CONCURRENCY  optional third axis; empty (default) leaves
 #                               advanced.request_concurrency at easySFTP's own
 #                               default and keeps the grid two-dimensional
-#   MATRIX_SCENARIOS            default "small large single"
+#   MATRIX_SCENARIOS            default "small large single". Beyond those:
+#                               "mixed", plus the deploy shapes of issue #184
+#                               phase 3, "redeploy", "sync", "deep", "bulk" and
+#                               the "calib-<count>x<size>" family (for example
+#                               "calib-100x64k"). See scenario_shape in
+#                               scripts/benchmark-lib.sh: a scenario carries a
+#                               mode and a layout, not only a payload
 #   MATRIX_LINK_PROFILES        optional network profiles to sweep over (issue
 #                               #184); empty means the real line only. See
 #                               scripts/benchmark-link.sh for the grammar. This
@@ -133,6 +139,19 @@ total=$((cells_per_profile * ${#link_profiles[@]}))
 canary_total=$((3 * ${#link_profiles[@]}))
 echo "matrix: ${#scenarios[@]} scenario(s) x ${#connections_axis[@]} connection value(s) x ${#concurrency_axis[@]} concurrency value(s) x ${#request_axis[@]} request-concurrency value(s) x ${#link_profiles[@]} link profile(s) x ${#labels[@]} build(s) x $REPEATS repeat(s) = $total measured run(s), plus up to $canary_total canary run(s)"
 
+# A prepopulated scenario deploys its tree twice per cell, and only the second
+# one is measured. Worth saying before the hours start rather than after.
+prepopulated=()
+for scenario in "${scenarios[@]}"; do
+  read -r _ prepopulate _ <<<"$(scenario_shape "$scenario")"
+  if ((prepopulate)); then
+    prepopulated+=("$scenario")
+  fi
+done
+if ((${#prepopulated[@]} > 0)); then
+  echo "matrix: ${prepopulated[*]} are redeploy scenarios; each of their cells runs an unmeasured full deploy first, so those cells cost roughly twice their measured time"
+fi
+
 # The canary payload has to exist even when its scenario is not swept.
 dataset_scenarios=("${scenarios[@]}")
 if [[ " ${scenarios[*]} " != *" $CANARY_SCENARIO "* ]]; then
@@ -145,6 +164,10 @@ generate_dataset "${dataset_scenarios[@]}"
 # The remote path is per (build, scenario) rather than per cell: every run is
 # preceded by an unmeasured clean anyway, so a path per cell would only leave
 # more empty directories behind on the server.
+#
+# What is measured is the scenario's mode, not always overlay, and a
+# prepopulated scenario gets an unmeasured full deploy plus a small local change
+# in between (issue #184, phase 3). Both come from scenario_shape.
 measure_cell() {
   local label=$1 binary=$2 ref=$3 scenario=$4 conns=$5 conc=$6 request=$7 repeat=$8
   local remote="$REMOTE_BASE/matrix/$label/$scenario"
@@ -152,12 +175,21 @@ measure_cell() {
   slug=$(link_profile_slug "$link_profile")
   local stem="$LOG_DIR/$slug-$label-$scenario-c$conns-w$conc-r${request:-default}-$repeat"
   local code=0
+  local mode prepopulate
+  read -r mode prepopulate _ <<<"$(scenario_shape "$scenario")"
 
   local advanced="connections: $conns
 concurrency: $conc"
   if [[ -n "$request" ]]; then
     advanced="$advanced
 request_concurrency: $request"
+  fi
+  # Kept off the pre-clean: skip_unchanged applies to overlay only, and a clean
+  # deployment carrying it just logs a warning about being ignored.
+  local deploy_advanced=$advanced
+  if ((prepopulate)) && [[ "$mode" == overlay ]]; then
+    deploy_advanced="$advanced
+skip_unchanged: true"
   fi
 
   if ! METRICS_FILE='' run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean \
@@ -166,8 +198,20 @@ request_concurrency: $request"
     cat "$stem.clean.log"
   fi
 
+  # The deploy the measured run redeploys over. Unmeasured, with the cell's own
+  # settings: what is under test is the second run, and a base laid down at
+  # other settings would put a different remote tree under each cell.
+  if ((prepopulate)); then
+    if ! METRICS_FILE='' run_easysftp "$binary" "$DATASET_DIR/$scenario" "$remote" "$mode" \
+      "$stem.base.log" "$stem.base.out" "$deploy_advanced"; then
+      echo "::warning::base deploy of $label/$scenario c$conns/w$conc repeat $repeat failed"
+      cat "$stem.base.log"
+    fi
+    scenario_mutate "$DATASET_DIR/$scenario" "$SCENARIO_CHANGED_FILES"
+  fi
+
   METRICS_FILE="$stem.metrics.json" \
-    run_easysftp "$binary" "$DATASET_DIR/$scenario" "$remote" overlay "$stem.log" "$stem.out" "$advanced" || code=$?
+    run_easysftp "$binary" "$DATASET_DIR/$scenario" "$remote" "$mode" "$stem.log" "$stem.out" "$deploy_advanced" || code=$?
   if ((code != 0)); then
     # Into the job log, which masks secrets. Never into the artifact.
     echo "::warning::$label/$scenario c$conns/w$conc repeat $repeat exited $code"
@@ -368,7 +412,7 @@ jq -s "
   | sort_by([.link_profile, .scenario, .label, .connections, .concurrency, .request_concurrency])
 " "$runs_file" >"$cells_file"
 
-settings="matrix sweep; every other advanced.* setting stays at easySFTP's defaults (retries 2, timeout 30s, mode overlay)"
+settings="matrix sweep; every other advanced.* setting stays at easySFTP's defaults (retries 2, timeout 30s). The mode belongs to the scenario, see scenarios below: a redeploy scenario is deployed once unmeasured and then measured over itself with $SCENARIO_CHANGED_FILES file(s) changed"
 if [[ -n "$MATRIX_LINK_PROFILES" ]]; then
   settings="$settings; swept over the link profiles ${link_profiles[*]}"
 fi
@@ -500,6 +544,19 @@ jq -r '
   echo "| request_concurrency | ${MATRIX_REQUEST_CONCURRENCY:-easySFTP default} |"
   echo "| Link profiles | ${MATRIX_LINK_PROFILES:-the real line} |"
   echo "| Scenarios | ${scenarios[*]} |"
+  echo
+  # What each scenario is, next to the numbers: "sync" and "redeploy" are a
+  # deploy shape and not only a payload, and a MiB/s of theirs is over the few
+  # changed files rather than over the tree.
+  echo "| Scenario | Mode | Payload |"
+  echo "|---|---|---|"
+  for scenario in "${scenarios[@]}"; do
+    read -r mode prepopulate _ <<<"$(scenario_shape "$scenario")"
+    if ((prepopulate)); then
+      mode="$mode, redeployed"
+    fi
+    echo "| \`$scenario\` | $mode | $(scenario_description "$scenario") |"
+  done
   echo
   link_markdown "$OUT_DIR/matrix.json"
   echo "Each grid below is median wall-clock milliseconds: rows are \`advanced.connections\`, columns are \`advanced.concurrency\`. Lower is better. \`connections > concurrency\` is measured, not skipped; easySFTP caps the pool at the concurrency (a connection no worker picks is a handshake for nothing), so those cells are expected to flatten out rather than improve."

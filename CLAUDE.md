@@ -176,6 +176,11 @@ granularity is a separate, later decision; don't build it speculatively.
 `advanced.concurrency`, both on top of the shared `scripts/benchmark-lib.sh`
 (payload generation, running a build, reading its outputs, the jq statistics)
 and `scripts/benchmark-link.sh` (the probed link profile and `tc` shaping).
+A scenario there carries a *shape* as well as a payload (`scenario_shape`: mode,
+whether the measured run redeploys over an unmeasured one, flat or deep
+layout). The deploy-shape scenarios (`redeploy`, `sync`, `deep`, `bulk`,
+`calib-*`) are matrix-only: `benchmark.sh`'s set is fixed, because adding to it
+makes every stored release result incomparable.
 `scripts/benchmark-store.sh` files a result under `benchmarks/`;
 `benchmarks/README.md` documents the layout and the JSON schema and is the page
 to keep in sync when any of those change. Read `benchmarks/index.json` before

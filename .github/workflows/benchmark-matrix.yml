@@ -54,7 +54,7 @@ on:
         default: ""
         type: string
       scenarios:
-        description: "Payloads to sweep: any of small, mixed, large, single."
+        description: "Scenarios to sweep: small, mixed, large, single, plus the deploy shapes redeploy, sync, deep, bulk and the calibration family calib-<count>x<size> (for example calib-100x64k). redeploy and sync deploy their tree twice per cell, only the second one measured."
         required: false
         default: "small large single"
         type: string

@@ -21,12 +21,24 @@
 # "single" exists for the matrix benchmark: one large file cannot be spread
 # over connections at all, which makes it the control against which a
 # connections/concurrency curve is read.
+#
+# The scenarios below "single" are issue #184, phase 3: every result before them
+# was a full upload into an empty target in mode overlay, which is the rarest
+# real deploy. They cover the redeploy, the sync mode, a deep tree, a file count
+# high enough for the per-run fixed costs to fall away, and a calibration family
+# that is uniform by construction. See scenario_shape for how a scenario is run,
+# which for these is as much of the measurement as the payload is.
 scenario_spec() {
   case $1 in
   small) echo '300:4' ;;               # per-file round-trip overhead dominates
   mixed) echo '40:16 12:256 4:2048' ;; # roughly a built website
   large) echo '2:16384' ;;             # raw transfer throughput
   single) echo '1:32768' ;;            # one 32 MiB file, no parallelism to find
+  redeploy) echo '500:4' ;;            # the CI case: almost nothing changed
+  sync) echo '500:4' ;;                # the same payload, through mode sync
+  deep) echo '400:4' ;;                # node_modules-shaped, see scenario_shape
+  bulk) echo '2000:4' ;;               # per-file cost past the fixed costs
+  calib-*) calib_spec "$1" ;;
   *)
     echo "::error::unknown scenario $1" >&2
     return 1
@@ -34,15 +46,77 @@ scenario_spec() {
   esac
 }
 
+# calib_spec <name>: the calibration family, "calib-<count>x<size>" with the
+# size as <n>k or <n>m, e.g. calib-100x64k. One size per scenario, so
+# "t_file = r * RTT + size / B" can be fitted against it; "mixed" mixes three
+# sizes and structurally cannot give that (issue #184, phase 3).
+calib_spec() {
+  local rest=${1#calib-} count size
+  count=${rest%%x*}
+  size=${rest#*x}
+  if [[ "$rest" != *x* || ! "$count" =~ ^[1-9][0-9]*$ || ! "$size" =~ ^[1-9][0-9]*[km]$ ]]; then
+    echo "::error::calibration scenario '$1' must look like calib-<count>x<size>, size in k or m (for example calib-100x64k)" >&2
+    return 1
+  fi
+  case $size in
+  *k) echo "$count:${size%k}" ;;
+  *m) echo "$count:$((${size%m} * 1024))" ;;
+  esac
+}
+
 scenario_description() {
+  local spec
   case $1 in
   small) echo '300 files x 4 KiB' ;;
   mixed) echo '40 x 16 KiB + 12 x 256 KiB + 4 x 2 MiB' ;;
   large) echo '2 files x 16 MiB' ;;
   single) echo '1 file x 32 MiB' ;;
+  redeploy) echo '500 x 4 KiB, redeployed over itself with 3 files changed, overlay plus advanced.skip_unchanged' ;;
+  sync) echo '500 x 4 KiB, redeployed over itself with 3 files changed, mode sync' ;;
+  deep) echo '400 x 4 KiB in a tree 7 directories deep, 1 to 3 files per directory' ;;
+  bulk) echo '2000 files x 4 KiB' ;;
+  calib-*)
+    spec=$(calib_spec "$1") || {
+      echo unknown
+      return
+    }
+    echo "${spec%%:*} files x ${spec##*:} KiB, uniform (calibration)"
+    ;;
   *) echo 'unknown' ;;
   esac
 }
+
+# scenario_shape <name>: "<mode> <prepopulate> <layout>", the three things that
+# make a scenario a *deploy* rather than a payload. Everything not listed keeps
+# the shape every stored result was measured with, so the existing scenarios are
+# untouched by this table existing.
+#
+#   mode         the easySFTP mode the measured run uses
+#   prepopulate  1: the measured run is preceded by an unmeasured full deploy of
+#                the same tree, of which scenario_mutate then changes a few
+#                files. That is what makes remote_scan, hash, manifest_read /
+#                manifest_write and the skip path measurable at all; without it
+#                every one of them runs against an empty target
+#   layout       flat (8 sibling directories) or deep (7 levels, few files each)
+#
+# A prepopulated overlay scenario is measured with advanced.skip_unchanged on:
+# an overlay redeploy without it re-uploads everything, which is the fresh
+# upload the other scenarios already measure.
+scenario_shape() {
+  case $1 in
+  redeploy) echo 'overlay 1 flat' ;;
+  sync) echo 'sync 1 flat' ;;
+  deep) echo 'overlay 0 deep' ;;
+  *) echo 'overlay 0 flat' ;;
+  esac
+}
+
+# SCENARIO_CHANGED_FILES: how many files scenario_mutate changes between the
+# unmeasured deploy and the measured one. Small on purpose: "500 files, 3
+# changed" is the CI case, and a larger number would measure the upload again
+# instead of the scan.
+# shellcheck disable=SC2034  # used by the scripts that source this file
+SCENARIO_CHANGED_FILES=3
 
 require_env() {
   local name missing=0
@@ -100,7 +174,7 @@ check_log_dir() {
 # generate_dataset <scenario>...: writes each scenario's payload under
 # DATASET_DIR, plus an empty directory used for the pre-clean and cleanup runs.
 generate_dataset() {
-  local scenario dir spec count size index sub
+  local scenario dir spec count size index sub layout level rest planned
   local -a specs
   mkdir -p "$DATASET_DIR/empty"
   for scenario in "$@"; do
@@ -108,13 +182,39 @@ generate_dataset() {
     rm -rf "$dir"
     index=0
     read -r -a specs <<<"$(scenario_spec "$scenario")"
+    read -r _ _ layout <<<"$(scenario_shape "$scenario")"
+    # Before writing, not after: the calibration family takes a count and a size
+    # from whoever typed it, and "calib-1000x16m" is 16 GiB of local disk plus
+    # the hours to upload it. Said early, and not refused, because a deliberate
+    # large run is a legitimate thing to ask this for.
+    planned=0
+    for spec in "${specs[@]}"; do
+      planned=$((planned + ${spec%%:*} * ${spec##*:}))
+    done
+    echo "dataset $scenario: generating $((planned / 1024)) MiB"
+    if ((planned > 2 * 1024 * 1024)); then
+      echo "::warning::the $scenario payload is $((planned / 1024 / 1024)) GiB; that is local disk on the runner and upload time in every cell that uses it" >&2
+    fi
     for spec in "${specs[@]}"; do
       count=${spec%%:*}
       size=${spec##*:}
       while ((count-- > 0)); do
-        # Spread over subdirectories so remote directory creation is part of
-        # the measurement, as it is in a real site upload.
-        sub="$dir/part$((index % 8))"
+        if [[ "$layout" == deep ]]; then
+          # One directory per 7-bit pattern of the index: 128 leaf directories
+          # holding a handful of files each, which is the node_modules shape.
+          # It separates create_dirs and sftp_mkdirall cost from transfer cost,
+          # and at this RTT that is a large share of a real deploy.
+          sub="$dir"
+          rest=$index
+          for ((level = 0; level < 7; level++)); do
+            sub="$sub/d$((rest % 2))"
+            rest=$((rest / 2))
+          done
+        else
+          # Spread over subdirectories so remote directory creation is part of
+          # the measurement, as it is in a real site upload.
+          sub="$dir/part$((index % 8))"
+        fi
         mkdir -p "$sub"
         head -c "$((size * 1024))" /dev/urandom >"$sub/file$index.bin"
         index=$((index + 1))
@@ -122,6 +222,23 @@ generate_dataset() {
     done
     echo "dataset $scenario: $index file(s), $(du -sh "$dir" | cut -f1)"
   done
+}
+
+# scenario_mutate <dir> <count>: changes the first <count> files of a payload,
+# in sorted order, so a prepopulated scenario's measured run has something to
+# deploy. Called between the unmeasured deploy and the measured one.
+#
+# The change appends rather than rewriting in place, because it has to be
+# visible to both detectors: the sync manifest compares content hashes, but
+# advanced.skip_unchanged compares the remote *size* only (see uploadFiles in
+# internal/uploader/transfer.go), and a same-size rewrite would be skipped. The
+# files therefore grow by a few hundred bytes per repeat, which is deliberate
+# and negligible against the payload.
+scenario_mutate() {
+  local dir=$1 count=$2 file
+  while IFS= read -r file; do
+    head -c 512 /dev/urandom >>"$file"
+  done < <(find "$dir" -type f | sort | head -n "$count")
 }
 
 # run_easysftp <binary> <source> <remote> <mode> <log> <outputs-file> [advanced-yaml]
