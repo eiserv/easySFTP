@@ -215,7 +215,7 @@ else
   fail "the pool build should be faster than the baseline, got delta $pool_delta%"
 fi
 expect_equal 'the MAD of the repeats is reported' 3 \
-  "$(jq '[.results[] | select(.label == "candidate") | .mad_ms] | length' "$results")"
+  "$(jq '[.results[] | select(.label == "candidate") | .mad_ms | select(. != null)] | length' "$results")"
 
 expect_equal 'the CSV has a header plus one row per build and scenario' 10 \
   "$(line_count "$OUT_DIR/results.csv")"
@@ -337,6 +337,35 @@ expect_equal 'cells carry CPU and RSS' 16 \
 expect_equal 'the scaling view is grouped per scenario and build' 4 \
   "$(jq '.scaling | length' "$matrix")"
 
+# A matrix run has no runs[], so a cell is the finest grain there is: the phase
+# and round-trip detail has to survive into it (issue #184, phase 2).
+expect_equal 'every cell keeps its phases' 16 \
+  "$(jq '[.cells[] | select((.phases | length) > 0)] | length' "$matrix")"
+expect_equal 'a cell keeps the phases that are not the upload' 'connect create_dirs local_scan upload' \
+  "$(jq -r '[.cells[0].phases[].name] | sort | join(" ")' "$matrix")"
+expect_equal 'every cell keeps its round-trip percentiles' 16 \
+  "$(jq '[.cells[] | select(([.operations[] | select(.name == "sftp_open") | .p90_ms] | first) != null)] | length' "$matrix")"
+expect_nonempty 'upload_phase_ms is still there for anything reading it' \
+  "$(jq -r '.cells[0].upload_phase_ms' "$matrix")"
+
+# A single repeat has no measured spread; 0 there would read as precision.
+expect_equal 'a one-repeat cell reports no MAD' 16 \
+  "$(jq '[.cells[] | select(.mad_ms == null)] | length' "$matrix")"
+
+# Start, middle and end of the grid: 2 connections x 2 concurrency x 2 scenarios
+# x 2 builds is 16 cells, so the middle canary has a middle to sit in.
+expect_equal 'the canary is measured three times' 3 \
+  "$(jq '.canary | length' "$matrix")"
+expect_equal 'the canary says when each run happened' 'start mid end' \
+  "$(jq -r '[.canary[].at] | join(" ")' "$matrix")"
+expect_equal 'the canary is one fixed cell' 'small/1/4' \
+  "$(jq -r '[.canary[] | "\(.scenario)/\(.connections)/\(.concurrency)"] | unique | join(" ")' "$matrix")"
+if grep -qF '### Canary' "$OUT_DIR/matrix.md"; then
+  pass "matrix.md reports the canary"
+else
+  fail "matrix.md is missing its canary section"
+fi
+
 # The heatmap axes must be explicit: a plot should not have to infer the grid
 # from the cells it happens to find.
 expect_equal 'the axes are declared' '1 2' "$(jq -r '.axes.connections | join(" ")' "$matrix")"
@@ -388,6 +417,11 @@ expect_equal 'the comparison pairs cells of the same profile' 2 \
   "$(jq '[.comparison[] | select(.link_profile != null)] | length' "$matrix_link")"
 expect_equal 'each profile got its own pair of probes' 4 \
   "$(jq '.link.probes | length' "$matrix_link")"
+# The canary axis multiplies with the profiles: drift inside one profile is what
+# it detects, and a canary of another profile is not a comparison for it.
+expect_equal 'each profile gets its own canary triple' \
+  'baseline/start baseline/mid baseline/end +150ms/start +150ms/mid +150ms/end' \
+  "$(jq -r '[.canary[] | "\(.link_profile)/\(.at)"] | join(" ")' "$matrix_link")"
 expect_equal 'the matrix CSV carries the link columns' \
   '"link_profile","rtt_p50_ms","control_single_mib_per_s"' \
   "$(head -1 "$OUT_DIR/matrix.csv" | cut -d, -f4-6)"

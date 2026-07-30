@@ -35,6 +35,12 @@
 # scenarios and two builds is 120 measured runs plus 120 unmeasured pre-cleans.
 # The script prints its own run count before it starts; shrink the axes rather
 # than letting a job time out halfway.
+#
+# On top of the grid, three canary runs per link profile (issue #184, phase 2):
+# one fixed cell measured at the start, the middle and the end of that profile's
+# grid. A sweep takes hours against a server that is fixed but not constant, and
+# three values that disagree are the only signal that the whole run is not a
+# comparison basis.
 
 set -euo pipefail
 
@@ -57,6 +63,13 @@ MATRIX_CONCURRENCY=${MATRIX_CONCURRENCY:-"1 2 4 8 16"}
 MATRIX_REQUEST_CONCURRENCY=${MATRIX_REQUEST_CONCURRENCY:-}
 MATRIX_SCENARIOS=${MATRIX_SCENARIOS:-"small large single"}
 MATRIX_LINK_PROFILES=${MATRIX_LINK_PROFILES:-}
+
+# The canary cell. Deliberately constants and not environment: three canaries of
+# one run are compared against each other, and two runs' canaries against each
+# other, which only works while the cell stays the same everywhere.
+CANARY_SCENARIO=small
+CANARY_CONNECTIONS=1
+CANARY_CONCURRENCY=4
 
 read -r -a connections_axis <<<"$MATRIX_CONNECTIONS"
 read -r -a concurrency_axis <<<"$MATRIX_CONCURRENCY"
@@ -93,8 +106,10 @@ check_log_dir
 
 runs_file="$LOG_DIR/matrix-runs.jsonl"
 probes_file="$LOG_DIR/link-probes.jsonl"
+canary_file="$LOG_DIR/canary.jsonl"
 : >"$runs_file"
 : >"$probes_file"
+: >"$canary_file"
 
 # The profile every cell below is measured on; set by the profile loop.
 link_profile=baseline
@@ -112,10 +127,18 @@ if [[ -n "$BASELINE_BIN" ]]; then
   reference_label=baseline
 fi
 
-total=$((${#scenarios[@]} * ${#connections_axis[@]} * ${#concurrency_axis[@]} * ${#request_axis[@]} * ${#labels[@]} * ${#link_profiles[@]} * REPEATS))
-echo "matrix: ${#scenarios[@]} scenario(s) x ${#connections_axis[@]} connection value(s) x ${#concurrency_axis[@]} concurrency value(s) x ${#request_axis[@]} request-concurrency value(s) x ${#link_profiles[@]} link profile(s) x ${#labels[@]} build(s) x $REPEATS repeat(s) = $total measured run(s)"
+# Cells of one profile's grid, which is also what the middle canary counts to.
+cells_per_profile=$((${#scenarios[@]} * ${#connections_axis[@]} * ${#concurrency_axis[@]} * ${#request_axis[@]} * ${#labels[@]} * REPEATS))
+total=$((cells_per_profile * ${#link_profiles[@]}))
+canary_total=$((3 * ${#link_profiles[@]}))
+echo "matrix: ${#scenarios[@]} scenario(s) x ${#connections_axis[@]} connection value(s) x ${#concurrency_axis[@]} concurrency value(s) x ${#request_axis[@]} request-concurrency value(s) x ${#link_profiles[@]} link profile(s) x ${#labels[@]} build(s) x $REPEATS repeat(s) = $total measured run(s), plus up to $canary_total canary run(s)"
 
-generate_dataset "${scenarios[@]}"
+# The canary payload has to exist even when its scenario is not swept.
+dataset_scenarios=("${scenarios[@]}")
+if [[ " ${scenarios[*]} " != *" $CANARY_SCENARIO "* ]]; then
+  dataset_scenarios+=("$CANARY_SCENARIO")
+fi
+generate_dataset "${dataset_scenarios[@]}"
 
 # measure_cell <label> <binary> <ref> <scenario> <connections> <concurrency> <request> <repeat>
 #
@@ -172,6 +195,45 @@ request_concurrency: $request"
   echo "$link_profile $label/$scenario connections=$conns concurrency=$conc request=${request:-default} repeat $repeat: $(step_number "$stem.out" duration-ms) ms, exit $code"
 }
 
+# measure_canary <at>: the fixed cell, always the candidate build, run three
+# times per profile ("start", "mid", "end"). Its numbers are kept apart from
+# cells[] on purpose: they measure the server's steadiness, not a coordinate of
+# the grid, and mixing them into an aggregate would hide exactly what they are
+# there to show.
+measure_canary() {
+  local at=$1 slug stem code=0
+  slug=$(link_profile_slug "$link_profile")
+  stem="$LOG_DIR/canary-$slug-$at"
+  local remote="$REMOTE_BASE/matrix/canary"
+  local advanced="connections: $CANARY_CONNECTIONS
+concurrency: $CANARY_CONCURRENCY"
+
+  if ! METRICS_FILE='' run_easysftp "$CANDIDATE_BIN" "$DATASET_DIR/empty" "$remote" clean \
+    "$stem.clean.log" "$stem.clean.out" "$advanced"; then
+    echo "::warning::pre-clean of the $at canary on $link_profile failed"
+  fi
+
+  METRICS_FILE='' run_easysftp "$CANDIDATE_BIN" "$DATASET_DIR/$CANARY_SCENARIO" "$remote" \
+    overlay "$stem.log" "$stem.out" "$advanced" || code=$?
+  if ((code != 0)); then
+    echo "::warning::the $at canary on $link_profile exited $code"
+  fi
+
+  jq -nc \
+    --arg link_profile "$link_profile" \
+    --arg at "$at" \
+    --arg scenario "$CANARY_SCENARIO" \
+    --argjson connections "$CANARY_CONNECTIONS" \
+    --argjson concurrency "$CANARY_CONCURRENCY" \
+    --argjson exit_code "$code" \
+    --argjson duration_ms "$(step_number "$stem.out" duration-ms)" \
+    --argjson files "$(step_number "$stem.out" files-uploaded)" \
+    --argjson bytes "$(step_number "$stem.out" bytes-uploaded)" \
+    '$ARGS.named' >>"$canary_file"
+
+  echo "$link_profile canary $at: $(step_number "$stem.out" duration-ms) ms, exit $code"
+}
+
 # Shaping is only probed for when a profile actually asks for it, so a sweep of
 # the real line needs neither tc nor NET_ADMIN.
 if link_shape_needed "${link_profiles[@]}"; then
@@ -188,6 +250,11 @@ fi
 for link_profile in "${link_profiles[@]}"; do
   link_shape_apply "$link_profile" || true
   link_probe "$link_profile" start "$probes_file"
+  measure_canary start
+  # Counted in measured runs rather than in wall clock, so the middle canary
+  # sits in the middle of the work and not of an estimate. A grid of one cell
+  # has no middle, and then there are two canaries instead of three.
+  runs_done=0
   for scenario in "${scenarios[@]}"; do
     for ((repeat = 1; repeat <= REPEATS; repeat++)); do
       for conns in "${connections_axis[@]}"; do
@@ -198,12 +265,17 @@ for link_profile in "${link_profiles[@]}"; do
             for i in "${!labels[@]}"; do
               measure_cell "${labels[$i]}" "${binaries[$i]}" "${refs[$i]}" \
                 "$scenario" "$conns" "$conc" "$request" "$repeat"
+              runs_done=$((runs_done + 1))
+              if ((runs_done == cells_per_profile / 2)); then
+                measure_canary mid
+              fi
             done
           done
         done
       done
     done
   done
+  measure_canary end
   link_probe "$link_profile" end "$probes_file"
 done
 
@@ -221,6 +293,9 @@ for scenario in "${scenarios[@]}"; do
       echo "::warning::cleanup of ${labels[$i]}/$scenario failed"
   done
 done
+METRICS_FILE='' run_easysftp "$CANDIDATE_BIN" "$DATASET_DIR/empty" \
+  "$REMOTE_BASE/matrix/canary" clean "$LOG_DIR/cleanup-canary.log" "$LOG_DIR/cleanup-canary.out" "" ||
+  echo "::warning::cleanup of the canary directory failed"
 # A probe that was killed mid-write leaves its payload behind, and the next
 # run's remote scan would count it.
 if [[ -n "${LINKPROBE_BIN:-}" ]]; then
@@ -266,7 +341,25 @@ jq -s "
         connections_refused: (\$m | map(.counters.connections_refused // 0) | add),
         reconnects: (\$m | map(.counters.reconnects // 0) | add),
         upload_phase_ms: (\$m | map(.phases // []) | add // []
-          | map(select(.name == \"upload\") | .wall_ms) | median)
+          | map(select(.name == \"upload\") | .wall_ms) | median),
+        phases: (\$m | map(.phases // []) | add // []
+          | group_by(.name)
+          | map({name: .[0].name, median_ms: (map(.wall_ms) | median)})
+          | sort_by(-.median_ms)),
+        operations: (\$m | map(.operations // []) | add // []
+          | group_by(.name)
+          | map({
+              name: .[0].name,
+              count: (map(.count) | median),
+              median_total_ms: (map(.total_ms) | median),
+              avg_ms: (map(.avg_ms) | median),
+              p50_ms: (map(.p50_ms) | median),
+              p90_ms: (map(.p90_ms) | median),
+              p99_ms: (map(.p99_ms) | median),
+              max_ms: (map(.max_ms) | median),
+              errors: (map(.errors) | add)
+            })
+          | sort_by(-.median_total_ms))
       })
   | map(. + {
       mib_per_s: (if .median_ms > 0 then ((.bytes / 1048576) / (.median_ms / 1000) | round2) else 0 end),
@@ -288,8 +381,14 @@ done | jq -s 'from_entries')
 # infer it from the cells that happen to be present, "cells" is one row per
 # combination, "scaling" is the same data pre-grouped into the curve a reader
 # usually wants (per scenario and build, ordered by connections then
-# concurrency), and "comparison" pairs each candidate cell with the reference
-# build's cell at the same coordinates.
+# concurrency), "comparison" pairs each candidate cell with the reference
+# build's cell at the same coordinates, and "canary" holds the fixed cell's
+# three measurements per profile.
+#
+# A matrix run has no "runs[]" the way a standard result does, so a cell is the
+# finest grain there is. That is why it carries its own phases[] and
+# operations[] and not just upload_phase_ms: those are hours of measurement that
+# used to be aggregated and then dropped (issue #184, phase 2).
 jq -n \
   --slurpfile cells "$cells_file" \
   --arg candidate_ref "$CANDIDATE_REF" \
@@ -299,6 +398,7 @@ jq -n \
   --arg runner "${RUNNER_ENVIRONMENT:-local}, $(uname -sr), $(nproc) cpu" \
   --argjson environment "$(bench_environment)" \
   --argjson link "$(link_json "$probes_file")" \
+  --argjson canary "$(jq -s '.' "$canary_file")" \
   --arg settings "$settings" \
   --argjson scenarios "$scenario_docs" \
   --argjson link_axis "$(printf '%s\n' "${link_profiles[@]}" | jq -Rs 'split("\n") | map(select(. != ""))')" \
@@ -318,6 +418,7 @@ jq -n \
      runner: \$runner,
      environment: \$environment,
      link: \$link,
+     canary: \$canary,
      settings: \$settings,
      scenarios: \$scenarios,
      note: \"one cell per (link_profile, scenario, build, connections, concurrency, request_concurrency); median_ms is wall clock over the cell's repeats\",
@@ -464,13 +565,29 @@ jq -r '
       "$OUT_DIR/matrix.json"
   fi
 
+  echo
+  echo "### Canary"
+  echo
+  echo "One fixed cell (\`$CANARY_SCENARIO\`, connections $CANARY_CONNECTIONS, concurrency $CANARY_CONCURRENCY, candidate build) measured at the start, the middle and the end of each profile's grid. Spread is the gap between the fastest and the slowest of them. A spread larger than the deltas below it means the server or the line moved during the sweep, and the whole run is a poor comparison basis."
+  echo
+  echo "| Profile | Start | Middle | End | Spread |"
+  echo "|---|---|---|---|---|"
+  jq -r '
+    def pick($a): [.[] | select(.at == $a) | .duration_ms] | first;
+    def ms: if . == null then "-" else "\(.) ms" end;
+    .canary | group_by(.link_profile)[]
+    | (map(.duration_ms)) as $d
+    | "| \(.[0].link_profile) | \(pick("start") | ms) | \(pick("mid") | ms) | \(pick("end") | ms) "
+      + "| \(if ($d | min) > 0 then ((($d | max) - ($d | min)) / ($d | min) * 100 | round | tostring) + "%" else "-" end) |"
+  ' "$OUT_DIR/matrix.json"
+
   refused=$(jq '[.cells[].connections_refused] | add // 0' "$OUT_DIR/matrix.json")
   if [[ "$refused" != 0 ]]; then
     echo
     echo "**$refused connection(s) were refused by the server** across the sweep and fell back to the run's first connection. Those cells had fewer connections than configured, which is the server's limit showing up in the data, not easySFTP's."
   fi
   echo
-  echo "Raw data: \`matrix.json\` (every cell, plus the pre-grouped \`scaling\` view), \`matrix.csv\` (one flat row per cell). Data only: nothing here fails a build."
+  echo "Raw data: \`matrix.json\` (every cell with its own phases and round-trip percentiles, plus the pre-grouped \`scaling\` view and the \`canary\` runs), \`matrix.csv\` (one flat row per cell). Data only: nothing here fails a build."
 } >"$OUT_DIR/matrix.md"
 
 cat "$OUT_DIR/matrix.md"

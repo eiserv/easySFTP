@@ -107,11 +107,37 @@ same thing in version 2.
 | `axes` | the grid, declared: `link_profiles`, `connections`, `concurrency`, `request_concurrency` |
 | `link` | the same object a standard run carries, one probe pair per swept profile |
 | `cells[]` | one row per (link profile, scenario, build, connections, concurrency, request_concurrency) with duration, throughput, files/s, network bytes, CPU, peak RSS, connections opened/used/refused, reconnects, retries, errors |
+| `cells[].phases[]` | wall clock per phase, the same list a standard run's `results[].phases[]` carries |
+| `cells[].operations[]` | per round-trip: count, cumulative total, average, p50/p90/p99, max, errors |
 | `scaling[]` | the same cells pre-grouped per link profile, scenario and build, ordered along the axes, plus the `best` cell |
 | `comparison[]` | candidate against baseline at identical coordinates, **including the same link profile** |
+| `canary[]` | the fixed cell, measured at the `start`, the `mid` and the `end` of each profile's grid |
+
+A matrix run has no `runs[]`: a cell is its finest grain, which is why the cell
+itself carries the phase and round-trip detail rather than only the
+`upload_phase_ms` it used to keep (issue #184, phase 2). Results stored before
+that change have `upload_phase_ms` alone.
 
 The CSV next to it is the same `cells[]` flattened, one row per cell, which is
-what a heatmap or a scaling plot reads.
+what a heatmap or a scaling plot reads. The nested `phases[]` and
+`operations[]` stay out of it and live in the JSON only.
+
+### The canary
+
+A sweep runs for hours against a server that is fixed but not constant, and
+nothing in a grid says whether the machine that measured the last cell was still
+the machine that measured the first. So one fixed cell (`small`, `connections: 1`,
+`concurrency: 4`, candidate build) is measured three times per link profile: at
+the start of that profile's grid, in the middle of it, and at the end. All three
+are stored, and `matrix.md` reports them with the spread between the fastest and
+the slowest.
+
+Read it before reading the grid: when the spread is larger than the deltas in
+the grid, the run measured drift and not settings. The cell is a constant on
+purpose, so canaries are comparable both within one run and across runs.
+
+The middle canary needs a middle to sit in; a grid of a single measured run per
+profile only gets a start and an end.
 
 ### The link profile
 
@@ -254,6 +280,12 @@ shared host, moves it far less than it moves a standard deviation. A candidate
 whose delta is smaller than the baseline's MAD has not been shown to be
 faster or slower, and `comparison[].within_noise` says so directly.
 
+A single repeat has no measured spread, so `mad_ms` is then `null` (empty in the
+CSV) rather than 0, which would read as perfect precision. That is the normal
+case for a matrix run, whose `REPEATS` default is 1 because the grid is already
+hours: its deltas have no noise floor to compare against, and the canary above is
+what stands in for one. Results stored before this change carry 0 there.
+
 Before reading a delta at all, check the run's single-stream control against the
 scenario's own MiB/s. A scenario sitting at the control was limited by the path,
 not by the code, and no delta measured there means anything. Every
@@ -310,7 +342,7 @@ Candidate and baseline are measured cell by cell, back to back, for the same
 reason the standard benchmark interleaves its repeats. The default grid is over a
 hundred measured runs and takes hours, and each extra link profile multiplies
 that; shrink the axes for a quick look. The script prints its run count before it
-starts.
+starts, canary runs included.
 
 ### About `connections` above `concurrency`
 

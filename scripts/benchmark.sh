@@ -426,7 +426,7 @@ jq -r '
         # bare "as" over an empty generator would drop its whole row.
         | ([.comparison[] | select(.scenario == $s and .label == $l and .link_profile == $p) | .delta_percent] | first) as $delta
         | "| \($s) | \($l) | \($p) | \($row.files) | \((($row.bytes / 1048576) * 10 | round / 10)) MiB "
-          + "| \($row.median_ms) ms | \($row.min_ms) ms | \($row.max_ms) ms | \($row.mad_ms) ms "
+          + "| \($row.median_ms) ms | \($row.min_ms) ms | \($row.max_ms) ms | \(if $row.mad_ms == null then "-" else "\($row.mad_ms) ms" end) "
           + "| \($row.mib_per_s) | \($row.files_per_s) | \($row.retries) | \($row.errors) | \($row.failed_runs) "
           + "| \(if $delta == null then "-" else (if $delta > 0 then "+" else "" end) + ($delta | tostring) + "%" end) |"
         ' "$OUT_DIR/results.json"
