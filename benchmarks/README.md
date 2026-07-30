@@ -87,6 +87,7 @@ Markdown:
 | `results[].operations[]` | per round-trip: count, cumulative total, average, p50/p90/p99, max, errors |
 | `results[].counters` | connections opened/used/refused, reconnects, retries, stalls, errors |
 | `comparison[]` | each build against the reference build: `delta_ms`, `delta_percent`, and `within_noise` (is the delta smaller than the reference's MAD?) |
+| `deletes[]` | the delete sweeps, one row per (build, scenario, link profile); see "The delete sweeps" below |
 | `runs[]` | every individual repeat, verbatim, including its own metrics document |
 
 **Phases are wall clock. Operations are not.** A phase adds up to roughly the
@@ -112,6 +113,7 @@ same thing in version 2.
 | `scaling[]` | the same cells pre-grouped per link profile, scenario and build, ordered along the axes, plus the `best` cell |
 | `comparison[]` | candidate against baseline at identical coordinates, **including the same link profile** |
 | `canary[]` | the fixed cell, measured at the `start`, the `mid` and the `end` of each profile's grid |
+| `deletes[]` | the delete sweeps, one row per cell coordinate; see "The delete sweeps" below |
 
 A matrix run has no `runs[]`: a cell is its finest grain, which is why the cell
 itself carries the phase and round-trip detail rather than only the
@@ -138,6 +140,40 @@ purpose, so canaries are comparable both within one run and across runs.
 
 The middle canary needs a middle to sit in; a grid of a single measured run per
 profile only gets a start and an end.
+
+### The delete sweeps
+
+Both scripts have always run a `clean` deployment of an empty directory before
+every measured run, so that each run starts from the same empty remote
+directory. That pre-clean *is* a pure delete sweep, and until issue #184 phase 4
+its numbers were thrown away. They are now kept, in a `deletes[]` block of their
+own: no additional run, no additional minute, and the only place deletions are
+measured at all.
+
+| Field | What it is |
+|---|---|
+| the coordinates | build, scenario and link profile; a matrix row adds `connections`, `concurrency` and `request_concurrency`, the same coordinates its cell has |
+| `sweeps`, `failed_sweeps` | how many sweeps the row aggregates, and how many of them exited non-zero |
+| `files_deleted` | how many entries the sweep found to delete |
+| `median_ms`, `min_ms`, `max_ms`, `mad_ms`, `durations_ms`, `deletes_per_s` | the same statistics an upload row carries |
+| `phases[]` | wall clock, `remote_scan` and `delete_sweep` |
+| `operations[]` | per round-trip, `sftp_remove` and `sftp_rmdir` with count, cumulative total, p50/p90/p99 and max |
+
+Read the round-trips against issue #157: a deletion is one round-trip per entry
+and nothing spreads them over the connection pool, so a matrix row's
+`sftp_remove` count and percentiles at different `connections` are what turns
+that from a plausible claim into a measured one.
+
+Two things kept deliberately separate:
+
+- **A sweep that found nothing is not counted.** The first pre-clean of a build
+  and scenario runs against an empty remote directory and measures the scan
+  alone; a median over that and a real sweep describes neither. A coordinate
+  left with no sweep at all has no row.
+- **Delete numbers never touch upload numbers.** They are aggregated from their
+  own metrics files into their own block; no `results[]` or `cells[]` row
+  contains a `delete_sweep` phase or an `sftp_remove` round-trip. The CSVs stay
+  upload-only too: `deletes[]` lives in the JSON.
 
 ### The deploy shapes
 

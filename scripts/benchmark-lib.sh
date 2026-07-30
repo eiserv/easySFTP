@@ -321,6 +321,26 @@ count_matches() {
   fi
 }
 
+# delete_json <stem> [exit-code]: the pre-clean of "<stem>.clean.*" as JSON.
+#
+# That pre-clean is a pure delete sweep: it wipes the populated tree the last
+# run left behind, and both scripts already run one before every measured run.
+# Its numbers used to be discarded (issue #184, phase 4); this reads them back
+# out, and the callers keep them in their own block so they can never reach an
+# upload aggregate.
+#
+# The caller adds the coordinates, e.g.
+#   jq -c --arg label "$l" '. + $ARGS.named' <<<"$(delete_json "$stem" "$code")"
+delete_json() {
+  local stem=$1
+  jq -nc \
+    --argjson exit_code "${2:-0}" \
+    --argjson duration_ms "$(step_number "$stem.clean.out" duration-ms)" \
+    --argjson files_deleted "$(step_number "$stem.clean.out" files-deleted)" \
+    --argjson metrics "$(metrics_json "$stem.clean.metrics.json")" \
+    '$ARGS.named'
+}
+
 # metrics_json <file>: the run's metrics document, or "null" when the run died
 # before writing one (or wrote something unreadable). Always prints valid JSON
 # so callers can pass it to "jq --argjson" unconditionally.
@@ -362,6 +382,54 @@ JQ_STATS='
   def round1: (. * 10 | round) / 10;
   def round2: (. * 100 | round) / 100;
   def pct(a; b): if (b // 0) == 0 then null else (((a - b) / b) * 100 | round2) end;
+'
+
+# JQ_DELETE aggregates one group of delete_json rows into the block both scripts
+# store under "deletes" (issue #184, phase 4). Prepend JQ_STATS with it.
+#
+# Sweeps that deleted nothing are dropped rather than averaged in: the first
+# pre-clean of a (build, scenario) runs against an empty remote directory and
+# measures the scan alone, and a median over that and a real sweep describes
+# neither. A group left with no sweep at all is dropped by the callers.
+#
+# Phases (remote_scan, delete_sweep) are wall clock; sftp_remove and sftp_rmdir
+# are per round-trip, which is the pair issue #157 is about.
+# SC2034: used by the scripts that source this file. SC2016: the "$s"/"$m" in
+# here are jq variables, so single quotes are exactly right.
+# shellcheck disable=SC2034,SC2016
+JQ_DELETE='
+  def delete_agg: map(select(.files_deleted > 0)) as $s
+    | ($s | map(select(.metrics != null) | .metrics)) as $m
+    | {
+        sweeps: ($s | length),
+        failed_sweeps: ($s | map(select(.exit_code != 0)) | length),
+        files_deleted: ($s | map(.files_deleted) | max // 0),
+        durations_ms: ($s | map(.duration_ms)),
+        median_ms: ($s | map(.duration_ms) | median),
+        min_ms: ($s | map(.duration_ms) | min // 0),
+        max_ms: ($s | map(.duration_ms) | max // 0),
+        mad_ms: ($s | map(.duration_ms) | mad),
+        phases: ($m | map(.phases // []) | add // []
+          | group_by(.name)
+          | map({name: .[0].name, median_ms: (map(.wall_ms) | median)})
+          | sort_by(-.median_ms)),
+        operations: ($m | map(.operations // []) | add // []
+          | group_by(.name)
+          | map({
+              name: .[0].name,
+              count: (map(.count) | median),
+              median_total_ms: (map(.total_ms) | median),
+              avg_ms: (map(.avg_ms) | median),
+              p50_ms: (map(.p50_ms) | median),
+              p90_ms: (map(.p90_ms) | median),
+              p99_ms: (map(.p99_ms) | median),
+              max_ms: (map(.max_ms) | median),
+              errors: (map(.errors) | add)
+            })
+          | sort_by(-.median_total_ms))
+      }
+    | . + {deletes_per_s:
+        (if .median_ms > 0 then (.files_deleted / (.median_ms / 1000) | round2) else 0 end)};
 '
 
 # bench_environment: the machine and toolchain a result was measured on, as

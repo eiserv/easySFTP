@@ -213,6 +213,14 @@ applied only behind the EXIT/INT/TERM trap in `benchmark-link.sh`, because a
 runner left shaped makes every later measurement on it quietly wrong. Shaping
 that is unavailable is recorded, never fatal.
 
+The `clean` deployment of an empty directory that runs before every measured run
+is instrumented too, into its own metrics file and its own `deletes[]` block
+(issue #184, phase 4): it is a pure delete sweep and the only measurement of
+deletions there is. Do not "simplify" it back to `METRICS_FILE=''`, and keep its
+numbers out of `results[]` / `cells[]`: an upload aggregate that grew a
+`delete_sweep` phase is a bug, and `scripts/test-benchmark.sh` asserts it did
+not.
+
 Instrumentation lives in `internal/metrics` and is off unless
 `EASYSFTP_METRICS_FILE` names a path. It is deliberately **not** an
 `action.yml` input, so none of the drift-check lists apply to it. When metrics

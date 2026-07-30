@@ -113,9 +113,11 @@ check_log_dir
 runs_file="$LOG_DIR/matrix-runs.jsonl"
 probes_file="$LOG_DIR/link-probes.jsonl"
 canary_file="$LOG_DIR/canary.jsonl"
+deletes_file="$LOG_DIR/deletes.jsonl"
 : >"$runs_file"
 : >"$probes_file"
 : >"$canary_file"
+: >"$deletes_file"
 
 # The profile every cell below is measured on; set by the profile loop.
 link_profile=baseline
@@ -192,11 +194,28 @@ request_concurrency: $request"
 skip_unchanged: true"
   fi
 
-  if ! METRICS_FILE='' run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean \
-    "$stem.clean.log" "$stem.clean.out" "$advanced"; then
-    echo "::warning::pre-clean of $label/$scenario c$conns/w$conc repeat $repeat failed"
+  # The pre-clean wipes what the previous cell of this (build, scenario) left
+  # behind, which makes it a pure delete sweep at this cell's own settings. It is
+  # instrumented into its own file and aggregated into "deletes" (issue #184,
+  # phase 4), never into the cell: no extra run, no extra minute, and the only
+  # measurement of deletions there is.
+  local clean_code=0
+  METRICS_FILE="$stem.clean.metrics.json" \
+    run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean \
+    "$stem.clean.log" "$stem.clean.out" "$advanced" || clean_code=$?
+  if ((clean_code != 0)); then
+    echo "::warning::pre-clean of $label/$scenario c$conns/w$conc repeat $repeat exited $clean_code"
     cat "$stem.clean.log"
   fi
+  jq -c \
+    --arg label "$label" \
+    --arg scenario "$scenario" \
+    --arg link_profile "$link_profile" \
+    --argjson connections "$conns" \
+    --argjson concurrency "$conc" \
+    --argjson request_concurrency "${request:-null}" \
+    --argjson repeat "$repeat" \
+    '. + $ARGS.named' <<<"$(delete_json "$stem" "$clean_code")" >>"$deletes_file"
 
   # The deploy the measured run redeploys over. Unmeasured, with the cell's own
   # settings: what is under test is the second run, and a base laid down at
@@ -412,6 +431,24 @@ jq -s "
   | sort_by([.link_profile, .scenario, .label, .connections, .concurrency, .request_concurrency])
 " "$runs_file" >"$cells_file"
 
+# The delete sweeps, one row per cell coordinate, sweeps that found an empty
+# directory dropped (the first cell of a build and scenario is one) and a
+# coordinate left with none dropped with them. Kept apart from cells[]: a delete
+# sweep and an upload at the same coordinates are two different measurements.
+deletes_agg_file="$LOG_DIR/deletes.json"
+jq -s "
+  $JQ_STATS
+  $JQ_DELETE
+  group_by([.link_profile, .label, .scenario, .connections, .concurrency, .request_concurrency])
+  | map({
+      scenario: .[0].scenario, label: .[0].label, link_profile: .[0].link_profile,
+      connections: .[0].connections, concurrency: .[0].concurrency,
+      request_concurrency: .[0].request_concurrency
+    } + delete_agg)
+  | map(select(.sweeps > 0))
+  | sort_by([.link_profile, .scenario, .label, .connections, .concurrency, .request_concurrency])
+" "$deletes_file" >"$deletes_agg_file"
+
 settings="matrix sweep; every other advanced.* setting stays at easySFTP's defaults (retries 2, timeout 30s). The mode belongs to the scenario, see scenarios below: a redeploy scenario is deployed once unmeasured and then measured over itself with $SCENARIO_CHANGED_FILES file(s) changed"
 if [[ -n "$MATRIX_LINK_PROFILES" ]]; then
   settings="$settings; swept over the link profiles ${link_profiles[*]}"
@@ -426,8 +463,9 @@ done | jq -s 'from_entries')
 # combination, "scaling" is the same data pre-grouped into the curve a reader
 # usually wants (per scenario and build, ordered by connections then
 # concurrency), "comparison" pairs each candidate cell with the reference
-# build's cell at the same coordinates, and "canary" holds the fixed cell's
-# three measurements per profile.
+# build's cell at the same coordinates, "canary" holds the fixed cell's three
+# measurements per profile, and "deletes" holds the pre-clean sweeps at the same
+# coordinates as the cells.
 #
 # A matrix run has no "runs[]" the way a standard result does, so a cell is the
 # finest grain there is. That is why it carries its own phases[] and
@@ -443,6 +481,7 @@ jq -n \
   --argjson environment "$(bench_environment)" \
   --argjson link "$(link_json "$probes_file")" \
   --argjson canary "$(jq -s '.' "$canary_file")" \
+  --slurpfile deletes "$deletes_agg_file" \
   --arg settings "$settings" \
   --argjson scenarios "$scenario_docs" \
   --argjson link_axis "$(printf '%s\n' "${link_profiles[@]}" | jq -Rs 'split("\n") | map(select(. != ""))')" \
@@ -473,6 +512,7 @@ jq -n \
        request_concurrency: \$request_axis
      },
      cells: \$c,
+     deletes: \$deletes[0],
      scaling: (\$c | group_by([.link_profile, .scenario, .label])
        | map({
            scenario: .[0].scenario,
@@ -638,13 +678,35 @@ jq -r '
       + "| \(if ($d | min) > 0 then ((($d | max) - ($d | min)) / ($d | min) * 100 | round | tostring) + "%" else "-" end) |"
   ' "$OUT_DIR/matrix.json"
 
+  echo
+  echo "### Delete sweeps"
+  echo
+  echo "Every cell's pre-clean wipes the tree the cell before it left behind, at that cell's own \`connections\`/\`concurrency\`. It has always run and cost nothing extra; what is new is that it is measured (issue #184, phase 4). Cells whose pre-clean found an empty directory are not listed. Read the two columns on the right against #157: deletions are one round-trip per entry and the pool has nowhere to spread them."
+  echo
+  echo "<details><summary>Per-cell delete sweeps</summary>"
+  echo
+  echo "| Scenario | Build | Profile | conn | conc | Files deleted | Median | files/s | remote_scan | delete_sweep | sftp_remove p50 | sftp_rmdir p50 |"
+  echo "|---|---|---|---|---|---|---|---|---|---|---|---|"
+  jq -r '
+    def phase($n): [.phases[] | select(.name == $n) | .median_ms] | first;
+    def op($n): [.operations[] | select(.name == $n) | .p50_ms] | first;
+    def ms: if . == null then "-" else "\(.) ms" end;
+    .deletes[]
+    | "| \(.scenario) | \(.label) | \(.link_profile) | \(.connections) | \(.concurrency) "
+      + "| \(.files_deleted) | \(.median_ms) ms | \(.deletes_per_s) "
+      + "| \(phase("remote_scan") | ms) | \(phase("delete_sweep") | ms) "
+      + "| \(op("sftp_remove") | ms) | \(op("sftp_rmdir") | ms) |"
+  ' "$OUT_DIR/matrix.json"
+  echo
+  echo "</details>"
+
   refused=$(jq '[.cells[].connections_refused] | add // 0' "$OUT_DIR/matrix.json")
   if [[ "$refused" != 0 ]]; then
     echo
     echo "**$refused connection(s) were refused by the server** across the sweep and fell back to the run's first connection. Those cells had fewer connections than configured, which is the server's limit showing up in the data, not easySFTP's."
   fi
   echo
-  echo "Raw data: \`matrix.json\` (every cell with its own phases and round-trip percentiles, plus the pre-grouped \`scaling\` view and the \`canary\` runs), \`matrix.csv\` (one flat row per cell). Data only: nothing here fails a build."
+  echo "Raw data: \`matrix.json\` (every cell with its own phases and round-trip percentiles, plus the pre-grouped \`scaling\` view, the \`canary\` runs and the \`deletes\` sweeps), \`matrix.csv\` (one flat row per cell). Data only: nothing here fails a build."
 } >"$OUT_DIR/matrix.md"
 
 cat "$OUT_DIR/matrix.md"

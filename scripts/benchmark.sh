@@ -86,8 +86,10 @@ check_log_dir
 runs_file="$LOG_DIR/runs.jsonl"
 aggregate_file="$LOG_DIR/aggregate.json"
 probes_file="$LOG_DIR/link-probes.jsonl"
+deletes_file="$LOG_DIR/deletes.jsonl"
 : >"$runs_file"
 : >"$probes_file"
+: >"$deletes_file"
 
 # The profile every run below is measured on. Set by the profile loop; a run
 # always carries it, so "baseline" in a stored result means "the real line" and
@@ -103,15 +105,27 @@ measure() {
   local stem="$LOG_DIR/$slug-$label-$scenario-$repeat"
   local code=0
 
-  # Unmeasured: every repeat starts from the same empty remote directory, so
-  # repeat 1 (uploading into nothing) measures the same thing as the repeats
-  # after it (which would otherwise overwrite existing files). METRICS_FILE is
-  # cleared for it, so the pre-clean's own numbers can never be mistaken for
-  # the measurement's.
-  if ! METRICS_FILE='' run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean "$stem.clean.log" "$stem.clean.out"; then
-    echo "::warning::pre-clean of $label/$scenario repeat $repeat failed"
+  # Unmeasured *as an upload*: every repeat starts from the same empty remote
+  # directory, so repeat 1 (uploading into nothing) measures the same thing as
+  # the repeats after it (which would otherwise overwrite existing files).
+  #
+  # It is instrumented all the same, into its own metrics file and its own
+  # aggregate (issue #184, phase 4): a clean deployment of an empty directory is
+  # a pure delete sweep, and it is the only place deletions are measured at all.
+  # Nothing of it ever reaches the upload numbers; the two files never meet.
+  local clean_code=0
+  METRICS_FILE="$stem.clean.metrics.json" \
+    run_easysftp "$binary" "$DATASET_DIR/empty" "$remote" clean "$stem.clean.log" "$stem.clean.out" || clean_code=$?
+  if ((clean_code != 0)); then
+    echo "::warning::pre-clean of $label/$scenario repeat $repeat exited $clean_code"
     cat "$stem.clean.log"
   fi
+  jq -c \
+    --arg label "$label" \
+    --arg scenario "$scenario" \
+    --arg link_profile "$link_profile" \
+    --argjson repeat "$repeat" \
+    '. + $ARGS.named' <<<"$(delete_json "$stem" "$clean_code")" >>"$deletes_file"
 
   METRICS_FILE="$stem.metrics.json" \
     run_easysftp "$binary" "$DATASET_DIR/$scenario" "$remote" overlay "$stem.log" "$stem.out" "$advanced" || code=$?
@@ -287,6 +301,18 @@ jq -s "
     })
 " "$runs_file" >"$aggregate_file"
 
+# The delete sweeps, aggregated the same way and kept strictly apart: one row per
+# (link profile, build, scenario), sweeps that deleted nothing dropped, and a
+# group left with none dropped entirely rather than stored as a row of zeroes.
+delete_file="$LOG_DIR/delete.json"
+jq -s "
+  $JQ_STATS
+  $JQ_DELETE
+  group_by([.link_profile, .label, .scenario])
+  | map({label: .[0].label, scenario: .[0].scenario, link_profile: .[0].link_profile} + delete_agg)
+  | map(select(.sweeps > 0))
+" "$deletes_file" >"$delete_file"
+
 # The reference build every delta is measured against: the baseline when one
 # was measured, otherwise the candidate, so a pool run without a baseline is
 # still compared against something.
@@ -311,6 +337,7 @@ done | jq -s 'from_entries')
 #   metadata (candidate_ref, baseline_ref, repeats, runner, settings, env)
 #   results   aggregated per build and scenario, incl. process/phases/operations
 #   comparison  candidate (and pool) against the reference build
+#   deletes   the pre-clean sweeps, aggregated apart from everything above
 #   runs      every individual repeat, verbatim, metrics included
 # v1's top-level keys all still exist and mean the same thing.
 # Through a file, not a process substitution: jq's --slurpfile wants a real
@@ -321,6 +348,7 @@ jq -s '.' "$runs_file" >"$runs_array"
 jq -n \
   --slurpfile results "$aggregate_file" \
   --slurpfile runs "$runs_array" \
+  --slurpfile deletes "$delete_file" \
   --arg candidate_ref "$CANDIDATE_REF" \
   --arg baseline_ref "$BASELINE_REF" \
   --arg reference_label "$reference_label" \
@@ -347,6 +375,7 @@ jq -n \
      scenarios: \$scenarios,
      note: \"phases are wall clock and add up to the duration; operations are cumulative across parallel workers and do not\",
      results: \$r,
+     deletes: \$deletes[0],
      comparison: [
        \$r[] | select(.label != \$reference_label) as \$c
        | (\$r[] | select(.label == \$reference_label and .scenario == \$c.scenario
@@ -482,6 +511,29 @@ jq -r '
     echo "</details>"
     echo
   done
+
+  echo "### Delete sweeps"
+  echo
+  echo "The pre-clean before every measured run wipes the tree the previous repeat left behind, which makes it a pure delete sweep. It costs no extra time (it has always run) and its numbers never enter the upload tables above. Sweeps that found an empty directory are not counted."
+  echo
+  echo "| Scenario | Build | Profile | Sweeps | Files deleted | Median | files/s | remote_scan | delete_sweep |"
+  echo "|---|---|---|---|---|---|---|---|---|"
+  jq -r '
+    def phase($n): [.phases[] | select(.name == $n) | .median_ms] | first;
+    def ms: if . == null then "-" else "\(.) ms" end;
+    .deletes[]
+    | "| \(.scenario) | \(.label) | \(.link_profile) | \(.sweeps) | \(.files_deleted) | \(.median_ms) ms "
+      + "| \(.deletes_per_s) | \(phase("remote_scan") | ms) | \(phase("delete_sweep") | ms) |"
+  ' "$OUT_DIR/results.json"
+  echo
+  echo "| Scenario | Build | Profile | Operation | Count | Cumulative | p50 | p90 | p99 | Max |"
+  echo "|---|---|---|---|---|---|---|---|---|---|"
+  # sftp_remove and sftp_rmdir are the numbers issue #157 is about: one
+  # round-trip per entry, strictly sequential, no concurrency anywhere near them.
+  jq -r '.deletes[] as $d | $d.operations[] | select(.count > 0)
+    | "| \($d.scenario) | \($d.label) | \($d.link_profile) | \(.name) | \(.count) | \(.median_total_ms) ms "
+      + "| \(.p50_ms) ms | \(.p90_ms) ms | \(.p99_ms) ms | \(.max_ms) ms |"' "$OUT_DIR/results.json"
+  echo
 
   # Without this line a pool run whose extra connections the server refused
   # reads as "the pool did nothing", which is the wrong conclusion entirely.

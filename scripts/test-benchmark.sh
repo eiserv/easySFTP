@@ -56,12 +56,14 @@ cat >"$stub" <<'STUB'
 set -euo pipefail
 
 source_dir=${EASYSFTP_SOURCE:-}
+target=${EASYSFTP_TARGET:-}
 mode=${EASYSFTP_MODE:-}
 connections=1
 concurrency=4
 skip_unchanged=false
 if [[ -n "${EASYSFTP_CONFIG:-}" ]]; then
   source_dir=$(awk -F'"' '/source:/ { print $2; exit }' "$EASYSFTP_CONFIG")
+  target=$(awk -F'"' '/target:/ { print $2; exit }' "$EASYSFTP_CONFIG")
   mode=$(awk '/^    mode:/ { print $2; exit }' "$EASYSFTP_CONFIG")
   connections=$(awk '/^  connections:/ { print $2; exit }' "$EASYSFTP_CONFIG")
   concurrency=$(awk '/^  concurrency:/ { print $2; exit }' "$EASYSFTP_CONFIG")
@@ -86,18 +88,56 @@ if [[ -d "$source_dir" ]]; then
   bytes=$(find "$source_dir" -type f -exec wc -c {} + | awk '$2 != "total" { s += $1 } END { print s + 0 }')
 fi
 
+# Just enough remote state to make a "clean" run delete what an earlier run put
+# there: one file per remote target holding its file count. Without it every
+# pre-clean would report zero deletions, and the delete aggregation (issue #184,
+# phase 4) would have nothing to aggregate.
+deleted=0
+if [[ -n "${EASYSFTP_STUB_STATE:-}" && -n "$target" ]]; then
+  mkdir -p "$EASYSFTP_STUB_STATE"
+  state="$EASYSFTP_STUB_STATE/${target//\//_}"
+  if [[ "$mode" == clean ]]; then
+    deleted=$(cat "$state" 2>/dev/null || echo 0)
+    rm -f "$state"
+  else
+    echo "$files" >"$state"
+  fi
+fi
+
 # More connections and more workers finish sooner, with a floor: exactly the
 # shape a scaling curve should have, so the matrix output can be checked
 # against a known answer.
 parallel=$((connections < concurrency ? connections : concurrency))
-duration=$((200 + files * 4 / parallel + RANDOM % 7))
+duration=$((200 + (files + deleted) * 4 / parallel + RANDOM % 7))
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   {
     echo "files-uploaded<<EOF"; echo "$files"; echo "EOF"
     echo "bytes-uploaded<<EOF"; echo "$bytes"; echo "EOF"
+    echo "files-deleted<<EOF"; echo "$deleted"; echo "EOF"
     echo "duration-ms<<EOF"; echo "$duration"; echo "EOF"
   } >>"$GITHUB_OUTPUT"
+fi
+
+# A clean deployment runs different phases and different round-trips than an
+# upload, and the delete aggregation reads exactly those.
+if [[ "$mode" == clean ]]; then
+  phases='[{"name": "remote_scan", "wall_ms": '$((duration / 3))', "count": 1},
+    {"name": "delete_sweep", "wall_ms": '$((duration * 2 / 3))', "count": 1},
+    {"name": "connect", "wall_ms": 40, "count": 1}]'
+  operations='[{"name": "sftp_remove", "count": '"$deleted"', "errors": 0, "total_ms": '$((duration / 2))',
+     "avg_ms": 2.1, "min_ms": 1, "p50_ms": 2, "p90_ms": 4, "p99_ms": 7, "max_ms": 8},
+    {"name": "sftp_rmdir", "count": 8, "errors": 0, "total_ms": 24,
+     "avg_ms": 3, "min_ms": 2, "p50_ms": 3, "p90_ms": 4, "p99_ms": 5, "max_ms": 5}]'
+else
+  phases='[{"name": "upload", "wall_ms": '$((duration - 60))', "count": 1},
+    {"name": "connect", "wall_ms": 40, "count": 1},
+    {"name": "local_scan", "wall_ms": 15, "count": 1},
+    {"name": "create_dirs", "wall_ms": 5, "count": 1}]'
+  operations='[{"name": "file_upload", "count": '"$files"', "errors": 0, "total_ms": '$((duration * 2))',
+     "avg_ms": 3.5, "min_ms": 1, "p50_ms": 3, "p90_ms": 6, "p99_ms": 9, "max_ms": 11},
+    {"name": "sftp_open", "count": '"$files"', "errors": 0, "total_ms": '"$duration"',
+     "avg_ms": 1.7, "min_ms": 1, "p50_ms": 1.5, "p90_ms": 3, "p99_ms": 5, "max_ms": 6}]'
 fi
 
 if [[ -n "${EASYSFTP_METRICS_FILE:-}" ]]; then
@@ -113,23 +153,13 @@ if [[ -n "${EASYSFTP_METRICS_FILE:-}" ]]; then
     "disk_read_bytes": $bytes, "disk_write_bytes": 0,
     "net_read_bytes": 4096, "net_write_bytes": $bytes
   },
-  "phases": [
-    {"name": "upload", "wall_ms": $((duration - 60)), "count": 1},
-    {"name": "connect", "wall_ms": 40, "count": 1},
-    {"name": "local_scan", "wall_ms": 15, "count": 1},
-    {"name": "create_dirs", "wall_ms": 5, "count": 1}
-  ],
-  "operations": [
-    {"name": "file_upload", "count": $files, "errors": 0, "total_ms": $((duration * 2)),
-     "avg_ms": 3.5, "min_ms": 1, "p50_ms": 3, "p90_ms": 6, "p99_ms": 9, "max_ms": 11},
-    {"name": "sftp_open", "count": $files, "errors": 0, "total_ms": $duration,
-     "avg_ms": 1.7, "min_ms": 1, "p50_ms": 1.5, "p90_ms": 3, "p99_ms": 5, "max_ms": 6}
-  ],
+  "phases": $phases,
+  "operations": $operations,
   "counters": {
     "connections_opened": $connections, "connections_used": $connections,
     "connections_refused": 0, "reconnects": 0, "retries": 0, "stalls": 0, "errors": 0,
     "config_connections": $connections, "config_concurrency": $concurrency,
-    "files_uploaded": $files, "bytes_uploaded": $bytes
+    "files_uploaded": $files, "bytes_uploaded": $bytes, "files_deleted": $deleted
   }
 }
 JSON
@@ -173,6 +203,9 @@ export REMOTE_BASE=/easysftp-benchmark-test
 export BENCH_HOST=example.invalid BENCH_PORT=22 BENCH_USERNAME=tester
 export BENCH_PASSWORD=secret BENCH_KNOWN_HOSTS="example.invalid ssh-ed25519 AAAA"
 export DATASET_DIR="$work/data"
+# The stub's stand-in for the remote server, so a pre-clean has something to
+# delete; see the stub above.
+export EASYSFTP_STUB_STATE="$work/remote-state"
 
 # Shaping must never actually happen here. This check may run as root on a
 # maintainer's box or on a self-hosted runner, and a netem qdisc left on a real
@@ -228,22 +261,44 @@ fi
 expect_equal 'the MAD of the repeats is reported' 3 \
   "$(jq '[.results[] | select(.label == "candidate") | .mad_ms | select(. != null)] | length' "$results")"
 
+# The pre-clean is a delete sweep and is now stored as one (issue #184, phase 4).
+# Three repeats mean two sweeps that found something: the first pre-clean of a
+# build and scenario runs against an empty directory and is dropped.
+expect_equal 'every build and scenario has a delete row' 9 "$(jq '.deletes | length' "$results")"
+expect_equal 'empty sweeps are not counted' 2 \
+  "$(jq -r '[.deletes[] | select(.label == "candidate" and .scenario == "small") | .sweeps] | first' "$results")"
+expect_equal 'a delete row says how much it deleted' 300 \
+  "$(jq -r '[.deletes[] | select(.label == "candidate" and .scenario == "small") | .files_deleted] | first' "$results")"
+expect_equal 'the delete sweep keeps its own phases' 'connect delete_sweep remote_scan' \
+  "$(jq -r '[.deletes[0].phases[].name] | sort | join(" ")' "$results")"
+expect_equal 'the delete sweep keeps the round-trips issue #157 is about' 'sftp_remove sftp_rmdir' \
+  "$(jq -r '[.deletes[0].operations[].name] | sort | join(" ")' "$results")"
+expect_nonempty 'sftp_remove carries percentiles' \
+  "$(jq -r '[.deletes[0].operations[] | select(.name == "sftp_remove") | .p90_ms] | first' "$results")"
+# The whole point of a separate block: an upload aggregate must not have grown a
+# delete phase, and the delete numbers must not have moved an upload median.
+expect_equal 'no upload result picked up a delete phase' 0 \
+  "$(jq '[.results[].phases[] | select(.name == "delete_sweep")] | length' "$results")"
+expect_equal 'no upload result picked up a delete round-trip' 0 \
+  "$(jq '[.results[].operations[] | select(.name == "sftp_remove")] | length' "$results")"
+
 expect_equal 'the CSV has a header plus one row per build and scenario' 10 \
   "$(line_count "$OUT_DIR/results.csv")"
 expect_equal 'the CSV names its columns' '"scenario","build"' \
   "$(head -1 "$OUT_DIR/results.csv" | cut -d, -f1,2)"
 
-for needle in '## easySFTP benchmark' '### Throughput' '### Resources' '### Where the time goes'; do
+for needle in '## easySFTP benchmark' '### Throughput' '### Resources' '### Where the time goes' '### Delete sweeps'; do
   if grep -qF "$needle" "$OUT_DIR/summary.md"; then
     pass "summary.md has '$needle'"
   else
     fail "summary.md is missing '$needle'"
   fi
 done
-# The file count in the fourth column is what distinguishes a throughput row
-# from the resources table's row for the same scenario, build and link profile.
+# The file count and the payload size in columns four and five are what
+# distinguish a throughput row from the resources and delete-sweep tables, which
+# start with the same scenario, build and link profile.
 expect_equal 'summary.md has a throughput row for every build and scenario' 9 \
-  "$(grep -cE '^\| (small|mixed|large) \| (candidate|baseline|pool2) \| baseline \| [0-9]+ \|' "$OUT_DIR/summary.md")"
+  "$(grep -cE '^\| (small|mixed|large) \| (candidate|baseline|pool2) \| baseline \| [0-9]+ \| [0-9.]+ MiB \|' "$OUT_DIR/summary.md")"
 expect_equal 'summary.md has a resources row for every build and scenario' 9 \
   "$(grep -cE '^\| (small|mixed|large) \| (candidate|baseline|pool2) \| baseline \| [0-9.]+ ms \|' "$OUT_DIR/summary.md")"
 
@@ -371,6 +426,23 @@ expect_equal 'the canary says when each run happened' 'start mid end' \
   "$(jq -r '[.canary[].at] | join(" ")' "$matrix")"
 expect_equal 'the canary is one fixed cell' 'small/1/4' \
   "$(jq -r '[.canary[] | "\(.scenario)/\(.connections)/\(.concurrency)"] | unique | join(" ")' "$matrix")"
+# One delete row per cell, minus the first cell of each (build, scenario): its
+# pre-clean has an empty directory in front of it (issue #184, phase 4).
+expect_equal 'every cell but the first of its build and scenario has a delete row' 12 \
+  "$(jq '.deletes | length' "$matrix")"
+expect_equal 'a delete row carries the cell coordinates it was measured at' true \
+  "$(jq '.deletes[0] | has("connections") and has("concurrency") and has("request_concurrency")' "$matrix")"
+expect_equal 'a matrix delete row keeps its sweep phase' 12 \
+  "$(jq '[.deletes[] | select([.phases[] | select(.name == "delete_sweep")] | length == 1)] | length' "$matrix")"
+expect_nonempty 'a matrix delete row keeps the sftp_remove percentiles' \
+  "$(jq -r '[.deletes[0].operations[] | select(.name == "sftp_remove") | .p50_ms] | first' "$matrix")"
+expect_equal 'no cell picked up a delete phase' 0 \
+  "$(jq '[.cells[].phases[] | select(.name == "delete_sweep")] | length' "$matrix")"
+if grep -qF '### Delete sweeps' "$OUT_DIR/matrix.md"; then
+  pass "matrix.md reports the delete sweeps"
+else
+  fail "matrix.md is missing its delete sweep section"
+fi
 if grep -qF '### Canary' "$OUT_DIR/matrix.md"; then
   pass "matrix.md reports the canary"
 else
