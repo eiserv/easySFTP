@@ -104,6 +104,39 @@ func withFailList(path string) serverOption {
 	}
 }
 
+// listRecorder records the path of every directory listing ("List") request
+// while delegating everything else to the in-memory handler, so a test can
+// assert which directories a run actually read (the stale-temp sweep's scope
+// guarantee needs exactly that).
+type listRecorder struct {
+	mu    sync.Mutex
+	inner sftp.FileLister
+	dirs  []string
+}
+
+func (l *listRecorder) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
+	if r.Method == "List" {
+		l.mu.Lock()
+		l.dirs = append(l.dirs, r.Filepath)
+		l.mu.Unlock()
+	}
+	return l.inner.Filelist(r)
+}
+
+// listed returns a copy of the directory paths listed so far.
+func (l *listRecorder) listed() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.dirs...)
+}
+
+func withListRecorder(rec *listRecorder) serverOption {
+	return func(s *testServer) {
+		rec.inner = s.handlers.FileList
+		s.handlers.FileList = rec
+	}
+}
+
 // withFailRename makes the server reject every (Posix)Rename, simulating a
 // server that lets the temp upload through but cannot swap it into place.
 func withFailRename() serverOption { return func(s *testServer) { s.failRename = true } }

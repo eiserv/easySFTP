@@ -197,9 +197,9 @@ func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan,
 // the strategy is clean.
 func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, watch *stallWatchdog, log Logger) error {
 	verb := planVerb(cfg)
+	base := normalizeRemote(p.pair.Remote)
 
 	if p.strategy == config.StrategyClean {
-		base := normalizeRemote(p.pair.Remote)
 		if err := checkRemoteRoot(p.pair.Remote); err != nil {
 			return err
 		}
@@ -267,7 +267,7 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 	}
 
 	skipUnchanged := cfg.SkipUnchanged && p.strategy == config.StrategyOverlay
-	_, err := uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, stats, verb, watch, skipUnchanged, log)
+	_, err := uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, base, stats, verb, watch, skipUnchanged, log)
 	return err
 }
 

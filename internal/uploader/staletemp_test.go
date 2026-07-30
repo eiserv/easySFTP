@@ -49,6 +49,7 @@ func TestIsTempFileName(t *testing.T) {
 		{manifestName + tmpSuffix, true},              // manifest write temp (no index)
 		{"app.js", false},                             // ordinary file
 		{".easysftp-manifest.json", false},            // the manifest itself
+		{tmpSuffix, false},                            // bare suffix, no name before it
 		{"app.js" + tmpSuffix + ".backup", false},     // non-numeric suffix
 		{"app.js" + tmpSuffix + ".", false},           // dot but no index
 		{"app.js" + tmpSuffix + ".1a", false},         // trailing garbage
@@ -171,6 +172,64 @@ func TestSweepKeepsPlannedTargetsNamedLikeTempFiles(t *testing.T) {
 	for _, msg := range log.infos {
 		if strings.Contains(msg, "removed stale temporary file") {
 			t.Errorf("a planned target was swept as a stale temp file: %q", msg)
+		}
+	}
+}
+
+// The sweep's scope guarantee: a deploy to a target several levels deep must
+// not list (let alone delete in) any ancestor of that target. Age-eligible
+// temp debris planted above the base survives untouched, the only directories
+// ever listed are the base and the directories receiving files this run, and
+// the debris inside those is removed.
+func TestSweepStaysWithinDeploymentBase(t *testing.T) {
+	shrinkStaleTempMaxAge(t)
+
+	rec := &listRecorder{}
+	srv := startTestServer(t, withListRecorder(rec))
+	client := srv.verifyClient(t)
+	if err := client.MkdirAll("/var/www/html/blog/sub"); err != nil {
+		t.Fatal(err)
+	}
+	// Temp debris in every ancestor of the base; the sweep has no business
+	// there, so all of it must survive.
+	writeRemoteFile(t, client, "/var/a"+tmpSuffix+".1", "above")
+	writeRemoteFile(t, client, "/var/www/b"+tmpSuffix+".2", "above")
+	writeRemoteFile(t, client, "/var/www/html/c"+tmpSuffix+".3", "above")
+	// Debris inside the deployment: in the base (where a manifest temp would
+	// live) and in a directory receiving a file this run.
+	writeRemoteFile(t, client, "/var/www/html/blog/index.html"+tmpSuffix+".4", "stale")
+	writeRemoteFile(t, client, "/var/www/html/blog/sub/app.js"+tmpSuffix+".5", "stale")
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"index.html": "hi", "sub/app.js": "x"})
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/var/www/html/blog"}}
+
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, kept := range []string{
+		"/var/a" + tmpSuffix + ".1",
+		"/var/www/b" + tmpSuffix + ".2",
+		"/var/www/html/c" + tmpSuffix + ".3",
+	} {
+		if !remoteExists(t, srv, kept) {
+			t.Errorf("temp file above the deployment base was swept: %s", kept)
+		}
+	}
+	for _, swept := range []string{
+		"/var/www/html/blog/index.html" + tmpSuffix + ".4",
+		"/var/www/html/blog/sub/app.js" + tmpSuffix + ".5",
+	} {
+		if remoteExists(t, srv, swept) {
+			t.Errorf("stale temp file inside the deployment survived: %s", swept)
+		}
+	}
+	for _, dir := range rec.listed() {
+		if dir != "/var/www/html/blog" && dir != "/var/www/html/blog/sub" {
+			t.Errorf("a directory outside the deployment was listed: %s", dir)
 		}
 	}
 }

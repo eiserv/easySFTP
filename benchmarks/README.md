@@ -81,7 +81,7 @@ Markdown:
 | `results[]` | one row per (build, scenario): the aggregate |
 | `results[].duration_ms` | `values`, `median`, `min`, `max`, `mad`, `samples` |
 | `results[].process` | CPU time, peak RSS, Go allocations, GC count and pause, peak goroutines, disk and network bytes |
-| `results[].phases[]` | wall clock per phase (connect, local_scan, remote_scan, hash, create_dirs, upload, delete_sweep, manifest_read, manifest_write, prune_dirs, cleanup) |
+| `results[].phases[]` | wall clock per phase (connect, local_scan, remote_scan, hash, create_dirs, sweep_stale_temps, upload, delete_sweep, manifest_read, manifest_write, prune_dirs, cleanup) |
 | `results[].operations[]` | per round-trip: count, cumulative total, average, p50/p90/p99, max, errors |
 | `results[].counters` | connections opened/used/refused, reconnects, retries, stalls, errors |
 | `comparison[]` | each build against the reference build: `delta_ms`, `delta_percent`, and `within_noise` (is the delta smaller than the reference's MAD?) |
