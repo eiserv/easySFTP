@@ -1,18 +1,21 @@
 # Benchmarks
 
-Upload performance of easySFTP against a real SFTP server, measured by
-[`scripts/benchmark.sh`](../scripts/benchmark.sh) (throughput at the default
-settings) and [`scripts/benchmark-matrix.sh`](../scripts/benchmark-matrix.sh)
-(a connections/concurrency sweep), aggregated into the documents below by
-[`cmd/easysftp-bench`](../cmd/easysftp-bench), and filed here by
-[`scripts/benchmark-store.sh`](../scripts/benchmark-store.sh).
+Upload performance of easySFTP against a real SFTP server, measured, aggregated
+and filed here by [`cmd/easysftp-bench`](../cmd/easysftp-bench):
 
-The split is deliberate (issue #190): the scripts measure, because that needs a
-host, a payload and privileges; everything downstream of the measurement is Go,
-because it is where the schemas, the statistics and the reports live. The
-documents themselves did not change with that move, which is what
-`scripts/test-benchmark.sh` checks by aggregating the same measurement twice and
-diffing the two.
+| Command | What it does |
+|---|---|
+| `easysftp-bench standard` | throughput at the default settings |
+| `easysftp-bench matrix` | a connections/concurrency sweep |
+| `easysftp-bench aggregate` | one measured run into the documents below |
+| `easysftp-bench store` | files a result set in this directory |
+
+Issue #190 moved that work off the shell in steps, and the shell scripts of the
+same names are still in `scripts/` as the behavioural reference the Go
+implementation is checked against, until the parity check of step 5 and the
+switch of step 6. The documents themselves did not change with the move, which
+is what `scripts/test-benchmark.sh` checks by aggregating the same measurement
+twice and diffing the two.
 
 These numbers set no threshold and fail no build. They exist to see where the
 time goes (issues #158 and #169), so read them as one host's behaviour on
@@ -458,9 +461,9 @@ they are older than the oldest kept release. Nothing is ever deleted or
 rewritten: storing a name that already exists fails on purpose, so a number
 that was once published stays exactly as it was published.
 
-If results are ever moved by hand, `KIND=reindex bash scripts/benchmark-store.sh`
-rebuilds `index.json` and `latest.*` from whatever is on disk without storing
-anything new.
+If results are ever moved by hand, `KIND=reindex go run ./cmd/easysftp-bench store`
+rebuilds `index.json`, `trend.csv` and `latest.*` from whatever is on disk
+without storing anything new.
 
 ## Running a benchmark
 

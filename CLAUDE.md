@@ -171,58 +171,79 @@ granularity is a separate, later decision; don't build it speculatively.
 
 ## Benchmarks
 
-The harness is split in two, and the split is the thing to keep straight
-(issue #190). **Shell measures, Go aggregates.** `scripts/benchmark.sh`
-measures throughput at the default settings, `scripts/benchmark-matrix.sh`
-sweeps `advanced.connections` against `advanced.concurrency`, both on top of the
-shared `scripts/benchmark-lib.sh` (payload generation, running a build, reading
-its outputs) and `scripts/benchmark-link.sh` (the probed link profile and `tc`
-shaping). Each appends one JSON document per run to its JSONL files, writes a
-`manifest.json` describing the run, and then calls `cmd/easysftp-bench`, which
-reads both and writes `results.json`/`matrix.json` plus their CSV and Markdown.
+The harness is being moved off the shell in the six steps of issue #190, and
+where a given step has got to is the thing to keep straight. Steps 1 to 4 are
+done: **`cmd/easysftp-bench` measures, aggregates and stores**, and the shell
+scripts of the same names survive only as the behavioural reference the parity
+check of step 5 diffs against, before step 6 deletes them. Do not add to the
+shell; add to the Go and let the parity check argue about it.
 
-That means a change to *what is measured* is a shell change and a change to
-*what is reported* is a Go change, and the manifest is the seam. The manifest
-carries the display strings the summaries print (axis lists, the runner line,
-the settings sentence) verbatim rather than rebuilding them in Go: a summary
-table that reformats itself is a change to a stored document made by accident.
+The Go commands are `standard` (throughput at the default settings), `matrix`
+(sweeps `advanced.connections` against `advanced.concurrency`), `store` (files a
+result set under `benchmarks/`), plus `aggregate` and `validate`. The first
+three read their configuration from the environment, exactly the variables the
+scripts read, so the workflows keep passing the same things.
 
-Inside `internal/benchmark`: `schema` is what is on disk and must keep reading
-every result already committed (its fixture test decodes every file under
-`benchmarks/` strictly, so a type that does not cover a stored field fails);
-`stats` is the old `JQ_STATS` block, and its edge cases are load-bearing (lower
-middle median, `mad` null below two samples, null sorting below every number and
-being the identity of addition); `report` renders the CSV and the Markdown.
+The seam between measuring and reporting is still `manifest.json`: the measuring
+half appends one JSON document per run to its JSONL files, writes a manifest
+describing the run, and the aggregation reads both. That is what lets
+`scripts/test-benchmark.sh` hand the jq oracle the same manifest the Go
+aggregation got. The manifest carries the display strings the summaries print
+(axis lists, the runner line, the settings sentence) verbatim rather than
+rebuilding them: a summary table that reformats itself is a change to a stored
+document made by accident.
+
+Inside `internal/benchmark`:
+
+- `schema` is what is on disk and must keep reading every result already
+  committed (its fixture test decodes every file under `benchmarks/` strictly,
+  so a type that does not cover a stored field fails). Anything nullable in a
+  stored document is a pointer here, and `Ordered` exists because a Go map
+  re-encodes its keys sorted: `index.json` is committed, and rewriting an
+  object's key order on the next store is a change nobody made.
+- `stats` is the old `JQ_STATS` block, and its edge cases are load-bearing
+  (lower middle median, `mad` null below two samples, null sorting below every
+  number and being the identity of addition); `report` renders the CSV and the
+  Markdown.
+- `scenario` is the payload tables (spec, description, shape, the per-scenario
+  axis caps), `runner` starts one build and reads its step outputs back,
+  `link` parses profiles and drives `tc` and `cmd/linkprobe`, `driver` is the
+  two measuring loops, and `store` is the result directory.
+- `driver`'s own tests build the stub in `driver/testdata/stub` and assert on
+  what comes out, which is the Go form of what `scripts/test-benchmark.sh` does
+  to the shell. `store`'s tests are the Go form of
+  `scripts/test-benchmark-store.sh`.
 
 `scripts/benchmark-aggregate-jq.sh` is the jq implementation the Go one
 replaced, kept only as the parity oracle `scripts/test-benchmark.sh` diffs
 against. It is scaffolding, not a second implementation: do not tidy it, and do
 not add to it. Step 6 of #190 deletes it.
-A scenario there carries a *shape* as well as a payload (`scenario_shape`: mode,
+A scenario carries a *shape* as well as a payload (`scenario.ShapeOf`: mode,
 whether the measured run redeploys over an unmeasured one, flat or deep
 layout). The deploy-shape scenarios (`redeploy`, `sync`, `deep`, `bulk`,
-`calib-*`) are matrix-only: `benchmark.sh`'s set is fixed, because adding to it
-makes every stored release result incomparable.
-`scripts/benchmark-store.sh` files a result under `benchmarks/`;
-`benchmarks/README.md` documents the layout and the JSON schema and is the page
-to keep in sync when any of those change. Read `benchmarks/index.json` before
-opening single files.
+`calib-*`) are matrix-only: `driver.StandardScenarios` is fixed, because adding
+to it makes every stored release result incomparable.
+`benchmarks/README.md` documents the store layout and the JSON schema and is the
+page to keep in sync when any of those change. Read `benchmarks/index.json`
+before opening single files.
 
 Results are filed by kind: `benchmarks/releases/`, `manual/`, `matrix/`, plus
 `archive/<kind>/`. Only `latest.{json,md}` and `index.json` sit at the top
-level, because those links must not move. `KIND=reindex bash
-scripts/benchmark-store.sh` rebuilds both from what is on disk (that is how the
+level, because those links must not move. `KIND=reindex go run
+./cmd/easysftp-bench store` rebuilds them from what is on disk (that is how the
 migration into this layout was done).
 
 Three invariants the whole thing rests on: a stored result is never rewritten
 (storing an existing name fails), `latest.*` is only ever a copy of a
-`kind: "release"` entry, and a matrix run is never official. Two CI-run
-self-checks pin them (both need `jq`): `scripts/test-benchmark-store.sh` for
-the retention window, archiving and the invariants, and
-`scripts/test-benchmark.sh`, which drives both measuring scripts end to end
-against a stub binary so the jq aggregation, schema and CSV columns are checked
-without an SFTP server. The other half (that a *real* run produces the metrics
-those scripts aggregate) is asserted by the container self-test in `ci.yml`.
+`kind: "release"` entry, and a matrix run is never official.
+`internal/benchmark/store`'s tests pin them, and so do the two jq-dependent
+shell self-checks CI still runs against the reference implementation:
+`scripts/test-benchmark-store.sh` for the retention window, archiving and the
+invariants, and `scripts/test-benchmark.sh`, which drives both measuring scripts
+end to end against a stub binary. The Go equivalents are
+`internal/benchmark/driver`'s tests. The other half (that a *real* run produces
+the metrics all of this aggregates) is asserted by the container self-test in
+`ci.yml`.
 
 The link a result was measured over is recorded in a top-level `link` object
 (issue #184, phase 1) by `cmd/linkprobe`, a separate binary that imports nothing
@@ -231,13 +252,14 @@ would not be a control. Three things to keep true when touching it: `environment
 stays the comparability key and `link` stays a measurement (so it must not move
 into `environment`), the probe report never names the host or the user (it lands
 in `results.json`, which is an artifact and is committed), and `tc` shaping is
-applied only behind the EXIT/INT/TERM trap in `benchmark-link.sh`, because a
-runner left shaped makes every later measurement on it quietly wrong. Shaping
-that is unavailable is recorded, never fatal.
+applied only behind something that survives an interrupt (`link.Shaper.Guard`
+plus a deferred `Clear`, and the EXIT/INT/TERM trap in `benchmark-link.sh`),
+because a runner left shaped makes every later measurement on it quietly wrong.
+Shaping that is unavailable is recorded, never fatal.
 
-The matrix grid is **per scenario** (issue #184, phase 5). `axis_for_scenario`
+The matrix grid is **per scenario** (issue #184, phase 5). `scenario.AxisFor`
 caps and deduplicates both axes at the scenario's file count, and
-`scenario_sweeps_requests` only lets the `request_concurrency` axis through for
+`scenario.SweepsRequests` only lets the `request_concurrency` axis through for
 payloads with files of at least 1 MiB, because that setting is
 `MaxConcurrentRequestsPerFile`. Both rules are properties of the payload, not
 opinions about the code: a value above the file count measures the same

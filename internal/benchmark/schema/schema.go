@@ -49,8 +49,12 @@ type Envelope struct {
 	Label         *string `json:"label"`
 	Official      bool    `json:"official"`
 	RecordedAt    string  `json:"recorded_at"`
-	Commit        string  `json:"commit"`
-	RunURL        string  `json:"run_url"`
+
+	// Commit and RunURL are null when the run did not know them, and the store
+	// rewrites this file from these types: an empty string in their place would
+	// be a change to a committed document made in passing.
+	Commit *string `json:"commit"`
+	RunURL *string `json:"run_url"`
 
 	// Benchmark is results.json or matrix.json exactly as the measuring script
 	// wrote it. Kept raw so an envelope can be read, listed and rewritten

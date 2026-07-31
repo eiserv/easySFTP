@@ -152,10 +152,10 @@ func TestStoredIndexDecodesStrictly(t *testing.T) {
 		// A matrix entry reports a best cell per scenario and a standard one a
 		// median per scenario. Neither fills the other's map, because the two
 		// are different numbers.
-		if e.BenchmarkKind == schema.BenchmarkMatrix && len(e.MedianMS) > 0 {
+		if e.BenchmarkKind == schema.BenchmarkMatrix && e.MedianMS.Len() > 0 {
 			t.Errorf("%s: a matrix entry must not report median_ms", e.RecordedAt)
 		}
-		if e.BenchmarkKind != schema.BenchmarkMatrix && len(e.BestMS) > 0 {
+		if e.BenchmarkKind != schema.BenchmarkMatrix && e.BestMS.Len() > 0 {
 			t.Errorf("%s: a standard entry must not report best_ms", e.RecordedAt)
 		}
 	}
