@@ -45,6 +45,56 @@ expect_nonempty() {
 # must not fail against "      10" just because the check ran on a Mac.
 line_count() { echo $(($(wc -l <"$1"))); }
 
+# parity <label> <prefix>: the same measurement aggregated twice, once by
+# cmd/easysftp-bench and once by the jq implementation it replaced (issue #190).
+#
+# scripts/benchmark-aggregate-jq.sh reads the same manifest the Go command
+# reads, so both get identical inputs by construction and a difference can only
+# come from the aggregation itself. That is the check that makes "a behavioural
+# rewrite" something other than a claim, and it runs against the live scripts
+# rather than against a fixture captured once.
+#
+# The JSON is compared as values, because object key order is not data. The CSV
+# and the Markdown are compared byte for byte, because there the layout *is* the
+# document.
+parity() {
+  local label=$1 prefix=$2
+  local oracle="$work/$label-oracle"
+  local manifest="$LOG_DIR/manifest.json"
+  local summary=summary.md
+  if [[ "$prefix" == matrix ]]; then
+    summary=matrix.md
+  fi
+
+  if [[ ! -f "$manifest" ]]; then
+    fail "$label: the run wrote no manifest"
+    return
+  fi
+  mkdir -p "$oracle"
+  if ! MANIFEST="$manifest" OUT_DIR="$oracle" bash "$repo_root/scripts/benchmark-aggregate-jq.sh" \
+    >"$work/$label-oracle.log" 2>&1; then
+    fail "$label: the jq oracle exited non-zero (see $work/$label-oracle.log)"
+    return
+  fi
+
+  if diff <(jq -S . "$OUT_DIR/$prefix.json") <(jq -S . "$oracle/$prefix.json") >"$work/$label-json.diff"; then
+    pass "$label: Go and jq produce the same $prefix.json"
+  else
+    fail "$label: Go and jq disagree on $prefix.json (see $work/$label-json.diff)"
+  fi
+  if diff "$OUT_DIR/$prefix.csv" "$oracle/$prefix.csv" >"$work/$label-csv.diff"; then
+    pass "$label: Go and jq produce the same $prefix.csv"
+  else
+    fail "$label: Go and jq disagree on $prefix.csv (see $work/$label-csv.diff)"
+  fi
+  if diff "$OUT_DIR/$summary" "$oracle/$summary" >"$work/$label-md.diff"; then
+    pass "$label: Go and jq produce the same $summary"
+  else
+    fail "$label: Go and jq disagree on $summary (see $work/$label-md.diff)"
+  fi
+}
+
+
 # The stub. It reads the two settings the scripts vary (the source tree and,
 # from the generated config file, advanced.*), reports a duration derived from
 # them, and writes a metrics file in the real schema. The duration is
@@ -228,6 +278,7 @@ echo "== scripts/benchmark.sh =="
 export OUT_DIR="$work/out" LOG_DIR="$work/logs" REPEATS=3 BENCH_CONNECTIONS=2
 bash "$repo_root/scripts/benchmark.sh" >"$work/benchmark.stdout" 2>&1 ||
   fail "benchmark.sh exited non-zero (see $work/benchmark.stdout)"
+parity standard results
 
 results="$OUT_DIR/results.json"
 if [[ ! -f $results ]]; then
@@ -336,6 +387,7 @@ export BENCH_LINK_PROFILES="baseline +50ms/5mbit" LINKPROBE_BIN="$probe_stub"
 unset BENCH_CONNECTIONS
 bash "$repo_root/scripts/benchmark.sh" >"$work/link.stdout" 2>&1 ||
   fail "benchmark.sh over link profiles exited non-zero (see $work/link.stdout)"
+parity standard-link results
 
 link_results="$OUT_DIR/results.json"
 if [[ ! -f $link_results ]]; then
@@ -390,6 +442,7 @@ export MATRIX_CONNECTIONS="1 2" MATRIX_CONCURRENCY="1 4" MATRIX_SCENARIOS="small
 unset BENCH_CONNECTIONS
 bash "$repo_root/scripts/benchmark-matrix.sh" >"$work/matrix.stdout" 2>&1 ||
   fail "benchmark-matrix.sh exited non-zero (see $work/matrix.stdout)"
+parity matrix matrix
 
 matrix="$OUT_DIR/matrix.json"
 if [[ ! -f $matrix ]]; then
@@ -552,6 +605,7 @@ export MATRIX_CONNECTIONS="1" MATRIX_CONCURRENCY="1" MATRIX_SCENARIOS="small"
 export MATRIX_LINK_PROFILES="baseline +150ms" LINKPROBE_BIN="$probe_stub"
 bash "$repo_root/scripts/benchmark-matrix.sh" >"$work/matrix-link.stdout" 2>&1 ||
   fail "benchmark-matrix.sh over link profiles exited non-zero (see $work/matrix-link.stdout)"
+parity matrix-link matrix
 
 matrix_link="$OUT_DIR/matrix.json"
 if [[ ! -f $matrix_link ]]; then
@@ -647,6 +701,7 @@ export MATRIX_SCENARIOS="redeploy sync calib-10x64k"
 unset MATRIX_LINK_PROFILES LINKPROBE_BIN BASELINE_BIN BASELINE_REF
 bash "$repo_root/scripts/benchmark-matrix.sh" >"$work/matrix-shapes.stdout" 2>&1 ||
   fail "benchmark-matrix.sh over the deploy shapes exited non-zero (see $work/matrix-shapes.stdout)"
+parity matrix-shapes matrix
 
 shape_matrix="$OUT_DIR/matrix.json"
 if [[ ! -f $shape_matrix ]]; then
@@ -690,6 +745,7 @@ export MATRIX_CONNECTIONS="1" MATRIX_CONCURRENCY="1" MATRIX_SCENARIOS="single"
 export MATRIX_REQUEST_CONCURRENCY="default"
 bash "$repo_root/scripts/benchmark-matrix.sh" >"$work/matrix-req.stdout" 2>&1 ||
   fail "benchmark-matrix.sh with the request axis off exited non-zero (see $work/matrix-req.stdout)"
+parity matrix-req matrix
 
 req_matrix="$OUT_DIR/matrix.json"
 if [[ ! -f $req_matrix ]]; then

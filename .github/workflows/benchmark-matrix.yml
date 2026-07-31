@@ -186,6 +186,10 @@ jobs:
           # not from the candidate: it measures the path, and the path must be
           # measured the same way no matter which ref is under test.
           go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/linkprobe" ./cmd/linkprobe
+          # The aggregation (issue #190). Built from the workflow's own checkout
+          # for the same reason: it decides what the stored result looks like,
+          # and that must not depend on which ref is under test.
+          go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/easysftp-bench" ./cmd/easysftp-bench
           {
             echo "candidate-ref=$CANDIDATE_REF_INPUT ($(git -C builds/candidate rev-parse --short HEAD))"
             echo "candidate-sha=$(git -C builds/candidate rev-parse HEAD)"
@@ -212,6 +216,7 @@ jobs:
           MATRIX_SCENARIOS: ${{ inputs.scenarios }}
           MATRIX_LINK_PROFILES: ${{ inputs.link-profiles }}
           LINKPROBE_BIN: ${{ runner.temp }}/bin/linkprobe
+          BENCH_TOOL: ${{ runner.temp }}/bin/easysftp-bench
           LINK_IFACE: ${{ inputs.link-iface }}
           # OUT_DIR is uploaded as an artifact; LOG_DIR (which holds logs that
           # name the host and user) deliberately is not.

@@ -281,6 +281,38 @@ link_probe() {
     <<<"$wrapped"
 }
 
+# link_manifest_json <requested-input> <profile>...: the shaping half of the
+# link object, for the run manifest (issue #190).
+#
+# The probes are deliberately not in here: they are read from the probe file by
+# whatever assembles the result, so a run without a probe binary simply has
+# none. This carries only what the shell knows and the aggregation cannot
+# derive: which interface was shaped, whether shaping was possible, what was
+# asked for, what was applied, and the raw input string the summary prints.
+link_manifest_json() {
+  local requested=$1
+  shift
+  jq -n \
+    --arg iface "${LINK_IFACE:-}" \
+    --argjson available "$((LINK_SHAPING_AVAILABLE == 1 ? 1 : 0))" \
+    --arg reason "$LINK_SHAPING_REASON" \
+    --argjson profile_requested "$(printf '%s\n' "${LINK_REQUESTED[@]+"${LINK_REQUESTED[@]}"}" | jq -Rs 'split("\n") | map(select(. != ""))')" \
+    --argjson applied "$(printf '%s\n' "${LINK_APPLIED[@]+"${LINK_APPLIED[@]}"}" | jq -Rs 'split("\n") | map(select(. != ""))')" \
+    --argjson profiles "$(printf '%s\n' "$@" | jq -Rs 'split("\n") | map(select(. != ""))')" \
+    --arg requested "$requested" \
+    '{
+       iface: (if $iface == "" then null else $iface end),
+       shaping: {
+         available: ($available == 1),
+         reason: (if $reason == "" then null else $reason end),
+         requested: $profile_requested,
+         applied: $applied
+       },
+       profiles: $profiles,
+       requested: $requested
+     }'
+}
+
 # link_json <probes-file>: the "link" object a result stores. Always valid JSON,
 # even when nothing was probed and nothing was shaped.
 link_json() {

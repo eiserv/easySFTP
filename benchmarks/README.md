@@ -3,8 +3,16 @@
 Upload performance of easySFTP against a real SFTP server, measured by
 [`scripts/benchmark.sh`](../scripts/benchmark.sh) (throughput at the default
 settings) and [`scripts/benchmark-matrix.sh`](../scripts/benchmark-matrix.sh)
-(a connections/concurrency sweep), and filed here by
+(a connections/concurrency sweep), aggregated into the documents below by
+[`cmd/easysftp-bench`](../cmd/easysftp-bench), and filed here by
 [`scripts/benchmark-store.sh`](../scripts/benchmark-store.sh).
+
+The split is deliberate (issue #190): the scripts measure, because that needs a
+host, a payload and privileges; everything downstream of the measurement is Go,
+because it is where the schemas, the statistics and the reports live. The
+documents themselves did not change with that move, which is what
+`scripts/test-benchmark.sh` checks by aggregating the same measurement twice and
+diffing the two.
 
 These numbers set no threshold and fail no build. They exist to see where the
 time goes (issues #158 and #169), so read them as one host's behaviour on

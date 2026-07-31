@@ -2,8 +2,12 @@
 #
 # Shared measurement core of scripts/benchmark.sh and
 # scripts/benchmark-matrix.sh: payload generation, running one easySFTP build,
-# reading its step outputs and its metrics file, and the jq statistics both
-# scripts aggregate with.
+# reading its step outputs and its metrics file.
+#
+# The aggregation these scripts used to do here moved to cmd/easysftp-bench
+# (issue #190). What is left of it are JQ_STATS and JQ_DELETE below, which only
+# scripts/benchmark-aggregate-jq.sh still uses, as the parity oracle for that
+# move. Do not build anything new on them.
 #
 # Sourced, never executed. The caller is responsible for validating and
 # exporting the environment described in its own header; this file only reads:
@@ -507,6 +511,45 @@ JQ_DELETE='
     | . + {deletes_per_s:
         (if .median_ms > 0 then (.files_deleted / (.median_ms / 1000) | round2) else 0 end)};
 '
+
+# bench_tool: how to run cmd/easysftp-bench, which turns the JSONL both scripts
+# append to into results.json/matrix.json and their CSV and Markdown (issue
+# #190).
+#
+# BENCH_TOOL names a built binary where the workflow already built one. Without
+# it the command is run from source, which needs the Go toolchain the benchmark
+# runner has anyway (bench_environment already calls "go version").
+bench_tool() {
+  if [[ -n "${BENCH_TOOL:-}" ]]; then
+    "$BENCH_TOOL" "$@"
+  else
+    # SC2154: script_dir belongs to the sourcing script, like everything else
+    # this file documents in its header.
+    # shellcheck disable=SC2154
+    (cd "$script_dir/.." && go run ./cmd/easysftp-bench "$@")
+  fi
+}
+
+# json_array_of <value>...: the arguments as a JSON array of numbers, with the
+# token "default" mapped to null. That token is the request_concurrency pass
+# that sets nothing and leaves easySFTP its own value.
+json_array_of() {
+  if (($# == 0)); then
+    echo '[]'
+    return
+  fi
+  printf '%s\n' "$@" | jq -Rs 'split("\n") | map(select(. != "")
+    | if . == "default" then null else tonumber end)'
+}
+
+# json_strings_of <value>...: the arguments as a JSON array of strings.
+json_strings_of() {
+  if (($# == 0)); then
+    echo '[]'
+    return
+  fi
+  printf '%s\n' "$@" | jq -Rs 'split("\n") | map(select(. != ""))'
+}
 
 # bench_environment: the machine and toolchain a result was measured on, as
 # JSON. Two results are only comparable when this matches; benchmarks/README.md

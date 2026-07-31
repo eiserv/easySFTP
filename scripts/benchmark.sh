@@ -28,6 +28,10 @@
 #   LINKPROBE_BIN                 optional built cmd/linkprobe; without it the
 #                                 result carries an empty probe list
 #   LINK_IFACE, LINK_SUDO         see scripts/benchmark-link.sh
+#   BENCH_TOOL                    optional built cmd/easysftp-bench, which turns
+#                                 the JSONL measured here into results.json,
+#                                 results.csv and summary.md (issue #190).
+#                                 Without it the command is run from source
 #   REPEATS                       measured repeats per scenario (default 3)
 #   REMOTE_BASE                   remote directory this benchmark owns
 #   OUT_DIR                       results.json and summary.md land here
@@ -84,7 +88,6 @@ mkdir -p "$OUT_DIR" "$DATASET_DIR" "$LOG_DIR"
 check_log_dir
 
 runs_file="$LOG_DIR/runs.jsonl"
-aggregate_file="$LOG_DIR/aggregate.json"
 probes_file="$LOG_DIR/link-probes.jsonl"
 deletes_file="$LOG_DIR/deletes.jsonl"
 : >"$runs_file"
@@ -226,92 +229,22 @@ if [[ -n "${LINKPROBE_BIN:-}" ]]; then
     echo "::warning::cleanup of the link probe directory failed"
 fi
 
-# One aggregate row per (link profile, build, scenario). The timing fields at the
-# top level are exactly the ones results.json v1 had, so anything already reading
-# a stored benchmark keeps working; everything new sits in its own sub-object.
-# With no profiles requested there is exactly one profile, "baseline", and the
-# row count is what it always was.
+# Everything below is aggregation and reporting, and none of it happens here any
+# more: the manifest describes the run, cmd/easysftp-bench reads it together with
+# the JSONL above and writes results.json, results.csv and summary.md (issue
+# #190). What stayed in this script is what needs a host: payload generation,
+# running the builds, shaping the link and probing it.
 #
-# duration_ms.* is wall clock. process.* is what the run cost the machine.
-# phases[] is wall clock per phase and adds up to roughly the duration.
-# operations[] is cumulative across parallel workers and does not: see the
-# "note" field the metrics file carries.
-jq -s "
-  $JQ_STATS
-  group_by([.link_profile, .label, .scenario])
-  | map(
-      (map(select(.metrics != null)) | map(.metrics)) as \$m
-      | {
-        label: .[0].label,
-        ref: .[0].ref,
-        scenario: .[0].scenario,
-        link_profile: .[0].link_profile,
-        repeats: length,
-        failed_runs: (map(select(.exit_code != 0)) | length),
-        files: (map(.files) | max),
-        bytes: (map(.bytes) | max),
-        durations_ms: map(.duration_ms),
-        median_ms: (map(.duration_ms) | median),
-        min_ms: (map(.duration_ms) | min),
-        max_ms: (map(.duration_ms) | max),
-        mad_ms: (map(.duration_ms) | mad),
-        duration_ms: (map(.duration_ms) | stats),
-        retries: (map(.retries) | add),
-        errors: (map(.errors) | add),
-        refused_connections: (map(.refused) | add),
-        process: {
-          user_cpu_ms: (\$m | map(.process.user_cpu_ms) | median),
-          sys_cpu_ms: (\$m | map(.process.sys_cpu_ms) | median),
-          cpu_percent: (\$m | map(.process.cpu_percent) | median),
-          max_rss_bytes: (\$m | map(.process.max_rss_bytes) | median),
-          go_total_alloc_bytes: (\$m | map(.process.go_total_alloc_bytes) | median),
-          go_mallocs: (\$m | map(.process.go_mallocs) | median),
-          go_gc_count: (\$m | map(.process.go_gc_count) | median),
-          go_gc_pause_total_ms: (\$m | map(.process.go_gc_pause_total_ms) | median),
-          go_peak_goroutines: (\$m | map(.process.go_peak_goroutines) | max),
-          disk_read_bytes: (\$m | map(.process.disk_read_bytes) | median),
-          net_read_bytes: (\$m | map(.process.net_read_bytes) | median),
-          net_write_bytes: (\$m | map(.process.net_write_bytes) | median)
-        },
-        counters: (\$m | map(.counters // {}) | map(to_entries) | add // []
-          | group_by(.key)
-          | map({key: .[0].key, value: (map(.value) | median)}) | from_entries),
-        phases: (\$m | map(.phases // []) | add // []
-          | group_by(.name)
-          | map({name: .[0].name, median_ms: (map(.wall_ms) | median)})
-          | sort_by(-.median_ms)),
-        operations: (\$m | map(.operations // []) | add // []
-          | group_by(.name)
-          | map({
-              name: .[0].name,
-              count: (map(.count) | median),
-              median_total_ms: (map(.total_ms) | median),
-              avg_ms: (map(.avg_ms) | median),
-              p50_ms: (map(.p50_ms) | median),
-              p90_ms: (map(.p90_ms) | median),
-              p99_ms: (map(.p99_ms) | median),
-              max_ms: (map(.max_ms) | median),
-              errors: (map(.errors) | add)
-            })
-          | sort_by(-.median_total_ms))
-      })
-  | map(. + {
-      mib_per_s: (if .median_ms > 0 then ((.bytes / 1048576) / (.median_ms / 1000) | round2) else 0 end),
-      files_per_s: (if .median_ms > 0 then (.files / (.median_ms / 1000) | round2) else 0 end)
-    })
-" "$runs_file" >"$aggregate_file"
-
-# The delete sweeps, aggregated the same way and kept strictly apart: one row per
-# (link profile, build, scenario), sweeps that deleted nothing dropped, and a
-# group left with none dropped entirely rather than stored as a row of zeroes.
-delete_file="$LOG_DIR/delete.json"
-jq -s "
-  $JQ_STATS
-  $JQ_DELETE
-  group_by([.link_profile, .label, .scenario])
-  | map({label: .[0].label, scenario: .[0].scenario, link_profile: .[0].link_profile} + delete_agg)
-  | map(select(.sweeps > 0))
-" "$deletes_file" >"$delete_file"
+# The display strings travel verbatim rather than being rebuilt on the other
+# side. This script already has them, and a summary table that reformats itself
+# during a rewrite is a change to a stored document made by accident.
+settings="easySFTP defaults (no advanced.* overrides): concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay"
+if [[ -n "$BENCH_CONNECTIONS" ]]; then
+  settings="$settings; the pool$BENCH_CONNECTIONS build is the same binary with advanced.connections: $BENCH_CONNECTIONS"
+fi
+if [[ -n "${BENCH_LINK_PROFILES:-}" ]]; then
+  settings="$settings; measured over the link profiles ${link_profiles[*]}"
+fi
 
 # The reference build every delta is measured against: the baseline when one
 # was measured, otherwise the candidate, so a pool run without a baseline is
@@ -321,228 +254,42 @@ if [[ -n "$BASELINE_BIN" ]]; then
   reference_label=baseline
 fi
 
-settings="easySFTP defaults (no advanced.* overrides): concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay"
-if [[ -n "$BENCH_CONNECTIONS" ]]; then
-  settings="$settings; the pool$BENCH_CONNECTIONS build is the same binary with advanced.connections: $BENCH_CONNECTIONS"
-fi
-if [[ -n "${BENCH_LINK_PROFILES:-}" ]]; then
-  settings="$settings; measured over the link profiles ${link_profiles[*]}"
-fi
+scenario_manifest=$(for scenario in "${SCENARIOS[@]}"; do
+  jq -nc --arg name "$scenario" --arg description "$(scenario_description "$scenario")"     '$ARGS.named'
+done | jq -s '.')
 
-scenario_docs=$(for scenario in "${SCENARIOS[@]}"; do
-  jq -nc --arg k "$scenario" --arg v "$(scenario_description "$scenario")" '{key: $k, value: $v}'
-done | jq -s 'from_entries')
-
-# results.json, schema_version 2. Layers, in the order a reader needs them:
-#   metadata (candidate_ref, baseline_ref, repeats, runner, settings, env)
-#   results   aggregated per build and scenario, incl. process/phases/operations
-#   comparison  candidate (and pool) against the reference build
-#   deletes   the pre-clean sweeps, aggregated apart from everything above
-#   runs      every individual repeat, verbatim, metrics included
-# v1's top-level keys all still exist and mean the same thing.
-# Through a file, not a process substitution: jq's --slurpfile wants a real
-# path, and /dev/fd is not one everywhere this may be run.
-runs_array="$LOG_DIR/runs.json"
-jq -s '.' "$runs_file" >"$runs_array"
-
+manifest="$LOG_DIR/manifest.json"
 jq -n \
-  --slurpfile results "$aggregate_file" \
-  --slurpfile runs "$runs_array" \
-  --slurpfile deletes "$delete_file" \
   --arg candidate_ref "$CANDIDATE_REF" \
   --arg baseline_ref "$BASELINE_REF" \
   --arg reference_label "$reference_label" \
   --argjson repeats "$REPEATS" \
   --arg runner "${RUNNER_ENVIRONMENT:-local}, $(uname -sr), $(nproc) cpu" \
+  --arg runner_display "$(uname -sr), $(nproc) cpu" \
   --argjson environment "$(bench_environment)" \
-  --argjson link "$(link_json "$probes_file")" \
   --arg settings "$settings" \
-  --argjson scenarios "$scenario_docs" \
-  "
-  $JQ_STATS
-  (\$results[0]) as \$r
-  | {
-     schema_version: 2,
-     benchmark_kind: \"standard\",
-     candidate_ref: \$candidate_ref,
-     baseline_ref: \$baseline_ref,
-     repeats: \$repeats,
-     runner: \$runner,
-     environment: \$environment,
-     link: \$link,
-     settings: \$settings,
-     reference_label: \$reference_label,
-     scenarios: \$scenarios,
-     note: \"phases are wall clock and add up to the duration; operations are cumulative across parallel workers and do not\",
-     results: \$r,
-     deletes: \$deletes[0],
-     comparison: [
-       \$r[] | select(.label != \$reference_label) as \$c
-       | (\$r[] | select(.label == \$reference_label and .scenario == \$c.scenario
-            and .link_profile == \$c.link_profile)) as \$b
-       | {
-           scenario: \$c.scenario,
-           label: \$c.label,
-           link_profile: \$c.link_profile,
-           reference_label: \$reference_label,
-           median_ms: \$c.median_ms,
-           reference_median_ms: \$b.median_ms,
-           delta_ms: (\$c.median_ms - \$b.median_ms),
-           delta_percent: pct(\$c.median_ms; \$b.median_ms),
-           reference_mad_ms: \$b.mad_ms,
-           within_noise: (if (\$b.mad_ms // 0) == 0 then null
-             else ((if \$c.median_ms - \$b.median_ms < 0 then \$b.median_ms - \$c.median_ms else \$c.median_ms - \$b.median_ms end) <= \$b.mad_ms) end)
-         }
-     ],
-     runs: \$runs[0]
-   }" >"$OUT_DIR/results.json"
+  --argjson labels "$(json_strings_of "${labels[@]}")" \
+  --argjson scenarios "$scenario_manifest" \
+  --argjson link "$(link_manifest_json "${BENCH_LINK_PROFILES:-}" "${link_profiles[@]}")" \
+  --arg runs_file "$runs_file" \
+  --arg deletes_file "$deletes_file" \
+  --arg probes_file "$probes_file" \
+  '{
+     kind: "standard",
+     candidate_ref: $candidate_ref,
+     baseline_ref: $baseline_ref,
+     reference_label: $reference_label,
+     repeats: $repeats,
+     runner: $runner,
+     runner_display: $runner_display,
+     environment: $environment,
+     settings: $settings,
+     labels: $labels,
+     scenarios: $scenarios,
+     link: $link,
+     files: {runs: $runs_file, deletes: $deletes_file, probes: $probes_file}
+   }' >"$manifest"
 
-# CSV alongside the JSON: one row per (build, scenario), so a spreadsheet or a
-# plot can read a stored result without a JSON parser. Deliberately flat and
-# aggregate-only; the raw repeats stay in results.json.
-#
-# link_profile, rtt_p50_ms and control_single_mib_per_s make a row readable on
-# its own: without them a throughput number cannot be told apart from the line
-# it was measured on. The two link numbers come from the profile's own start
-# probe, which is the one taken right before these runs.
-jq -r '
-  (.link.probes // []) as $probes
-  | ["scenario","build","ref","link_profile","rtt_p50_ms","control_single_mib_per_s",
-     "repeats","files","bytes","median_ms","min_ms","max_ms","mad_ms",
-     "mib_per_s","files_per_s","user_cpu_ms","sys_cpu_ms","cpu_percent","max_rss_bytes",
-     "go_gc_count","go_peak_goroutines","net_write_bytes","connections_opened","connections_refused",
-     "retries","errors","failed_runs"],
-  (.results[]
-   | . as $row
-   | ([$probes[] | select(.profile == $row.link_profile and .at == "start")] | first) as $p
-   | [
-    .scenario, .label, .ref, .link_profile,
-    ($p.rtt_ms.p50 // null), ($p.control.single_stream_mib_per_s // null),
-    .repeats, .files, .bytes, .median_ms, .min_ms, .max_ms, .mad_ms,
-    .mib_per_s, .files_per_s, .process.user_cpu_ms, .process.sys_cpu_ms, .process.cpu_percent,
-    .process.max_rss_bytes, .process.go_gc_count, .process.go_peak_goroutines, .process.net_write_bytes,
-    (.counters.connections_opened // 0), (.counters.connections_refused // 0),
-    .retries, .errors, .failed_runs
-  ])
-  | @csv
-' "$OUT_DIR/results.json" >"$OUT_DIR/results.csv"
-
-# summary.md carries the same numbers, readable. The delta column compares
-# every build's median against the reference build's; negative means faster.
-{
-  echo "## easySFTP benchmark"
-  echo
-  echo "| Setting | Value |"
-  echo "|---|---|"
-  echo "| Candidate | \`$CANDIDATE_REF\` |"
-  echo "| Baseline | \`${BASELINE_REF:-none}\` |"
-  echo "| Repeats per scenario | $REPEATS |"
-  echo "| Runner | $(uname -sr), $(nproc) cpu |"
-  echo "| Link profiles | ${BENCH_LINK_PROFILES:-the real line} |"
-  echo "| Settings | $settings |"
-  echo
-  link_markdown "$OUT_DIR/results.json"
-  echo "### Throughput"
-  echo
-  echo "| Scenario | Build | Profile | Files | Size | Median | Min | Max | MAD | MiB/s | files/s | Retries | Errors | Failed runs | Delta |"
-  echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
-  for scenario in "${SCENARIOS[@]}"; do
-    for label in "${labels[@]}"; do
-      for profile in "${link_profiles[@]}"; do
-        jq -r --arg s "$scenario" --arg l "$label" --arg p "$profile" '
-        (.results[] | select(.scenario == $s and .label == $l and .link_profile == $p)) as $row
-        # Through a list: the reference build has no comparison entry, and a
-        # bare "as" over an empty generator would drop its whole row.
-        | ([.comparison[] | select(.scenario == $s and .label == $l and .link_profile == $p) | .delta_percent] | first) as $delta
-        | "| \($s) | \($l) | \($p) | \($row.files) | \((($row.bytes / 1048576) * 10 | round / 10)) MiB "
-          + "| \($row.median_ms) ms | \($row.min_ms) ms | \($row.max_ms) ms | \(if $row.mad_ms == null then "-" else "\($row.mad_ms) ms" end) "
-          + "| \($row.mib_per_s) | \($row.files_per_s) | \($row.retries) | \($row.errors) | \($row.failed_runs) "
-          + "| \(if $delta == null then "-" else (if $delta > 0 then "+" else "" end) + ($delta | tostring) + "%" end) |"
-        ' "$OUT_DIR/results.json"
-      done
-    done
-  done
-  echo
-  echo "Delta compares each build's median against the \`$reference_label\` build **on the same link profile**; negative is faster. MAD is the median absolute deviation of the repeats: a delta smaller than it is inside this host's own noise."
-
-  echo
-  echo "### Resources (median per run)"
-  echo
-  echo "| Scenario | Build | Profile | User CPU | Sys CPU | CPU % | Peak RSS | Go allocs | GCs | GC pause | Peak goroutines | Net sent |"
-  echo "|---|---|---|---|---|---|---|---|---|---|---|---|"
-  # Looped rather than one jq pass over .results, so the rows come out in
-  # scenario order like the throughput table above instead of in jq's
-  # group_by order.
-  for scenario in "${SCENARIOS[@]}"; do
-    for label in "${labels[@]}"; do
-      for profile in "${link_profiles[@]}"; do
-        jq -r --arg s "$scenario" --arg l "$label" --arg p "$profile" \
-          '.results[] | select(.scenario == $s and .label == $l and .link_profile == $p)
-        | "| \(.scenario) | \(.label) | \(.link_profile) | \(.process.user_cpu_ms) ms | \(.process.sys_cpu_ms) ms | \(.process.cpu_percent)% "
-          + "| \(((.process.max_rss_bytes / 1048576) * 10 | round / 10)) MiB "
-          + "| \(((.process.go_total_alloc_bytes / 1048576) * 10 | round / 10)) MiB | \(.process.go_gc_count) "
-          + "| \(.process.go_gc_pause_total_ms) ms | \(.process.go_peak_goroutines) "
-          + "| \(((.process.net_write_bytes / 1048576) * 10 | round / 10)) MiB |"
-        ' "$OUT_DIR/results.json"
-      done
-    done
-  done
-
-  echo
-  echo "### Where the time goes"
-  echo
-  echo "Phases are wall clock and add up to roughly the run's duration. Operation totals are **cumulative across parallel workers** and are normally larger than the phase they belong to; read them for their share and their per-call cost, never as wall clock."
-  echo
-  for scenario in "${SCENARIOS[@]}"; do
-    echo "<details><summary><code>$scenario</code> phases and round-trips</summary>"
-    echo
-    echo "| Build | Profile | Phase | Wall |"
-    echo "|---|---|---|---|"
-    jq -r --arg s "$scenario" '.results[] | select(.scenario == $s) as $row
-      | $row.phases[] | select(.median_ms > 0)
-      | "| \($row.label) | \($row.link_profile) | \(.name) | \(.median_ms) ms |"' "$OUT_DIR/results.json"
-    echo
-    echo "| Build | Profile | Operation | Count | Cumulative | Avg | p50 | p90 | p99 | Max |"
-    echo "|---|---|---|---|---|---|---|---|---|---|"
-    jq -r --arg s "$scenario" '.results[] | select(.scenario == $s) as $row
-      | $row.operations[] | select(.count > 0)
-      | "| \($row.label) | \($row.link_profile) | \(.name) | \(.count) | \(.median_total_ms) ms | \(.avg_ms) ms | \(.p50_ms) ms | \(.p90_ms) ms | \(.p99_ms) ms | \(.max_ms) ms |"' "$OUT_DIR/results.json"
-    echo
-    echo "</details>"
-    echo
-  done
-
-  echo "### Delete sweeps"
-  echo
-  echo "The pre-clean before every measured run wipes the tree the previous repeat left behind, which makes it a pure delete sweep. It costs no extra time (it has always run) and its numbers never enter the upload tables above. Sweeps that found an empty directory are not counted."
-  echo
-  echo "| Scenario | Build | Profile | Sweeps | Files deleted | Median | files/s | remote_scan | delete_sweep |"
-  echo "|---|---|---|---|---|---|---|---|---|"
-  jq -r '
-    def phase($n): [.phases[] | select(.name == $n) | .median_ms] | first;
-    def ms: if . == null then "-" else "\(.) ms" end;
-    .deletes[]
-    | "| \(.scenario) | \(.label) | \(.link_profile) | \(.sweeps) | \(.files_deleted) | \(.median_ms) ms "
-      + "| \(.deletes_per_s) | \(phase("remote_scan") | ms) | \(phase("delete_sweep") | ms) |"
-  ' "$OUT_DIR/results.json"
-  echo
-  echo "| Scenario | Build | Profile | Operation | Count | Cumulative | p50 | p90 | p99 | Max |"
-  echo "|---|---|---|---|---|---|---|---|---|---|"
-  # sftp_remove and sftp_rmdir are the numbers issue #157 is about: one
-  # round-trip per entry, strictly sequential, no concurrency anywhere near them.
-  jq -r '.deletes[] as $d | $d.operations[] | select(.count > 0)
-    | "| \($d.scenario) | \($d.label) | \($d.link_profile) | \(.name) | \(.count) | \(.median_total_ms) ms "
-      + "| \(.p50_ms) ms | \(.p90_ms) ms | \(.p99_ms) ms | \(.max_ms) ms |"' "$OUT_DIR/results.json"
-  echo
-
-  # Without this line a pool run whose extra connections the server refused
-  # reads as "the pool did nothing", which is the wrong conclusion entirely.
-  refused=$(jq '[.results[].refused_connections] | add // 0' "$OUT_DIR/results.json")
-  if [[ "$refused" != 0 ]]; then
-    echo "**$refused connection(s) were refused by the server** and fell back to the run's first connection, so a pool build measured here had fewer connections than configured."
-    echo
-  fi
-  echo "Data only: these numbers set no threshold and fail no build. Collected to evaluate the single-connection ceiling discussed in issue #158 and to show where a run spends its time."
-} >"$OUT_DIR/summary.md"
+bench_tool aggregate --manifest "$manifest" --out "$OUT_DIR"
 
 cat "$OUT_DIR/summary.md"

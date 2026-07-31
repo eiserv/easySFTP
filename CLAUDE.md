@@ -171,11 +171,33 @@ granularity is a separate, later decision; don't build it speculatively.
 
 ## Benchmarks
 
-`scripts/benchmark.sh` measures throughput at the default settings,
-`scripts/benchmark-matrix.sh` sweeps `advanced.connections` against
-`advanced.concurrency`, both on top of the shared `scripts/benchmark-lib.sh`
-(payload generation, running a build, reading its outputs, the jq statistics)
-and `scripts/benchmark-link.sh` (the probed link profile and `tc` shaping).
+The harness is split in two, and the split is the thing to keep straight
+(issue #190). **Shell measures, Go aggregates.** `scripts/benchmark.sh`
+measures throughput at the default settings, `scripts/benchmark-matrix.sh`
+sweeps `advanced.connections` against `advanced.concurrency`, both on top of the
+shared `scripts/benchmark-lib.sh` (payload generation, running a build, reading
+its outputs) and `scripts/benchmark-link.sh` (the probed link profile and `tc`
+shaping). Each appends one JSON document per run to its JSONL files, writes a
+`manifest.json` describing the run, and then calls `cmd/easysftp-bench`, which
+reads both and writes `results.json`/`matrix.json` plus their CSV and Markdown.
+
+That means a change to *what is measured* is a shell change and a change to
+*what is reported* is a Go change, and the manifest is the seam. The manifest
+carries the display strings the summaries print (axis lists, the runner line,
+the settings sentence) verbatim rather than rebuilding them in Go: a summary
+table that reformats itself is a change to a stored document made by accident.
+
+Inside `internal/benchmark`: `schema` is what is on disk and must keep reading
+every result already committed (its fixture test decodes every file under
+`benchmarks/` strictly, so a type that does not cover a stored field fails);
+`stats` is the old `JQ_STATS` block, and its edge cases are load-bearing (lower
+middle median, `mad` null below two samples, null sorting below every number and
+being the identity of addition); `report` renders the CSV and the Markdown.
+
+`scripts/benchmark-aggregate-jq.sh` is the jq implementation the Go one
+replaced, kept only as the parity oracle `scripts/test-benchmark.sh` diffs
+against. It is scaffolding, not a second implementation: do not tidy it, and do
+not add to it. Step 6 of #190 deletes it.
 A scenario there carries a *shape* as well as a payload (`scenario_shape`: mode,
 whether the measured run redeploys over an unmeasured one, flat or deep
 layout). The deploy-shape scenarios (`redeploy`, `sync`, `deep`, `bulk`,
