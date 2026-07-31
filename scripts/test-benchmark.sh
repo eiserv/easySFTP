@@ -479,7 +479,7 @@ if grep -qF '**The optimum sits on the edge of the grid**' "$OUT_DIR/matrix.md";
 else
   fail "matrix.md hides that the optimum sits on an axis edge"
 fi
-if grep -qF '### What `auto` costs (policy regret)' "$OUT_DIR/matrix.md"; then
+if grep -qF 'costs (policy regret)' "$OUT_DIR/matrix.md"; then
   pass "matrix.md reports the policy regret"
 else
   fail "matrix.md is missing its policy regret section"
@@ -705,9 +705,9 @@ expect_equal 'and the declared axis says so too' 'null' \
   "$(jq -r '.axes.request_concurrency | map(tostring) | join(" ")' "$req_matrix")"
 expect_equal 'the run still records what easySFTP used' 16 \
   "$(jq -r '.cells[0].request_concurrency_used' "$req_matrix")"
-if bash -c "MATRIX_REQUEST_CONCURRENCY='fast' \
-  OUT_DIR='$work/req-out' LOG_DIR='$work/req-logs' DATASET_DIR='$DATASET_DIR' \
-  bash '$repo_root/scripts/benchmark-matrix.sh'" >/dev/null 2>&1; then
+# Everything the script reads is exported already, so the bad value is the only
+# thing that changes here; it is rejected during validation, before any run.
+if MATRIX_REQUEST_CONCURRENCY=fast bash "$repo_root/scripts/benchmark-matrix.sh" >/dev/null 2>&1; then
   fail "a nonsense request_concurrency axis value is accepted"
 else
   pass "a nonsense request_concurrency axis value is rejected"

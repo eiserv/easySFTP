@@ -416,7 +416,22 @@ jobs:
           BENCH_KNOWN_HOSTS=$(ssh-keyscan -p 2222 localhost 2>/dev/null)
           export BENCH_KNOWN_HOSTS
           bash scripts/benchmark-matrix.sh
-          jq -e '.cells | length == 8 and all(.median_ms > 0 and .failed_runs == 0)' "$OUT_DIR/matrix.json"
+          # 7, not 2x2x2: the grid is per scenario (issue #184, phase 5). "small"
+          # takes the whole 2x2, "single" is one file and therefore one
+          # connections/concurrency cell, swept over the three
+          # request_concurrency values it is the only scenario here to qualify for.
+          jq -e '.cells | length == 7 and all(.median_ms > 0 and .failed_runs == 0)' "$OUT_DIR/matrix.json"
+          # The request axis really reaches the run, and every cell records the
+          # value it ran with. Against a real server because the counter behind
+          # it is the only source of that; the stub can only echo it back.
+          jq -e '.cells | all(.request_concurrency_used > 0
+                   and (.request_concurrency == null
+                        or .request_concurrency == .request_concurrency_used))' "$OUT_DIR/matrix.json"
+          # And "auto" resolved to something real, per scenario, which is what
+          # the policy regret of issue #184 phase 5 is computed from.
+          jq -e '.auto | length == 2 and all(.median_ms > 0 and .failed_runs == 0
+                   and .chosen.connections > 0 and .chosen.concurrency > 0
+                   and .chosen.request_concurrency > 0 and .regret_percent != null)' "$OUT_DIR/matrix.json"
           # connections > concurrency must be measured, not rejected, and the
           # pool must really cap at the concurrency there (see the pool note in
           # internal/uploader/session.go).
