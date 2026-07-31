@@ -5,6 +5,30 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0](https://github.com/eiserv/easySFTP/compare/v3.3.2...v3.4.0) (2026-07-31)
+
+
+### Features
+
+* **benchmark:** keep per-cell metrics and add a canary cell ([#184](https://github.com/eiserv/easySFTP/issues/184)) ([#187](https://github.com/eiserv/easySFTP/issues/187)) ([4708dc9](https://github.com/eiserv/easySFTP/commit/4708dc9e25f4663beda09d0eea564ab78eef293e))
+* **benchmark:** keep the delete sweep that already runs ([#184](https://github.com/eiserv/easySFTP/issues/184)) ([#189](https://github.com/eiserv/easySFTP/issues/189)) ([5b23cba](https://github.com/eiserv/easySFTP/commit/5b23cbaf857188c3dd45dd3257dee610d71f2d84))
+* **benchmark:** measure the deploys that actually happen ([#184](https://github.com/eiserv/easySFTP/issues/184)) ([#188](https://github.com/eiserv/easySFTP/issues/188)) ([f147d42](https://github.com/eiserv/easySFTP/commit/f147d42ac7452d7f9ea4314ae773cc2947a40e0c))
+* **benchmark:** phase and process metrics, connections/concurrency matrix ([#181](https://github.com/eiserv/easySFTP/issues/181)) ([f938e96](https://github.com/eiserv/easySFTP/commit/f938e963707e9339f9ea3ff2718c718d84213e50))
+* **benchmark:** record and control the link profile ([#184](https://github.com/eiserv/easySFTP/issues/184)) ([#185](https://github.com/eiserv/easySFTP/issues/185)) ([5b991f0](https://github.com/eiserv/easySFTP/commit/5b991f0553a737ddd955bbe3ff4e380ecd7de0dd))
+* **benchmark:** sweep the axes that move, and score what auto picks ([#184](https://github.com/eiserv/easySFTP/issues/184)) ([#191](https://github.com/eiserv/easySFTP/issues/191)) ([223cdd9](https://github.com/eiserv/easySFTP/commit/223cdd9a6c9e15339e0253a46c87dd6712afc485))
+* **uploader:** optional connection pool for parallel uploads ([#179](https://github.com/eiserv/easySFTP/issues/179)) ([c21cca9](https://github.com/eiserv/easySFTP/commit/c21cca92a3f92bf4ebc4b46f3d16862cbd78b3f1))
+
+
+### Bug Fixes
+
+* store nanosecond mtimes in the sync manifest so same-second edits deploy ([#182](https://github.com/eiserv/easySFTP/issues/182)) ([5f4e1a0](https://github.com/eiserv/easySFTP/commit/5f4e1a0d310eae898c7272de2fa48e26c0ad2f1f)), closes [#162](https://github.com/eiserv/easySFTP/issues/162)
+* sweep stale temp files left behind by a killed run ([#183](https://github.com/eiserv/easySFTP/issues/183)) ([924a789](https://github.com/eiserv/easySFTP/commit/924a789ce5a78e97860e6086152776f12ef53b9a))
+
+
+### Documentation
+
+* removed routine-sessions from CLAUDE.md ([989c791](https://github.com/eiserv/easySFTP/commit/989c791cd7dca7172055ffbfeed2e6bcd34c1cfb))
+
 ## [3.3.2](https://github.com/eiserv/easySFTP/compare/v3.3.1...v3.3.2) (2026-07-27)
 
 
