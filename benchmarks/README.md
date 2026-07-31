@@ -105,12 +105,16 @@ same thing in version 2.
 
 | Key | What it is |
 |---|---|
-| `axes` | the grid, declared: `link_profiles`, `connections`, `concurrency`, `request_concurrency` |
+| `axes` | the grid as requested: `link_profiles`, `connections`, `concurrency`, `request_concurrency` |
+| `axes.per_scenario` | the grid as measured, per scenario, plus the `files` count it was capped against; see "The per-scenario grid" below |
 | `link` | the same object a standard run carries, one probe pair per swept profile |
 | `cells[]` | one row per (link profile, scenario, build, connections, concurrency, request_concurrency) with duration, throughput, files/s, network bytes, CPU, peak RSS, connections opened/used/refused, reconnects, retries, errors |
+| `cells[].request_concurrency_used` | the value the run actually ran with, read from its counters; `request_concurrency` is null on the pass that sets nothing, and that null alone does not say which value it was |
 | `cells[].phases[]` | wall clock per phase, the same list a standard run's `results[].phases[]` carries |
 | `cells[].operations[]` | per round-trip: count, cumulative total, average, p50/p90/p99, max, errors |
 | `scaling[]` | the same cells pre-grouped per link profile, scenario and build, ordered along the axes, plus the `best` cell |
+| `scaling[].best_at_axis_max` | the axes whose largest swept value *is* the best cell, i.e. where the optimum was cut off rather than measured |
+| `auto[]` | the settings easySFTP picked for itself, and the regret against the best cell; see "What `auto` costs" below |
 | `comparison[]` | candidate against baseline at identical coordinates, **including the same link profile** |
 | `canary[]` | the fixed cell, measured at the `start`, the `mid` and the `end` of each profile's grid |
 | `deletes[]` | the delete sweeps, one row per cell coordinate; see "The delete sweeps" below |
@@ -123,6 +127,73 @@ that change have `upload_phase_ms` alone.
 The CSV next to it is the same `cells[]` flattened, one row per cell, which is
 what a heatmap or a scaling plot reads. The nested `phases[]` and
 `operations[]` stay out of it and live in the JSON only.
+
+### The per-scenario grid
+
+Up to issue #184 phase 5 every scenario was swept over the same axes, and the
+stored results show what that bought: `single` (one 32 MiB file) has 30 cells
+holding the same 0.38 MiB/s, because one file cannot be spread over connections
+or over workers. Meanwhile the optimum of every small-file scenario sat at
+`concurrency: 32`, the largest value swept, so the grid could report a boundary
+and never an optimum.
+
+The axes are therefore capped against the payload, per scenario, by
+`axis_for_scenario` in
+[`scripts/benchmark-lib.sh`](../scripts/benchmark-lib.sh):
+
+- **A value above the file count is dropped** (capped and deduplicated). Only
+  the per-file upload path spreads over connections and workers, so at most
+  *file count* files are ever in flight; measuring `concurrency: 16` on a
+  one-file payload measures `concurrency: 1` under another name.
+- **`request_concurrency` is only swept where a file is at least 1 MiB.** It is
+  `sftp.MaxConcurrentRequestsPerFile`, how many write requests of *one* file may
+  be in flight. pkg/sftp writes 32 KiB packets, so a 4 KiB file is a single
+  packet and a value above the default of 16 needs at least 32 packets before it
+  has anything left to pipeline.
+
+What that pays for is the two things phase 5 asks for: a `concurrency` axis that
+runs to 64 so the optimum can be interior, and a `request_concurrency` axis that
+is swept for real instead of being declared and left empty. `axes` keeps what
+was requested, `axes.per_scenario` records what each scenario was actually
+measured over, and `matrix.md` prints both next to the scenario table. A cell
+missing from the declared grid was not skipped; it would have been a duplicate.
+
+`scaling[].best_at_axis_max` is the honesty check on top: it names the axes
+whose largest swept value is the best cell. Where it is non-empty the optimum is
+at or beyond the edge of the sweep, and anything fitted to those numbers
+extrapolates.
+
+### What `auto` costs
+
+Every sweep also measures one run per scenario and link profile with
+`connections`, `concurrency` and `request_concurrency` all set to `auto`, on the
+candidate build, and scores it against the grid:
+
+| Field | What it is |
+|---|---|
+| `chosen` | the `connections`, `concurrency` and `request_concurrency` the run used, read from its own counters rather than assumed |
+| `median_ms`, `min_ms`, `max_ms`, `mad_ms`, `durations_ms`, `mib_per_s`, `files_per_s` | the same statistics a cell carries |
+| `best` | the fastest candidate cell of that scenario and profile |
+| `regret_ms`, `regret_percent` | the gap: how much slower the policy is than the settings a sweep would have picked |
+| `chosen_in_grid`, `chosen_cell_median_ms` | the same coordinates measured as an ordinary cell, when the grid contains them |
+
+Three things about it:
+
+- **It is not a cell.** `auto` does not sit at a coordinate, it chooses one, so
+  it stays out of `cells[]`, `scaling[]`, `comparison[]` and the CSV. A build
+  label in the grid would have measured the same policy at every coordinate.
+- **`chosen_cell_median_ms` is a control, not a result.** It is the same
+  settings measured a second time, as a cell. A large gap between it and the
+  `auto` run means the two saw different conditions, and the regret next to it
+  is then drift rather than policy.
+- **The regret is per link profile on purpose.** `RTT`, the per-connection
+  operation ceiling and the per-connection bandwidth are properties of one line
+  (see "The link profile"), and a policy that is only good on the benchmark
+  host's line is the failure class of #62 all over again. A policy within ~15%
+  of optimum on every profile is defensible; one that only wins here is not.
+  This is the number the auto-config work of #156 has to beat, and today it
+  scores a hardcoded default, which is exactly what #156 says `auto` currently
+  is.
 
 ### The canary
 
@@ -411,16 +482,21 @@ stays one.
 
 The **`SFTP benchmark matrix`** workflow
 ([`.github/workflows/benchmark-matrix.yml`](../.github/workflows/benchmark-matrix.yml))
-runs the sweep. Its `connections` and `concurrency` inputs are the axes,
-`request-concurrency` adds an optional third one and `link-profiles` a fourth.
-Its `scenarios` input is where the deploy shapes above are requested; the
-default stays `small large single`, since each added scenario multiplies the
-grid the same way a link profile does.
+runs the sweep. Its `connections`, `concurrency` and `request-concurrency`
+inputs are the axes and `link-profiles` adds a fourth. Its `scenarios` input is
+where the deploy shapes above are requested; the default stays
+`small large single`, since each added scenario multiplies the grid the same way
+a link profile does.
 Candidate and baseline are measured cell by cell, back to back, for the same
-reason the standard benchmark interleaves its repeats. The default grid is over a
-hundred measured runs and takes hours, and each extra link profile multiplies
-that; shrink the axes for a quick look. The script prints its run count before it
-starts, canary runs included.
+reason the standard benchmark interleaves its repeats. The grid is tens of
+measured runs per scenario and takes hours, and each extra link profile
+multiplies that; shrink the axes for a quick look. The script prints its run
+count before it starts, per scenario and with the canary and `auto` runs
+included, and it prints the axes each scenario was reduced to (see "The
+per-scenario grid").
+
+Setting `request-concurrency` to the single token `default` turns that axis off
+again, which is the grid every result before issue #184 phase 5 was measured on.
 
 ### About `connections` above `concurrency`
 
@@ -432,3 +508,9 @@ over the pool, and at most `concurrency` files are ever in flight, so a
 connection past that number buys a handshake and no parallelism. Those cells are
 in the grid so the data shows that flattening rather than leaving a gap where a
 reader has to take the cap on trust.
+
+The per-scenario cap above does not remove them: it caps both axes at the same
+number, so a scenario with at least two files still has its `connections >
+concurrency` cells. A one-file scenario has exactly one configuration and
+therefore one cell, which is the same statement made in one row instead of
+thirty.

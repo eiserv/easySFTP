@@ -14,10 +14,18 @@ name: SFTP benchmark matrix
 # "sftp-benchmark" concurrency group with benchmark.yml, since both measure the
 # same host and two of them at once would measure each other.
 #
-# Cost: the default grid is 4 connection values x 5 concurrency values x 3
-# scenarios x the number of builds. That is over a hundred measured runs; the
-# job's timeout is generous for that reason, and the inputs exist so a quick
-# look can be a quick look.
+# Cost: the grid is per scenario, not global. An axis value above a scenario's
+# file count is the same configuration under another name, and
+# request_concurrency is a per-file setting a payload of 4 KiB files cannot use,
+# so both axes are capped against the payload (issue #184, phase 5). That is
+# what pays for the longer concurrency axis, whose old maximum of 16 could only
+# ever report an optimum on its own edge. It is still tens of measured runs per
+# scenario; the job's timeout is generous for that reason, and the inputs exist
+# so a quick look can be a quick look.
+#
+# Each sweep also measures the settings easySFTP picks for itself, once per
+# scenario and profile, and reports the gap to the best cell as the policy's
+# regret. That number is what the auto-config work of #156 has to beat.
 #
 # Secrets, runner and approval: identical to benchmark.yml; see its header for
 # the reasoning, including why this must stay off "on: release" and why the
@@ -44,14 +52,14 @@ on:
         default: "1 2 4 8"
         type: string
       concurrency:
-        description: "advanced.concurrency values to sweep, space separated."
+        description: "advanced.concurrency values to sweep, space separated. Each scenario is swept over the values its file count can use, so a large value costs nothing on a small payload."
         required: false
-        default: "1 2 4 8 16"
+        default: "1 2 4 8 16 32 64"
         type: string
       request-concurrency:
-        description: "Optional third axis (advanced.request_concurrency), space separated. Empty keeps easySFTP's default and the grid two-dimensional."
+        description: "Third axis (advanced.request_concurrency), space separated. Applied only to scenarios whose files are at least 1 MiB, since the setting is per file. The token 'default' is a pass that sets nothing, so 'default' alone gives a two-dimensional grid."
         required: false
-        default: ""
+        default: "1 16 64"
         type: string
       scenarios:
         description: "Scenarios to sweep: small, mixed, large, single, plus the deploy shapes redeploy, sync, deep, bulk and the calibration family calib-<count>x<size> (for example calib-100x64k). redeploy and sync deploy their tree twice per cell, only the second one measured."

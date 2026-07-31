@@ -213,6 +213,27 @@ applied only behind the EXIT/INT/TERM trap in `benchmark-link.sh`, because a
 runner left shaped makes every later measurement on it quietly wrong. Shaping
 that is unavailable is recorded, never fatal.
 
+The matrix grid is **per scenario** (issue #184, phase 5). `axis_for_scenario`
+caps and deduplicates both axes at the scenario's file count, and
+`scenario_sweeps_requests` only lets the `request_concurrency` axis through for
+payloads with files of at least 1 MiB, because that setting is
+`MaxConcurrentRequestsPerFile`. Both rules are properties of the payload, not
+opinions about the code: a value above the file count measures the same
+configuration twice (the stored `single` sweeps are 30 cells of one number).
+`axes` keeps what was requested and `axes.per_scenario` what was measured; do
+not collapse the two. That reduction is what pays for the `concurrency` axis
+running to 64, and the point of running it that far is that
+`scaling[].best_at_axis_max` should come out empty: a best cell on the largest
+swept value is a cut-off, not an optimum.
+
+Every sweep also measures `auto` (the settings easySFTP picks for itself) once
+per scenario and profile, and reports the regret against the best cell. It is
+deliberately not a build label in the grid: `auto` chooses a coordinate rather
+than sitting at one, so it stays out of `cells[]`, `scaling[]`, `comparison[]`
+and the CSV, and its chosen settings are read back from the run's own
+`config_*` counters rather than assumed. Changing the policy itself is #156 and
+belongs in its own PR; this only measures it.
+
 The `clean` deployment of an empty directory that runs before every measured run
 is instrumented too, into its own metrics file and its own `deletes[]` block
 (issue #184, phase 4): it is a pure delete sweep and the only measurement of

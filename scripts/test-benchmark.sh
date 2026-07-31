@@ -60,6 +60,7 @@ target=${EASYSFTP_TARGET:-}
 mode=${EASYSFTP_MODE:-}
 connections=1
 concurrency=4
+request_concurrency=16
 skip_unchanged=false
 if [[ -n "${EASYSFTP_CONFIG:-}" ]]; then
   source_dir=$(awk -F'"' '/source:/ { print $2; exit }' "$EASYSFTP_CONFIG")
@@ -67,8 +68,16 @@ if [[ -n "${EASYSFTP_CONFIG:-}" ]]; then
   mode=$(awk '/^    mode:/ { print $2; exit }' "$EASYSFTP_CONFIG")
   connections=$(awk '/^  connections:/ { print $2; exit }' "$EASYSFTP_CONFIG")
   concurrency=$(awk '/^  concurrency:/ { print $2; exit }' "$EASYSFTP_CONFIG")
+  request_concurrency=$(awk '/^  request_concurrency:/ { print $2; exit }' "$EASYSFTP_CONFIG")
+  # "auto" resolves to easySFTP's own defaults here, exactly as autoInt.or does
+  # in internal/config/configfile.go: an auto run has to come out somewhere on
+  # the grid, otherwise the regret arithmetic has nothing to compare.
   connections=${connections:-1}
   concurrency=${concurrency:-4}
+  request_concurrency=${request_concurrency:-16}
+  case $connections in auto) connections=1 ;; esac
+  case $concurrency in auto) concurrency=4 ;; esac
+  case $request_concurrency in auto) request_concurrency=16 ;; esac
   if grep -q '^  skip_unchanged: true' "$EASYSFTP_CONFIG"; then
     skip_unchanged=true
   fi
@@ -159,6 +168,7 @@ if [[ -n "${EASYSFTP_METRICS_FILE:-}" ]]; then
     "connections_opened": $connections, "connections_used": $connections,
     "connections_refused": 0, "reconnects": 0, "retries": 0, "stalls": 0, "errors": 0,
     "config_connections": $connections, "config_concurrency": $concurrency,
+    "config_request_concurrency": $request_concurrency,
     "files_uploaded": $files, "bytes_uploaded": $bytes, "files_deleted": $deleted
   }
 }
@@ -390,33 +400,90 @@ fi
 
 expect_equal 'matrix.json is schema_version 2' 2 "$(jq -r .schema_version "$matrix")"
 expect_equal 'matrix.json says what kind it is' matrix "$(jq -r .benchmark_kind "$matrix")"
-# 2 connections x 2 concurrency x 2 scenarios x 2 builds.
-expect_equal 'every cell of the grid was measured' 16 "$(jq '.cells | length' "$matrix")"
+# The grid is per scenario (issue #184, phase 5): "small" (300 files) is swept
+# over 2 connections x 2 concurrency at easySFTP's own request_concurrency, and
+# "single" (one 32 MiB file) collapses to a single connections/concurrency cell
+# but is the one scenario the request axis applies to. 2 builds each: 8 + 6.
+expect_equal 'every cell of the grid was measured' 14 "$(jq '.cells | length' "$matrix")"
+expect_equal 'a one-file scenario is not measured at four identical coordinates' 3 \
+  "$(jq '[.cells[] | select(.scenario == "single" and .label == "candidate")] | length' "$matrix")"
+expect_equal 'the request axis is swept where a file is large enough for it' '1 16 64' \
+  "$(jq -r '[.cells[] | select(.scenario == "single") | .request_concurrency] | unique | sort | join(" ")' "$matrix")"
+expect_equal 'and left at easySFTP its own value where it cannot matter' 'null' \
+  "$(jq -r '[.cells[] | select(.scenario == "small") | .request_concurrency] | unique | map(tostring) | join(" ")' "$matrix")"
+expect_equal 'a cell records the request_concurrency it actually ran with' 16 \
+  "$(jq -r '[.cells[] | select(.scenario == "small") | .request_concurrency_used] | first' "$matrix")"
+expect_equal 'the per-scenario axes are declared next to the requested ones' '1 2/1 4/null' \
+  "$(jq -r '.axes.per_scenario.small | "\(.connections | join(" "))/\(.concurrency | join(" "))/\(.request_concurrency | map(tostring) | join(" "))"' "$matrix")"
+expect_equal 'a scenario declares the file count its axes were capped against' 1 \
+  "$(jq -r '.axes.per_scenario.single.files' "$matrix")"
 expect_equal 'connections > concurrency is measured, not rejected' 1 \
   "$(jq '[.cells[] | select(.connections == 2 and .concurrency == 1 and .label == "candidate" and .scenario == "small")] | length' "$matrix")"
 expect_nonempty 'cells carry the used connection count' \
   "$(jq -r '[.cells[] | .connections_used] | first' "$matrix")"
-expect_equal 'cells carry throughput and file rate' 16 \
+expect_equal 'cells carry throughput and file rate' 14 \
   "$(jq '[.cells[] | select(.mib_per_s != null and .files_per_s != null)] | length' "$matrix")"
-expect_equal 'cells carry CPU and RSS' 16 \
+expect_equal 'cells carry CPU and RSS' 14 \
   "$(jq '[.cells[] | select(.max_rss_bytes != null and .user_cpu_ms != null)] | length' "$matrix")"
 expect_equal 'the scaling view is grouped per scenario and build' 4 \
   "$(jq '.scaling | length' "$matrix")"
 
 # A matrix run has no runs[], so a cell is the finest grain there is: the phase
 # and round-trip detail has to survive into it (issue #184, phase 2).
-expect_equal 'every cell keeps its phases' 16 \
+expect_equal 'every cell keeps its phases' 14 \
   "$(jq '[.cells[] | select((.phases | length) > 0)] | length' "$matrix")"
 expect_equal 'a cell keeps the phases that are not the upload' 'connect create_dirs local_scan upload' \
   "$(jq -r '[.cells[0].phases[].name] | sort | join(" ")' "$matrix")"
-expect_equal 'every cell keeps its round-trip percentiles' 16 \
+expect_equal 'every cell keeps its round-trip percentiles' 14 \
   "$(jq '[.cells[] | select(([.operations[] | select(.name == "sftp_open") | .p90_ms] | first) != null)] | length' "$matrix")"
 expect_nonempty 'upload_phase_ms is still there for anything reading it' \
   "$(jq -r '.cells[0].upload_phase_ms' "$matrix")"
 
 # A single repeat has no measured spread; 0 there would read as precision.
-expect_equal 'a one-repeat cell reports no MAD' 16 \
+expect_equal 'a one-repeat cell reports no MAD' 14 \
   "$(jq '[.cells[] | select(.mad_ms == null)] | length' "$matrix")"
+
+# The policy measurement of issue #184 phase 5. The stub resolves "auto" to
+# easySFTP's own defaults (1/4/16), and gets faster with more parallelism, so
+# the best cell of "small" is 2/4 and auto must come out behind it.
+expect_equal 'auto is measured once per scenario and profile' 2 \
+  "$(jq '.auto | length' "$matrix")"
+expect_equal 'auto is not a cell' 0 \
+  "$(jq '[.cells[] | select(.label == "auto")] | length' "$matrix")"
+expect_equal 'auto stays out of the scaling view and the comparison' 0 \
+  "$(jq '[(.scaling[], .comparison[]) | select(.label == "auto")] | length' "$matrix")"
+expect_equal 'auto reports the settings it picked, read from its own counters' '1/4/16' \
+  "$(jq -r '[.auto[] | select(.scenario == "small") | "\(.chosen.connections)/\(.chosen.concurrency)/\(.chosen.request_concurrency)"] | first' "$matrix")"
+expect_equal 'auto is scored against the best cell of its scenario' '2/4' \
+  "$(jq -r '[.auto[] | select(.scenario == "small") | "\(.best.connections)/\(.best.concurrency)"] | first' "$matrix")"
+regret=$(jq -r '[.auto[] | select(.scenario == "small") | .regret_percent] | first' "$matrix")
+if [[ -n $regret ]] && awk -v r="$regret" 'BEGIN { exit !(r > 0) }'; then
+  pass "a policy that picks a slower cell reports a positive regret ($regret%)"
+else
+  fail "auto picked the slower cell, so the regret should be positive, got $regret%"
+fi
+# The control column: the same coordinates measured as an ordinary cell. For
+# "single" the picked concurrency is not on the grid at all, and that has to be
+# said rather than silently paired with something else.
+expect_equal 'the picked cell is cross-checked against the grid' true \
+  "$(jq -r '[.auto[] | select(.scenario == "small") | .chosen_in_grid] | first' "$matrix")"
+expect_equal 'a pick outside the grid is reported as such' 'false null' \
+  "$(jq -r '[.auto[] | select(.scenario == "single") | "\(.chosen_in_grid) \(.chosen_cell_median_ms)"] | first' "$matrix")"
+
+# An optimum on the largest swept value of an axis was cut off, not measured.
+# "small" is fastest at 2/4 here, the largest value of both of its axes.
+expect_equal 'a best cell on the edge of an axis is flagged' 'connections concurrency' \
+  "$(jq -r '[.scaling[] | select(.scenario == "small" and .label == "candidate") | .best_at_axis_max[]] | join(" ")' "$matrix")"
+if grep -qF '**The optimum sits on the edge of the grid**' "$OUT_DIR/matrix.md"; then
+  pass "matrix.md says when the optimum was cut off"
+else
+  fail "matrix.md hides that the optimum sits on an axis edge"
+fi
+if grep -qF '### What `auto` costs (policy regret)' "$OUT_DIR/matrix.md"; then
+  pass "matrix.md reports the policy regret"
+else
+  fail "matrix.md is missing its policy regret section"
+fi
 
 # Start, middle and end of the grid: 2 connections x 2 concurrency x 2 scenarios
 # x 2 builds is 16 cells, so the middle canary has a middle to sit in.
@@ -428,11 +495,16 @@ expect_equal 'the canary is one fixed cell' 'small/1/4' \
   "$(jq -r '[.canary[] | "\(.scenario)/\(.connections)/\(.concurrency)"] | unique | join(" ")' "$matrix")"
 # One delete row per cell, minus the first cell of each (build, scenario): its
 # pre-clean has an empty directory in front of it (issue #184, phase 4).
-expect_equal 'every cell but the first of its build and scenario has a delete row' 12 \
+expect_equal 'every cell but the first of its build and scenario has a delete row' 10 \
   "$(jq '.deletes | length' "$matrix")"
+# The auto runs deploy into their own remote directory and their pre-clean is
+# left uninstrumented: their coordinates are not a coordinate of the grid, so a
+# delete row of them would sit under settings nobody swept.
+expect_equal 'the auto runs contribute no delete rows' 0 \
+  "$(jq '[.deletes[] | select(.label == "auto")] | length' "$matrix")"
 expect_equal 'a delete row carries the cell coordinates it was measured at' true \
   "$(jq '.deletes[0] | has("connections") and has("concurrency") and has("request_concurrency")' "$matrix")"
-expect_equal 'a matrix delete row keeps its sweep phase' 12 \
+expect_equal 'a matrix delete row keeps its sweep phase' 10 \
   "$(jq '[.deletes[] | select([.phases[] | select(.name == "delete_sweep")] | length == 1)] | length' "$matrix")"
 expect_nonempty 'a matrix delete row keeps the sftp_remove percentiles' \
   "$(jq -r '[.deletes[0].operations[] | select(.name == "sftp_remove") | .p50_ms] | first' "$matrix")"
@@ -454,7 +526,7 @@ fi
 expect_equal 'the axes are declared' '1 2' "$(jq -r '.axes.connections | join(" ")' "$matrix")"
 expect_equal 'the concurrency axis is declared' '1 4' "$(jq -r '.axes.concurrency | join(" ")' "$matrix")"
 
-expect_equal 'the matrix CSV has a header plus one row per cell' 17 \
+expect_equal 'the matrix CSV has a header plus one row per cell' 15 \
   "$(line_count "$OUT_DIR/matrix.csv")"
 if grep -qF '## easySFTP connections/concurrency matrix' "$OUT_DIR/matrix.md"; then
   pass "matrix.md has its heading"
@@ -530,6 +602,20 @@ if scenario_spec calib-nonsense >/dev/null 2>&1; then
 else
   pass "a malformed calibration scenario is rejected"
 fi
+# The per-scenario grid of issue #184 phase 5. Both rules are properties of the
+# payload: an axis value above the file count is the same configuration twice,
+# and request_concurrency is per file, so small files cannot use it at all.
+expect_equal 'the file count is summed over the payload groups' 56 "$(scenario_files mixed)"
+expect_equal 'the largest file of a payload decides the request axis' 2048 "$(scenario_max_kib mixed)"
+expect_equal 'the request axis applies where a file is large enough' 1 "$(scenario_sweeps_requests single)"
+expect_equal 'and not to a payload of 4 KiB files' 0 "$(scenario_sweeps_requests small)"
+expect_equal 'an axis is capped at the file count and deduplicated' '1' \
+  "$(axis_for_scenario single 1 2 4 8 | tr '\n' ' ' | sed 's/ $//')"
+expect_equal 'a payload that can use the whole axis keeps it' '1 2 4 8' \
+  "$(axis_for_scenario small 1 2 4 8 | tr '\n' ' ' | sed 's/ $//')"
+expect_equal 'a partial cap keeps the values below it' '1 2' \
+  "$(axis_for_scenario large 1 2 4 8 | tr '\n' ' ' | sed 's/ $//')"
+
 expect_equal 'a redeploy scenario declares its shape' 'overlay 1 flat' "$(scenario_shape redeploy)"
 expect_equal 'the sync scenario is measured in mode sync' 'sync 1 flat' "$(scenario_shape sync)"
 expect_equal 'the scenarios that predate this keep the old shape' 'overlay 0 flat' "$(scenario_shape small)"
@@ -578,7 +664,9 @@ expect_equal 'the redeploy scenario was measured with skip_unchanged' 1 \
 # The unmeasured deploy the measured run redeploys over. Its metrics must not
 # exist: a base deploy counted as a measurement would report the fresh upload
 # this scenario exists to *not* measure.
-expect_equal 'a redeploy cell laid down an unmeasured base deploy first' 2 \
+# Two cells plus the two auto runs of the same scenarios: the policy run is a
+# deployment of that scenario like any other, so it gets the base deploy too.
+expect_equal 'a redeploy cell laid down an unmeasured base deploy first' 4 \
   "$(find "$LOG_DIR" -name '*.base.log' | wc -l | tr -d ' ')"
 expect_equal 'a scenario without a base deploy runs one deploy only' 0 \
   "$(find "$LOG_DIR" -name '*calib-10x64k*.base.log' | wc -l | tr -d ' ')"
@@ -591,6 +679,38 @@ if grep -qE '^\| .sync. \| sync, redeployed \|' "$OUT_DIR/matrix.md"; then
   pass "matrix.md says which mode a scenario was measured in"
 else
   fail "matrix.md does not say which mode a scenario was measured in"
+fi
+
+echo
+echo "== the request_concurrency axis turned off (issue #184, phase 5) =="
+# The axis has a real default now, so the two-dimensional grid needs a way to be
+# asked for. The token "default" is it: one pass that sets nothing.
+export OUT_DIR="$work/req-out" LOG_DIR="$work/req-logs" REPEATS=1
+export MATRIX_CONNECTIONS="1" MATRIX_CONCURRENCY="1" MATRIX_SCENARIOS="single"
+export MATRIX_REQUEST_CONCURRENCY="default"
+bash "$repo_root/scripts/benchmark-matrix.sh" >"$work/matrix-req.stdout" 2>&1 ||
+  fail "benchmark-matrix.sh with the request axis off exited non-zero (see $work/matrix-req.stdout)"
+
+req_matrix="$OUT_DIR/matrix.json"
+if [[ ! -f $req_matrix ]]; then
+  echo "FAIL: the request-axis run produced no matrix.json" >&2
+  cat "$work/matrix-req.stdout" >&2
+  exit 1
+fi
+expect_equal 'the default token keeps the grid two-dimensional' 1 \
+  "$(jq '.cells | length' "$req_matrix")"
+expect_equal 'a pass that sets nothing is stored as a null coordinate' 'null' \
+  "$(jq -r '.cells[0].request_concurrency | tostring' "$req_matrix")"
+expect_equal 'and the declared axis says so too' 'null' \
+  "$(jq -r '.axes.request_concurrency | map(tostring) | join(" ")' "$req_matrix")"
+expect_equal 'the run still records what easySFTP used' 16 \
+  "$(jq -r '.cells[0].request_concurrency_used' "$req_matrix")"
+if bash -c "MATRIX_REQUEST_CONCURRENCY='fast' \
+  OUT_DIR='$work/req-out' LOG_DIR='$work/req-logs' DATASET_DIR='$DATASET_DIR' \
+  bash '$repo_root/scripts/benchmark-matrix.sh'" >/dev/null 2>&1; then
+  fail "a nonsense request_concurrency axis value is accepted"
+else
+  pass "a nonsense request_concurrency axis value is rejected"
 fi
 
 if ((failures > 0)); then

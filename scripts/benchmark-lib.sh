@@ -111,6 +111,82 @@ scenario_shape() {
   esac
 }
 
+# scenario_files <name>: how many files the payload has, summed over its groups.
+scenario_files() {
+  local group total=0
+  local -a groups
+  read -r -a groups <<<"$(scenario_spec "$1")"
+  for group in "${groups[@]}"; do
+    total=$((total + ${group%%:*}))
+  done
+  echo "$total"
+}
+
+# scenario_max_kib <name>: the largest single file in the payload, in KiB.
+scenario_max_kib() {
+  local group size max=0
+  local -a groups
+  read -r -a groups <<<"$(scenario_spec "$1")"
+  for group in "${groups[@]}"; do
+    size=${group##*:}
+    if ((size > max)); then
+      max=$size
+    fi
+  done
+  echo "$max"
+}
+
+# REQUEST_AXIS_MIN_KIB: the file size from which advanced.request_concurrency
+# can do anything at all.
+#
+# That setting is sftp.MaxConcurrentRequestsPerFile (see
+# internal/uploader/connection.go): how many write requests of *one* file may be
+# in flight. pkg/sftp writes in 32 KiB packets, so a 4 KiB file is a single
+# packet and cannot use a second request no matter what the value is, and a file
+# needs 32 packets (1 MiB) before a value above easySFTP's default of 16 has
+# anything left to pipeline. Below this threshold the axis measures the same
+# number repeatedly, which is what keeps it from tripling a grid it cannot move.
+REQUEST_AXIS_MIN_KIB=1024
+
+# scenario_sweeps_requests <name>: 1 when the request_concurrency axis applies
+# to this scenario, 0 when it is measured at easySFTP's own default only.
+scenario_sweeps_requests() {
+  local max
+  max=$(scenario_max_kib "$1")
+  if ((max >= REQUEST_AXIS_MIN_KIB)); then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
+# axis_for_scenario <scenario> <value>...: the requested axis values that can
+# actually differ for this payload, one per line, order preserved.
+#
+# Only the per-file upload path spreads over connections and workers, so at most
+# <file count> files are ever in flight: an axis value above that is the same
+# configuration measured a second time under a different name. The stored
+# "single" grid is the demonstration, 30 cells of 0.38 MiB/s for one 32 MiB file
+# (issue #184, phase 5). Values are therefore capped at the file count and
+# deduplicated, which is what buys the room for a longer concurrency axis where
+# it can move and for the request axis where it can.
+axis_for_scenario() {
+  local scenario=$1 value files seen=" "
+  local -a out=()
+  files=$(scenario_files "$scenario")
+  shift
+  for value in "$@"; do
+    if ((value > files)); then
+      value=$files
+    fi
+    if [[ "$seen" != *" $value "* ]]; then
+      seen="$seen$value "
+      out+=("$value")
+    fi
+  done
+  printf '%s\n' "${out[@]}"
+}
+
 # SCENARIO_CHANGED_FILES: how many files scenario_mutate changes between the
 # unmeasured deploy and the measured one. Small on purpose: "500 files, 3
 # changed" is the CI case, and a larger number would measure the upload again
