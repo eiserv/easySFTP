@@ -154,7 +154,7 @@ jobs:
       # The workflow's own checkout, for scripts/benchmark.sh. It runs first:
       # a root checkout cleans the workspace and would remove the build
       # checkouts below.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve what to benchmark
         id: resolve
@@ -203,14 +203,14 @@ jobs:
           echo "benchmarking $ref"
 
       - name: Check out the candidate
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.resolve.outputs.ref }}
           path: builds/candidate
 
       - name: Check out the baseline
         if: inputs.baseline-ref != ''
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.baseline-ref }}
           path: builds/baseline
@@ -296,7 +296,7 @@ jobs:
       # run (pull_request) stops here: nothing has been released yet.
       - name: Check out main for storing
         if: github.event_name != 'pull_request'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           path: store-main
@@ -353,7 +353,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
 
