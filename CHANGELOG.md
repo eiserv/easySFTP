@@ -5,6 +5,14 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0](https://github.com/eiserv/easySFTP/compare/v3.4.0...v3.5.0) (2026-08-04)
+
+
+### Features
+
+* **benchmark:** aggregate in Go, with the jq implementation as the oracle ([#190](https://github.com/eiserv/easySFTP/issues/190)) ([#192](https://github.com/eiserv/easySFTP/issues/192)) ([62ce841](https://github.com/eiserv/easySFTP/commit/62ce841fa2ea8b755239a7066c758deb2922bb84))
+* **benchmark:** measure, sweep and store in Go ([#190](https://github.com/eiserv/easySFTP/issues/190)) ([#194](https://github.com/eiserv/easySFTP/issues/194)) ([5d98313](https://github.com/eiserv/easySFTP/commit/5d98313b1e6c71c66f6888a368de1cf6b8850b67))
+
 ## [3.4.0](https://github.com/eiserv/easySFTP/compare/v3.3.2...v3.4.0) (2026-07-31)
 
 
