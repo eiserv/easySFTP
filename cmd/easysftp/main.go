@@ -49,9 +49,9 @@ func run() error {
 
 	// Benchmark instrumentation, off unless the variable names a file. It is
 	// deliberately not an action.yml input: it is a measurement hook for
-	// scripts/benchmark*.sh, not a feature of the action, and the file it
-	// writes is a workflow artifact, never part of a deploy. See
-	// internal/metrics and benchmarks/README.md.
+	// cmd/easysftp-bench, not a feature of the action, and the file it writes
+	// is a workflow artifact, never part of a deploy. See internal/metrics and
+	// benchmarks/README.md.
 	metrics.Start(os.Getenv("EASYSFTP_METRICS_FILE"))
 	defer metrics.Write()
 

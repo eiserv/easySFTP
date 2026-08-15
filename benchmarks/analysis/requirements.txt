@@ -1,0 +1,6 @@
+# Pinned so a plot made today can be remade next year. Only what plot.py
+# imports directly; numpy arrives with matplotlib.
+#
+# This file is for the optional analysis layer only. Running, storing or
+# validating a benchmark needs none of it (issue #190).
+matplotlib==3.10.0

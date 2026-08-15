@@ -32,19 +32,13 @@ jobs:
         shell: bash
         run: bash scripts/test-action.sh
 
-      # Linux only: the benchmark workflow runs on ubuntu-24.04, so that is the
-      # only platform this bookkeeping has to work on.
-      - name: Test benchmark storage and retention
-        if: runner.os == 'Linux'
-        run: bash scripts/test-benchmark-store.sh
-
-      # Drives both measuring scripts end to end against a stub binary, so the
-      # jq aggregation, the schema and the CSV columns are checked without an
-      # SFTP server. The container job below covers the other half: that a real
-      # easySFTP run actually produces the metrics they aggregate.
-      - name: Test the benchmark aggregation
-        if: runner.os == 'Linux'
-        run: bash scripts/test-benchmark.sh
+      # The benchmark harness used to be checked here by two shell self-tests.
+      # It is Go now (issue #190), so its self-checks are ordinary tests in the
+      # job below: internal/benchmark/driver drives both measuring loops end to
+      # end against a stub binary, and internal/benchmark/store covers the
+      # retention window and the storage invariants. The container job further
+      # down still covers the other half, that a real easySFTP run produces the
+      # metrics all of this aggregates.
 
       - name: Validate action metadata
         run: go test ./internal/actionmeta
@@ -374,9 +368,10 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/bench-bin"
           go build -o "$RUNNER_TEMP/bench-bin/easysftp" ./cmd/easysftp
+          go build -o "$RUNNER_TEMP/bench-bin/easysftp-bench" ./cmd/easysftp-bench
           BENCH_KNOWN_HOSTS=$(ssh-keyscan -p 2222 localhost 2>/dev/null)
           export BENCH_KNOWN_HOSTS
-          bash scripts/benchmark.sh
+          "$RUNNER_TEMP/bench-bin/easysftp-bench" standard
           jq -e '.results | length == 3 and all(.files > 0 and .median_ms > 0 and .failed_runs == 0)' "$OUT_DIR/results.json"
           test -s "$OUT_DIR/summary.md"
           test -s "$OUT_DIR/results.csv"
@@ -415,7 +410,7 @@ jobs:
         run: |
           BENCH_KNOWN_HOSTS=$(ssh-keyscan -p 2222 localhost 2>/dev/null)
           export BENCH_KNOWN_HOSTS
-          bash scripts/benchmark-matrix.sh
+          "$RUNNER_TEMP/bench-bin/easysftp-bench" matrix
           # 7, not 2x2x2: the grid is per scenario (issue #184, phase 5). "small"
           # takes the whole 2x2, "single" is one file and therefore one
           # connections/concurrency cell, swept over the three

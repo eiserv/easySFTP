@@ -151,7 +151,7 @@ jobs:
       # Only the release run pushes, but the token is scoped per job.
       contents: write
     steps:
-      # The workflow's own checkout, for scripts/benchmark.sh. It runs first:
+      # The workflow's own checkout, for cmd/easysftp-bench. It runs first:
       # a root checkout cleans the workspace and would remove the build
       # checkouts below.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -168,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${VERSION:-}" ]; then
-            # Checked here and not only in benchmark-store.sh: failing after a
+            # Checked here and not only in the store: failing after a
             # measurement that takes minutes is a poor way to report a typo.
             case "$VERSION" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
@@ -238,9 +238,10 @@ jobs:
           # not from the candidate: it measures the path, and the path must be
           # measured the same way no matter which ref is under test.
           go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/linkprobe" ./cmd/linkprobe
-          # The aggregation (issue #190). Built from the workflow's own checkout
-          # for the same reason: it decides what the stored result looks like,
-          # and that must not depend on which ref is under test.
+          # The harness itself (issue #190). Built from the workflow's own
+          # checkout for the same reason: it decides what is measured and what
+          # the stored result looks like, and neither may depend on which ref is
+          # under test.
           go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/easysftp-bench" ./cmd/easysftp-bench
           candidate_sha=$(git -C builds/candidate rev-parse HEAD)
           {
@@ -266,7 +267,6 @@ jobs:
           BENCH_CONNECTIONS: ${{ inputs.connections }}
           BENCH_LINK_PROFILES: ${{ inputs.link-profiles }}
           LINKPROBE_BIN: ${{ runner.temp }}/bin/linkprobe
-          BENCH_TOOL: ${{ runner.temp }}/bin/easysftp-bench
           LINK_IFACE: ${{ inputs.link-iface }}
           # OUT_DIR is uploaded as an artifact; LOG_DIR (which holds logs that
           # name the host and user) deliberately is not.
@@ -278,7 +278,8 @@ jobs:
           BENCH_USERNAME: ${{ secrets.BENCHMARK_SFTP_USERNAME }}
           BENCH_PASSWORD: ${{ secrets.BENCHMARK_SFTP_PASSWORD }}
           BENCH_KNOWN_HOSTS: ${{ secrets.BENCHMARK_SFTP_KNOWN_HOSTS }}
-        run: bash scripts/benchmark.sh
+        run: |
+          "$RUNNER_TEMP/bin/easysftp-bench" standard
 
       - name: Publish the summary
         if: always()
@@ -317,7 +318,8 @@ jobs:
           RECORDED_AT: ${{ steps.resolve.outputs.recorded-at }}
           COMMIT: ${{ steps.build.outputs.candidate-sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash scripts/benchmark-store.sh
+        run: |
+          "$RUNNER_TEMP/bin/easysftp-bench" store
 
       - name: Commit the result to main
         if: github.event_name != 'pull_request'

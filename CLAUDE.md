@@ -171,27 +171,31 @@ granularity is a separate, later decision; don't build it speculatively.
 
 ## Benchmarks
 
-The harness is being moved off the shell in the six steps of issue #190, and
-where a given step has got to is the thing to keep straight. Steps 1 to 4 are
-done: **`cmd/easysftp-bench` measures, aggregates and stores**, and the shell
-scripts of the same names survive only as the behavioural reference the parity
-check of step 5 diffs against, before step 6 deletes them. Do not add to the
-shell; add to the Go and let the parity check argue about it.
+**The harness is Go. All of it.** Issue #190 is finished: `cmd/easysftp-bench`
+measures, aggregates and stores, and the shell scripts it replaced are gone.
+`scripts/` now holds only the action's own launcher and its test. Nothing in the
+benchmark path needs `jq` any more.
 
-The Go commands are `standard` (throughput at the default settings), `matrix`
+The commands are `standard` (throughput at the default settings), `matrix`
 (sweeps `advanced.connections` against `advanced.concurrency`), `store` (files a
 result set under `benchmarks/`), plus `aggregate` and `validate`. The first
 three read their configuration from the environment, exactly the variables the
-scripts read, so the workflows keep passing the same things.
+scripts read, so the workflows still pass the same things.
 
-The seam between measuring and reporting is still `manifest.json`: the measuring
-half appends one JSON document per run to its JSONL files, writes a manifest
-describing the run, and the aggregation reads both. That is what lets
-`scripts/test-benchmark.sh` hand the jq oracle the same manifest the Go
-aggregation got. The manifest carries the display strings the summaries print
-(axis lists, the runner line, the settings sentence) verbatim rather than
-rebuilding them: a summary table that reformats itself is a change to a stored
-document made by accident.
+The seam between measuring and reporting is `manifest.json`: the measuring half
+appends one JSON document per run to its JSONL files, writes a manifest
+describing the run, and the aggregation reads both. Keep that seam on disk. It
+is what made step 5's parity check possible (both implementations driven against
+one stub, their JSONL and manifests diffed), and it is what lets a failed run's
+artifact be re-aggregated afterwards. The manifest carries the display strings
+the summaries print (axis lists, the runner line, the settings sentence)
+verbatim rather than rebuilding them: a summary table that reformats itself is a
+change to a stored document made by accident.
+
+Comments through `internal/benchmark` name the shell files each piece was
+transcribed from. Those files are in git history, not on disk; they are cited
+because "the jq did it this way" is the honest reason several edge cases look
+the way they do.
 
 Inside `internal/benchmark`:
 
@@ -209,15 +213,11 @@ Inside `internal/benchmark`:
   axis caps), `runner` starts one build and reads its step outputs back,
   `link` parses profiles and drives `tc` and `cmd/linkprobe`, `driver` is the
   two measuring loops, and `store` is the result directory.
-- `driver`'s own tests build the stub in `driver/testdata/stub` and assert on
-  what comes out, which is the Go form of what `scripts/test-benchmark.sh` does
-  to the shell. `store`'s tests are the Go form of
-  `scripts/test-benchmark-store.sh`.
+- `driver`'s own tests re-execute the test binary as a stub easySFTP build and
+  assert on what comes out; `store`'s tests cover the result directory. Since
+  step 6 these are the only self-checks the harness has, so a behaviour worth
+  keeping belongs in one of them.
 
-`scripts/benchmark-aggregate-jq.sh` is the jq implementation the Go one
-replaced, kept only as the parity oracle `scripts/test-benchmark.sh` diffs
-against. It is scaffolding, not a second implementation: do not tidy it, and do
-not add to it. Step 6 of #190 deletes it.
 A scenario carries a *shape* as well as a payload (`scenario.ShapeOf`: mode,
 whether the measured run redeploys over an unmeasured one, flat or deep
 layout). The deploy-shape scenarios (`redeploy`, `sync`, `deep`, `bulk`,
@@ -236,14 +236,10 @@ migration into this layout was done).
 Three invariants the whole thing rests on: a stored result is never rewritten
 (storing an existing name fails), `latest.*` is only ever a copy of a
 `kind: "release"` entry, and a matrix run is never official.
-`internal/benchmark/store`'s tests pin them, and so do the two jq-dependent
-shell self-checks CI still runs against the reference implementation:
-`scripts/test-benchmark-store.sh` for the retention window, archiving and the
-invariants, and `scripts/test-benchmark.sh`, which drives both measuring scripts
-end to end against a stub binary. The Go equivalents are
-`internal/benchmark/driver`'s tests. The other half (that a *real* run produces
-the metrics all of this aggregates) is asserted by the container self-test in
-`ci.yml`.
+`internal/benchmark/store`'s tests pin them. The other half (that a *real* run
+produces the metrics all of this aggregates) is asserted by the container
+self-test in `ci.yml`, which is also the only place the two measuring commands
+run against an actual SSH server.
 
 The link a result was measured over is recorded in a top-level `link` object
 (issue #184, phase 1) by `cmd/linkprobe`, a separate binary that imports nothing
@@ -253,8 +249,8 @@ stays the comparability key and `link` stays a measurement (so it must not move
 into `environment`), the probe report never names the host or the user (it lands
 in `results.json`, which is an artifact and is committed), and `tc` shaping is
 applied only behind something that survives an interrupt (`link.Shaper.Guard`
-plus a deferred `Clear`, and the EXIT/INT/TERM trap in `benchmark-link.sh`),
-because a runner left shaped makes every later measurement on it quietly wrong.
+plus a deferred `Clear`), because a runner left shaped makes every later
+measurement on it quietly wrong.
 Shaping that is unavailable is recorded, never fatal.
 
 The matrix grid is **per scenario** (issue #184, phase 5). `scenario.AxisFor`
@@ -281,10 +277,10 @@ belongs in its own PR; this only measures it.
 The `clean` deployment of an empty directory that runs before every measured run
 is instrumented too, into its own metrics file and its own `deletes[]` block
 (issue #184, phase 4): it is a pure delete sweep and the only measurement of
-deletions there is. Do not "simplify" it back to `METRICS_FILE=''`, and keep its
-numbers out of `results[]` / `cells[]`: an upload aggregate that grew a
-`delete_sweep` phase is a bug, and `scripts/test-benchmark.sh` asserts it did
-not.
+deletions there is. Do not "simplify" it back to an unmeasured pre-clean, and
+keep its numbers out of `results[]` / `cells[]`: an upload aggregate that grew a
+`delete_sweep` phase is a bug, and `internal/benchmark/driver`'s tests assert it
+did not.
 
 Instrumentation lives in `internal/metrics` and is off unless
 `EASYSFTP_METRICS_FILE` names a path. It is deliberately **not** an

@@ -10,10 +10,10 @@ import (
 	"github.com/eiserv/easySFTP/internal/benchmark/store"
 )
 
-// This is the Go form of scripts/test-benchmark-store.sh: the retention window,
-// the archiving, the latest.* pointer and the refusal to rewrite a stored
-// result, against a temporary directory and never against the repository's own
-// benchmarks/.
+// The self-check of the result store, and since issue #190 step 6 the only one:
+// the retention window, the archiving, the latest.* pointer and the refusal to
+// rewrite a stored result, against a temporary directory and never against the
+// repository's own benchmarks/.
 
 const standardResult = `{
   "schema_version": 2,

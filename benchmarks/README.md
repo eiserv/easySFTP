@@ -10,12 +10,14 @@ and filed here by [`cmd/easysftp-bench`](../cmd/easysftp-bench):
 | `easysftp-bench aggregate` | one measured run into the documents below |
 | `easysftp-bench store` | files a result set in this directory |
 
-Issue #190 moved that work off the shell in steps, and the shell scripts of the
-same names are still in `scripts/` as the behavioural reference the Go
-implementation is checked against, until the parity check of step 5 and the
-switch of step 6. The documents themselves did not change with the move, which
-is what `scripts/test-benchmark.sh` checks by aggregating the same measurement
-twice and diffing the two.
+Issue #190 moved that work off the shell in steps, and the last of them removed
+the scripts. The documents themselves did not change with the move: before the
+shell went, both implementations were run against the same stubbed inputs and
+their measurements and outputs diffed, so every result stored here reads the
+same way whichever implementation wrote it.
+
+The analysis in [`analysis/`](analysis/) reads these files and is optional; the
+commands above need nothing from it.
 
 These numbers set no threshold and fail no build. They exist to see where the
 time goes (issues #158 and #169), so read them as one host's behaviour on
@@ -31,6 +33,7 @@ one day, not as a guarantee.
 | A connections/concurrency sweep | `matrix/matrix-*.md` / `.json` / `.csv` |
 | Runtime and throughput across releases | `trend.csv` |
 | An older result | `archive/<kind>/…` |
+| A sweep as a picture | `analysis/README.md` |
 
 ## Layout
 
@@ -53,6 +56,7 @@ benchmarks/
     matrix-<UTC stamp>-<label>.csv    one flat row per cell
   archive/
     releases/  manual/  matrix/       the same names, past the keep window
+  analysis/                           optional plots of all of the above
 ```
 
 `latest.json` and `latest.md` stay at the top level on purpose: they are the
@@ -149,8 +153,8 @@ or over workers. Meanwhile the optimum of every small-file scenario sat at
 and never an optimum.
 
 The axes are therefore capped against the payload, per scenario, by
-`axis_for_scenario` in
-[`scripts/benchmark-lib.sh`](../scripts/benchmark-lib.sh):
+`scenario.AxisFor`
+([`internal/benchmark/scenario`](../internal/benchmark/scenario)):
 
 - **A value above the file count is dropped** (capped and deduplicated). Only
   the per-file upload path spreads over connections and workers, so at most
@@ -262,10 +266,10 @@ Two things kept deliberately separate:
 A scenario is not only a payload. Every result up to issue #184 was a full
 upload into an empty target in `mode: overlay`, which is the rarest deploy there
 is; phase 3 added the shapes a real deploy actually has. The mode and the
-layout live in `scenario_shape`
-([`scripts/benchmark-lib.sh`](../scripts/benchmark-lib.sh)), and `matrix.md`
-prints them in a table next to the grids so a number is readable without going
-back to the script.
+layout live in `scenario.ShapeOf`
+([`internal/benchmark/scenario`](../internal/benchmark/scenario)), and
+`matrix.md` prints them in a table next to the grids so a number is readable
+without going back to the source.
 
 | Scenario | What it is | Why |
 |---|---|---|
@@ -346,9 +350,10 @@ be.
 #### Requesting a shaped link
 
 Both workflows take a `link-profiles` input (`BENCH_LINK_PROFILES` and
-`MATRIX_LINK_PROFILES` for the scripts), space separated. Empty, the default,
-means the real line only, recorded under the profile name `baseline`. The
-grammar, implemented in [`scripts/benchmark-link.sh`](../scripts/benchmark-link.sh):
+`MATRIX_LINK_PROFILES` when running the commands directly), space separated.
+Empty, the default, means the real line only, recorded under the profile name
+`baseline`. The grammar, implemented in
+[`internal/benchmark/link`](../internal/benchmark/link):
 
 | Profile | What it applies |
 |---|---|

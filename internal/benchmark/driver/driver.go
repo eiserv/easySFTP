@@ -2,11 +2,13 @@
 // builds, shapes and probes the link, and appends what each run reported to the
 // JSONL the aggregation reads back.
 //
-// It is the Go form of scripts/benchmark.sh and scripts/benchmark-matrix.sh
-// (issue #190, steps 3 and 4). What moved is the orchestration, not the
-// measurement: the same runs happen in the same order at the same settings, and
-// the manifest and the JSONL are the same documents the scripts wrote. A
-// rewrite that also changed what is measured could not be reviewed.
+// It is the Go form of the benchmark.sh and benchmark-matrix.sh shell scripts
+// issue #190 replaced (steps 3 and 4; step 6 removed them). What moved is the
+// orchestration, not the measurement: the same runs happen in the same order at
+// the same settings, and the manifest and the JSONL are the same documents the
+// scripts wrote. A rewrite that also changed what is measured could not be
+// reviewed, so before the scripts went, both implementations were run against
+// the same stubbed inputs and their JSONL and manifests compared (step 5).
 //
 // Nothing here writes into Options.OutDir except the aggregated result: run
 // logs and the generated config file name the host and the user, and OutDir is
@@ -138,10 +140,12 @@ func newRun(opts Options) (*run, error) {
 // finish hands the measurement over to the aggregation half and prints the
 // summary it wrote.
 //
-// The manifest is written out as well as passed on. It is what
-// scripts/test-benchmark.sh feeds to the jq oracle, so the parity check of
-// issue #190 compares two aggregations of one measurement rather than two
-// measurements (step 5), and it is the seam the two halves meet at.
+// The manifest is written out as well as passed on: it is the seam the two
+// halves meet at, and having it on disk is what let the parity check of issue
+// #190 compare two aggregations of one measurement rather than two
+// measurements. Keep writing it. A measurement whose inputs are gone the moment
+// the aggregation ends cannot be re-aggregated, by a later version or by a
+// maintainer holding a failed run's artifact.
 func (r *run) finish(m *benchmark.Manifest) error {
 	// The aggregation reads these back off disk, so everything measured has to
 	// be flushed before it does.

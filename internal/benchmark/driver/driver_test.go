@@ -11,11 +11,12 @@ import (
 	"github.com/eiserv/easySFTP/internal/benchmark/schema"
 )
 
-// These tests are the Go half of scripts/test-benchmark.sh: the driver does not
-// care what the "easySFTP binary" it runs is, so a stub that writes plausible
-// step outputs and a plausible metrics file is enough to check the measurement
-// order, the deploy shapes, the delete sweeps and the documents that come out,
-// without an SFTP server, a network or a real build.
+// These tests are the harness's own self-check, and since issue #190 step 6 the
+// only one: the driver does not care what the "easySFTP binary" it runs is, so
+// a stub that writes plausible step outputs and a plausible metrics file is
+// enough to check the measurement order, the deploy shapes, the delete sweeps
+// and the documents that come out, without an SFTP server, a network or a real
+// build.
 //
 // What they deliberately do not cover is whether easySFTP itself is fast; that
 // is what the real benchmark is for.

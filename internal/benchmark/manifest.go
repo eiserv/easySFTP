@@ -7,10 +7,16 @@
 // untouched by that move, because a rewrite that also changes what is measured
 // cannot be reviewed.
 //
-// The scripts hand over one manifest describing the run, and the JSONL files
-// they wrote. Nothing here runs a process, opens a connection or reads the
+// The measuring half hands over one manifest describing the run, and the JSONL
+// files it wrote. Nothing here runs a process, opens a connection or reads the
 // environment: given the same inputs it produces the same bytes, which is what
-// makes the parity check against the jq implementation meaningful at all.
+// made the parity check against the jq implementation meaningful at all.
+//
+// Comments across this package and its subpackages name the shell files each
+// piece was transcribed from (scripts/benchmark-lib.sh and its siblings). Those
+// files were deleted in step 6 of #190 and live in git history; they are cited
+// because "this rule exists because the jq did it" is the only honest
+// explanation of several edge cases here, not because they can still be opened.
 package benchmark
 
 import (

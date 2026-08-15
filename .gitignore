@@ -6,6 +6,12 @@
 # Local tooling
 .claude/
 
+# Optional benchmark analysis (benchmarks/analysis/README.md): plots are a
+# reading of the stored data, not the data. Attach them to the run that needed
+# them; commit one only when a document refers to it.
+/benchmarks/analysis/out/
+/benchmarks/analysis/.venv/
+
 # Editor/IDE
 .idea/
 .vscode/

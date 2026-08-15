@@ -11,10 +11,10 @@ import (
 	"github.com/eiserv/easySFTP/internal/metrics"
 )
 
-// metricsReport is the shape scripts/benchmark.sh reads back. It is redeclared
+// metricsReport is the shape cmd/easysftp-bench reads back. It is redeclared
 // here (instead of importing metrics.Report) so that a field rename in the
 // metrics package fails this test rather than silently changing the JSON the
-// benchmark scripts parse.
+// benchmark harness parses.
 type metricsReport struct {
 	SchemaVersion int `json:"schema_version"`
 	Process       struct {

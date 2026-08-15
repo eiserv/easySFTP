@@ -6,8 +6,10 @@
 // things the driver varies (the source tree and, from the generated config
 // file, advanced.*).
 //
-// It is the Go form of the stub scripts/test-benchmark.sh writes, and it
-// answers the same way, so the two self-checks measure the same fiction.
+// It is the Go form of the stub the shell self-check wrote, and it answers the
+// same way. That is what made the two comparable during the parity check of
+// issue #190 step 5, when both implementations were driven against this very
+// binary and their JSONL diffed.
 //
 // It is a *mode of the test binary* rather than a program of its own: TestMain
 // re-executes this binary with stubMarker set (see driver_test.go), so nothing

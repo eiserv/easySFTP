@@ -1,17 +1,17 @@
 // Command easysftp-bench measures a benchmark run and turns it into the
 // documents it stores.
 //
-// It is the Go half of the split issue #190 describes, and by steps 3 and 4 it
-// is most of both halves: "standard" and "matrix" generate the payloads, run
-// the builds, shape and probe the link and aggregate what came out, "store"
-// files a result set under benchmarks/, and "aggregate" is the seam between the
-// two, still callable on its own so the jq oracle can be handed the same
-// manifest.
+// It is the whole benchmark harness issue #190 moved off the shell: "standard"
+// and "matrix" generate the payloads, run the builds, shape and probe the link
+// and aggregate what came out, "store" files a result set under benchmarks/,
+// and "aggregate" is the seam between the two, callable on its own so a
+// measurement can be re-aggregated from the manifest and JSONL it left behind.
 //
 // The subcommands that measure read their configuration from the environment,
-// exactly as the shell scripts they replace did; "aggregate" and "validate"
-// read none, so given the same inputs they write the same bytes, which is what
-// makes the parity check against jq meaningful at all.
+// exactly as the shell scripts they replaced did; "aggregate" and "validate"
+// read none, so given the same inputs they write the same bytes. That is what
+// made the parity check of step 5 possible, and it is why a stored result can
+// still be reproduced from its inputs.
 //
 // Usage:
 //
@@ -73,7 +73,7 @@ func usage() {
   validate <file>...                        check stored results against the schema
 
 The first three read their configuration from the environment; see
-docs/benchmarking.md and .github/workflows/benchmark.yml.
+benchmarks/README.md and .github/workflows/benchmark.yml.
 `)
 }
 

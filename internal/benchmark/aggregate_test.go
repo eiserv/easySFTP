@@ -7,10 +7,11 @@ import (
 	"github.com/eiserv/easySFTP/internal/benchmark/stats"
 )
 
-// The parity check in scripts/test-benchmark.sh shows that this aggregation
-// produces the same documents the jq one did. What it cannot show is *why* any
-// of it is the way it is: it compares two implementations, so a rule both got
-// wrong would pass it. The tests here state the rules themselves.
+// The parity check of issue #190 showed that this aggregation produces the same
+// documents the jq one did. What it could not show is *why* any of it is the
+// way it is: it compared two implementations, so a rule both got wrong would
+// have passed it. The tests here state the rules themselves, and they are what
+// is left now that the jq side is gone.
 
 func metrics(phases map[string]float64, counters map[string]float64) *schema.Metrics {
 	m := &schema.Metrics{Counters: map[string]*float64{}}
