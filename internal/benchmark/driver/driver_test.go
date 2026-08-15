@@ -31,6 +31,14 @@ import (
 var stub string
 
 func TestMain(m *testing.M) {
+	// The probe check comes first and keys off LINKPROBE_HOST, not off a marker
+	// of its own: the driver hands its whole environment to everything it
+	// starts, so both children see stubMarker and only the probe sees the
+	// variables the prober adds.
+	if os.Getenv("LINKPROBE_HOST") != "" {
+		probeStubMain()
+		return
+	}
 	if os.Getenv(stubMarker) != "" {
 		stubMain()
 		return
@@ -326,6 +334,148 @@ func TestMatrixDeployShapes(t *testing.T) {
 	}
 	if got := len(glob(t, opts.LogDir, "*calib-10x64k*.base.log")); got != 0 {
 		t.Errorf("a scenario without a base deploy laid down %d", got)
+	}
+}
+
+// linkOptions asks for a second link profile and a probe binary.
+//
+// The interface name belongs to nothing and sudo is refused, so every tc call
+// fails and the run takes the degradation path. That is deliberate and must
+// stay: this check may run as root on a maintainer's box or on the self-hosted
+// runner, and a netem qdisc left on a real interface by a test is a broken
+// machine, not a failed assertion.
+func linkOptions(t *testing.T) driver.Options {
+	t.Helper()
+	opts := options(t)
+	opts.LinkProfiles = []string{"baseline", "+50ms"}
+	opts.LinkProfilesRaw = "baseline +50ms"
+	opts.LinkProbeBin = stub
+	opts.LinkIface = "easysftp-selftest0"
+	opts.LinkSudo = "0"
+	return opts
+}
+
+// TestStandardOverLinkProfiles covers the phase 1 axis of issue #184: the
+// profile loop, the probe either side of each profile's own runs, and shaping
+// that is unavailable being recorded rather than fatal.
+func TestStandardOverLinkProfiles(t *testing.T) {
+	opts := linkOptions(t)
+	if err := driver.Standard(opts); err != nil {
+		t.Fatalf("measuring: %v", err)
+	}
+	result := readJSON[schema.Standard](t, filepath.Join(opts.OutDir, "results.json"))
+
+	// The axis multiplies the run rather than replacing it: every build and
+	// scenario is measured on every profile.
+	measured := map[string]int{}
+	for _, row := range result.Results {
+		measured[row.LinkProfile]++
+	}
+	if measured["baseline"] != 6 || measured["+50ms"] != 6 {
+		t.Errorf("aggregated %v, want 2 builds x 3 scenarios on each profile", measured)
+	}
+
+	// Start and end of each profile's own runs, and no more. Two probes of one
+	// profile are comparable and are what makes drift visible; two probes of
+	// different profiles are not, which is why they are labelled at all.
+	probes := map[string]string{}
+	for _, probe := range result.Link.Probes {
+		probes[probe.Profile] += probe.At + " "
+		if probe.Note != "stub" || probe.RTTMS == nil || probe.RTTMS.P50 == nil {
+			t.Errorf("the probe document for %s (%s) was not kept whole", probe.Profile, probe.At)
+		}
+	}
+	if probes["baseline"] != "start end " || probes["+50ms"] != "start end " {
+		t.Errorf("probed %v, want a start and an end per profile", probes)
+	}
+
+	// Unavailable shaping is data, not a failure. The profile names then say
+	// what was asked for, never what happened, so the record of both has to
+	// survive into the result.
+	if result.Link.Shaping.Available {
+		t.Error("shaping reported itself available on an interface that does not exist")
+	}
+	if result.Link.Shaping.Reason == nil || *result.Link.Shaping.Reason == "" {
+		t.Error("unavailable shaping carries no reason")
+	}
+	// Requested is every profile the run was asked for and Applied only the
+	// ones tc really put in place. Keeping both is the whole point: with
+	// shaping unavailable the two disagree, and a reader who only saw the
+	// profile names would believe a "+50ms" row was measured at +50 ms.
+	if got := strings.Join(result.Link.Shaping.Requested, " "); got != "baseline +50ms" {
+		t.Errorf("requested shaping %q, want every profile asked for", got)
+	}
+	if got := strings.Join(result.Link.Shaping.Applied, " "); got != "baseline" {
+		t.Errorf("applied shaping %q, want only the profile that needed no tc", got)
+	}
+
+	// A delta compares two builds on one profile. Across profiles it would be
+	// comparing two different networks and calling the difference a code change.
+	for _, row := range result.Comparison {
+		if row.LinkProfile == "" {
+			t.Error("a comparison row does not say which profile it stayed inside")
+		}
+	}
+
+	// The CSV columns of phase 1, filled from the profile's start probe.
+	csv := lines(t, filepath.Join(opts.OutDir, "results.csv"))
+	if !strings.Contains(csv[0], `"link_profile","rtt_p50_ms","control_single_mib_per_s"`) {
+		t.Errorf("the CSV does not name the link columns: %s", csv[0])
+	}
+	for _, row := range csv[1:] {
+		if !strings.Contains(row, ",18.4,0.41,") {
+			t.Errorf("a CSV row carries no probed link: %s", row)
+		}
+	}
+	if summary := read(t, filepath.Join(opts.OutDir, "summary.md")); !strings.Contains(summary, "### The link") {
+		t.Error("summary.md is missing its link section")
+	}
+}
+
+// TestMatrixOverLinkProfiles is the same axis over a grid, where it multiplies
+// everything: the cells, the canary triple and the scaling view.
+func TestMatrixOverLinkProfiles(t *testing.T) {
+	opts := linkOptions(t)
+	opts.ConnectionsAxis = []int{1, 2}
+	opts.ConcurrencyAxis = []int{1, 4}
+	opts.RequestAxis = []*int{nil}
+	opts.Scenarios = []string{"small"}
+	if err := driver.Matrix(opts); err != nil {
+		t.Fatalf("sweeping: %v", err)
+	}
+	result := readJSON[schema.Matrix](t, filepath.Join(opts.OutDir, "matrix.json"))
+
+	perProfile := map[string]int{}
+	for _, cell := range result.Cells {
+		perProfile[cell.LinkProfile]++
+	}
+	if perProfile["baseline"] != 8 || perProfile["+50ms"] != 8 {
+		t.Errorf("measured %v cells, want the 2x2 grid x 2 builds on each profile", perProfile)
+	}
+
+	// One canary triple per profile, not one triple spread over both: a canary
+	// says whether the host drifted during a profile's own runs, and comparing
+	// a value from one profile against another answers a different question.
+	canaries := map[string]string{}
+	for _, row := range result.Canary {
+		canaries[row.LinkProfile] += row.At + " "
+	}
+	if canaries["baseline"] != "start mid end " || canaries["+50ms"] != "start mid end " {
+		t.Errorf("canaries %v, want a triple per profile", canaries)
+	}
+
+	// The scaling view and the policy measurement are grouped by profile too.
+	for _, view := range result.Scaling {
+		if view.LinkProfile == "" {
+			t.Error("a scaling row does not say which profile it describes")
+		}
+	}
+	if len(result.Auto) != 2 {
+		t.Errorf("measured auto %d time(s), want once per scenario and profile", len(result.Auto))
+	}
+
+	if !strings.Contains(read(t, filepath.Join(opts.OutDir, "matrix.md")), "+50ms") {
+		t.Error("matrix.md does not report the profile its grids were measured on")
 	}
 }
 

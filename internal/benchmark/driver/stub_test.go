@@ -31,6 +31,36 @@ import (
 // runs, so a child process never re-enters the test suite.
 const stubMarker = "EASYSFTP_BENCH_STUB"
 
+// probeStubMain is the stand-in for cmd/linkprobe. The prober only starts a
+// binary and stores the JSON object it prints, so a fixed document is enough to
+// check the wrapping, the CSV columns and the summary section without a network.
+//
+// It insists on the variables cmd/linkprobe insists on, because "the prober
+// passed the credentials through" is one of the things worth failing on.
+func probeStubMain() {
+	for _, name := range []string{
+		"LINKPROBE_HOST", "LINKPROBE_USERNAME", "LINKPROBE_PASSWORD", "LINKPROBE_KNOWN_HOSTS",
+	} {
+		if os.Getenv(name) == "" {
+			fmt.Fprintf(os.Stderr, "::error::%s is required but empty\n", name)
+			os.Exit(1)
+		}
+	}
+	fmt.Print(`{
+  "schema_version": 1,
+  "note": "stub",
+  "measured_at": "2026-07-30T12:00:00Z",
+  "handshake_ms": 41.2,
+  "rtt_ms": {"p50": 18.4, "p90": 21, "min": 17.1, "max": 44.2, "samples": 21},
+  "control": {"streams": 4, "bytes": 8388608,
+              "single_stream_mib_per_s": 0.41, "n_stream_mib_per_s": 1.6, "note": "stub"},
+  "host_load": {"available": true, "method": "sftp:/proc/loadavg",
+                "load1": 0.9, "load5": 1.1, "load15": 1.0},
+  "errors": []
+}
+`)
+}
+
 func stubMain() {
 
 	source := os.Getenv("EASYSFTP_SOURCE")
