@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "kind": "release",
+  "version": "v3.3.2",
+  "label": null,
+  "official": true,
+  "recorded_at": "2026-07-27T16:56:32Z",
+  "commit": "afe5aaf7cac2a29675887f36f63c3c82b53aa4c3",
+  "run_url": "https://github.com/eiserv/easySFTP/actions/runs/30286969318",
+  "benchmark": {
+    "candidate_ref": "v3.3.2 (afe5aaf)",
+    "baseline_ref": "",
+    "repeats": 3,
+    "runner": "self-hosted, Linux 7.0.0-28-generic, 10 cpu",
+    "settings": "easySFTP defaults (no advanced.* overrides): concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay",
+    "scenarios": {
+      "small": "300 files x 4 KiB",
+      "mixed": "40 x 16 KiB + 12 x 256 KiB + 4 x 2 MiB",
+      "large": "2 files x 16 MiB"
+    },
+    "results": [
+      {
+        "label": "candidate",
+        "ref": "v3.3.2 (afe5aaf)",
+        "scenario": "large",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 2,
+        "bytes": 33554432,
+        "durations_ms": [
+          76306,
+          76005,
+          81433
+        ],
+        "median_ms": 76306,
+        "min_ms": 76005,
+        "max_ms": 81433,
+        "retries": 0,
+        "errors": 0,
+        "mib_per_s": 0.4193641391240532,
+        "files_per_s": 0.026210258695253324
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.3.2 (afe5aaf)",
+        "scenario": "mixed",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 56,
+        "bytes": 12189696,
+        "durations_ms": [
+          29459,
+          27829,
+          28419
+        ],
+        "median_ms": 28419,
+        "min_ms": 27829,
+        "max_ms": 29459,
+        "retries": 0,
+        "errors": 0,
+        "mib_per_s": 0.4090573208065027,
+        "files_per_s": 1.970512685175411
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.3.2 (afe5aaf)",
+        "scenario": "small",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 300,
+        "bytes": 1228800,
+        "durations_ms": [
+          12069,
+          13071,
+          13044
+        ],
+        "median_ms": 13044,
+        "min_ms": 12069,
+        "max_ms": 13071,
+        "retries": 0,
+        "errors": 0,
+        "mib_per_s": 0.08984015639374425,
+        "files_per_s": 22.999080036798528
+      }
+    ]
+  }
+}

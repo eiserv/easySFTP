@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "kind": "release",
+  "version": "v3.3.1",
+  "label": null,
+  "official": true,
+  "recorded_at": "2026-07-27T15:55:56Z",
+  "commit": "3bf56021e757a468dab39fbaa88b923b9ae00f83",
+  "run_url": "https://github.com/eiserv/easySFTP/actions/runs/30282308009",
+  "benchmark": {
+    "candidate_ref": "v3.3.1 (3bf5602)",
+    "baseline_ref": "",
+    "repeats": 3,
+    "runner": "Linux 6.17.0-1020-azure, 4 cpu",
+    "settings": "easySFTP defaults (no advanced.* overrides): concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay",
+    "scenarios": {
+      "small": "300 files x 4 KiB",
+      "mixed": "40 x 16 KiB + 12 x 256 KiB + 4 x 2 MiB",
+      "large": "2 files x 16 MiB"
+    },
+    "results": [
+      {
+        "label": "candidate",
+        "ref": "v3.3.1 (3bf5602)",
+        "scenario": "large",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 2,
+        "bytes": 33554432,
+        "durations_ms": [
+          81973,
+          81803,
+          80044
+        ],
+        "median_ms": 81803,
+        "min_ms": 80044,
+        "max_ms": 81973,
+        "retries": 0,
+        "errors": 0,
+        "mib_per_s": 0.39118369741941006,
+        "files_per_s": 0.02444898108871313
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.3.1 (3bf5602)",
+        "scenario": "mixed",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 56,
+        "bytes": 12189696,
+        "durations_ms": [
+          34686,
+          34166,
+          34357
+        ],
+        "median_ms": 34357,
+        "min_ms": 34166,
+        "max_ms": 34686,
+        "retries": 0,
+        "errors": 0,
+        "mib_per_s": 0.3383589952556975,
+        "files_per_s": 1.6299444072532527
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.3.1 (3bf5602)",
+        "scenario": "small",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 300,
+        "bytes": 1228800,
+        "durations_ms": [
+          65056,
+          64892,
+          64011
+        ],
+        "median_ms": 64892,
+        "min_ms": 64011,
+        "max_ms": 65056,
+        "retries": 0,
+        "errors": 0,
+        "mib_per_s": 0.018058851630401284,
+        "files_per_s": 4.623066017382729
+      }
+    ]
+  }
+}

@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "kind": "manual",
+  "version": null,
+  "label": "perf-connection-pool",
+  "official": false,
+  "recorded_at": "2026-07-27T19:31:00Z",
+  "commit": "49dcaf38f2879248cfffbdfd02d3b87381992e51",
+  "run_url": "https://github.com/eiserv/easySFTP/actions/runs/30298465159",
+  "benchmark": {
+    "candidate_ref": "49dcaf38f2879248cfffbdfd02d3b87381992e51 (49dcaf3)",
+    "baseline_ref": "main (804d0c6)",
+    "repeats": 3,
+    "runner": "self-hosted, Linux 7.0.0-28-generic, 10 cpu",
+    "settings": "easySFTP defaults (no advanced.* overrides): concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay; the pool4 build is the same binary with advanced.connections: 4",
+    "scenarios": {
+      "small": "300 files x 4 KiB",
+      "mixed": "40 x 16 KiB + 12 x 256 KiB + 4 x 2 MiB",
+      "large": "2 files x 16 MiB"
+    },
+    "results": [
+      {
+        "label": "baseline",
+        "ref": "main (804d0c6)",
+        "scenario": "large",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 2,
+        "bytes": 33554432,
+        "durations_ms": [
+          79181,
+          71267,
+          71167
+        ],
+        "median_ms": 71267,
+        "min_ms": 71167,
+        "max_ms": 79181,
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "mib_per_s": 0.4490156734533515,
+        "files_per_s": 0.02806347959083447
+      },
+      {
+        "label": "baseline",
+        "ref": "main (804d0c6)",
+        "scenario": "mixed",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 56,
+        "bytes": 12189696,
+        "durations_ms": [
+          30615,
+          27675,
+          32435
+        ],
+        "median_ms": 30615,
+        "min_ms": 27675,
+        "max_ms": 32435,
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "mib_per_s": 0.3797158255756982,
+        "files_per_s": 1.8291687081496
+      },
+      {
+        "label": "baseline",
+        "ref": "main (804d0c6)",
+        "scenario": "small",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 300,
+        "bytes": 1228800,
+        "durations_ms": [
+          12531,
+          13293,
+          11606
+        ],
+        "median_ms": 12531,
+        "min_ms": 11606,
+        "max_ms": 13293,
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "mib_per_s": 0.09351807517356954,
+        "files_per_s": 23.940627244433802
+      },
+      {
+        "label": "candidate",
+        "ref": "49dcaf38f2879248cfffbdfd02d3b87381992e51 (49dcaf3)",
+        "scenario": "large",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 2,
+        "bytes": 33554432,
+        "durations_ms": [
+          70694,
+          70541,
+          76330
+        ],
+        "median_ms": 70694,
+        "min_ms": 70541,
+        "max_ms": 76330,
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "mib_per_s": 0.4526551051008572,
+        "files_per_s": 0.028290944068803576
+      },
+      {
+        "label": "candidate",
+        "ref": "49dcaf38f2879248cfffbdfd02d3b87381992e51 (49dcaf3)",
+        "scenario": "mixed",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 56,
+        "bytes": 12189696,
+        "durations_ms": [
+          26608,
+          27665,
+          29508
+        ],
+        "median_ms": 27665,
+        "min_ms": 26608,
+        "max_ms": 29508,
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "mib_per_s": 0.4202060365082234,
+        "files_per_s": 2.0242183264052054
+      },
+      {
+        "label": "candidate",
+        "ref": "49dcaf38f2879248cfffbdfd02d3b87381992e51 (49dcaf3)",
+        "scenario": "small",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 300,
+        "bytes": 1228800,
+        "durations_ms": [
+          13404,
+          12624,
+          14550
+        ],
+        "median_ms": 13404,
+        "min_ms": 12624,
+        "max_ms": 14550,
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "mib_per_s": 0.08742726051924798,
+        "files_per_s": 22.381378692927484
+      },
+      {
+        "label": "pool4",
+        "ref": "49dcaf38f2879248cfffbdfd02d3b87381992e51 (49dcaf3)",
+        "scenario": "large",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 2,
+        "bytes": 33554432,
+        "durations_ms": [
+          50646,
+          48069,
+          48094
+        ],
+        "median_ms": 48094,
+        "min_ms": 48069,
+        "max_ms": 50646,
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "mib_per_s": 0.6653636628269638,
+        "files_per_s": 0.04158522892668524
+      },
+      {
+        "label": "pool4",
+        "ref": "49dcaf38f2879248cfffbdfd02d3b87381992e51 (49dcaf3)",
+        "scenario": "mixed",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 56,
+        "bytes": 12189696,
+        "durations_ms": [
+          16950,
+          18503,
+          18550
+        ],
+        "median_ms": 18503,
+        "min_ms": 16950,
+        "max_ms": 18550,
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "mib_per_s": 0.6282764957033995,
+        "files_per_s": 3.0265362373669134
+      },
+      {
+        "label": "pool4",
+        "ref": "49dcaf38f2879248cfffbdfd02d3b87381992e51 (49dcaf3)",
+        "scenario": "small",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 300,
+        "bytes": 1228800,
+        "durations_ms": [
+          11783,
+          11241,
+          11457
+        ],
+        "median_ms": 11457,
+        "min_ms": 11241,
+        "max_ms": 11783,
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "mib_per_s": 0.10228462948415815,
+        "files_per_s": 26.184865147944485
+      }
+    ]
+  }
+}
