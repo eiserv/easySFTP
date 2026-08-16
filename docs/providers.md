@@ -68,7 +68,7 @@ operations instead.
 
 ## Hetzner Storage Box
 
-*Last verified: 2026-07-26, against the [Hetzner docs][hetzner-ssh], not a live account.*
+*Last verified: 2026-07-26, against the [Hetzner docs](https://docs.hetzner.com/storage/storage-box/access/access-ssh-rsync-borg/), not a live account.*
 
 - **Port 22 is SFTP/SCP only, port 23 is the full SSH service.** easySFTP needs
   only the SFTP subsystem, so **use port 22**. (Port 23 also works.)
@@ -148,23 +148,19 @@ two above do.
 
 ### Entry template
 
-````markdown
-## Provider name
+Use this structure in the section you add:
 
-*Last verified: YYYY-MM-DD by @your-handle, on a live account / from vendor docs.*
+- `## Provider name`
+- `*Last verified: YYYY-MM-DD by @your-handle, on a live account / from vendor docs.*`
+- `- **Port**: … (and where to find it in the control panel)`
+- `- **Paths**: what the SFTP session's working directory is, and where the document root sits relative to it`
+- `- **Auth**: key formats accepted, whether password auth can be turned off, anything that has to be enabled first`
+- `- **Quirks**: anything that made a deploy fail in a way the error did not explain`
 
-- **Port**: … (and where to find it in the control panel)
-- **Paths**: what the SFTP session's working directory is, and where the
-  document root sits relative to it
-- **Auth**: key formats accepted, whether password auth can be turned off,
-  anything that has to be enabled first
-- **Quirks**: anything that made a deploy fail in a way the error did not explain
+Then include a known-good workflow snippet such as:
 
 ```yaml
 - uses: eiserv/easySFTP@v3
   with:
     …a known-good configuration…
 ```
-````
-
-[hetzner-ssh]: https://docs.hetzner.com/storage/storage-box/access/access-ssh-rsync-borg/
