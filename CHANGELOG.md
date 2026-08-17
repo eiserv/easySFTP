@@ -5,6 +5,28 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0](https://github.com/eiserv/easySFTP/compare/v3.4.0...v3.5.0) (2026-08-17)
+
+
+### Features
+
+* **benchmark:** aggregate in Go, with the jq implementation as the oracle ([#190](https://github.com/eiserv/easySFTP/issues/190)) ([#192](https://github.com/eiserv/easySFTP/issues/192)) ([62ce841](https://github.com/eiserv/easySFTP/commit/62ce841fa2ea8b755239a7066c758deb2922bb84))
+* **benchmark:** measure and store in Go only, add optional analysis ([#190](https://github.com/eiserv/easySFTP/issues/190)) ([#196](https://github.com/eiserv/easySFTP/issues/196)) ([6111881](https://github.com/eiserv/easySFTP/commit/6111881ed2876ec50696a889b83b3a0dd54e5b54))
+* **benchmark:** measure, sweep and store in Go ([#190](https://github.com/eiserv/easySFTP/issues/190)) ([#194](https://github.com/eiserv/easySFTP/issues/194)) ([5d98313](https://github.com/eiserv/easySFTP/commit/5d98313b1e6c71c66f6888a368de1cf6b8850b67))
+
+
+### Bug Fixes
+
+* **benchmark:** restore stored result artifacts ([#198](https://github.com/eiserv/easySFTP/issues/198)) ([7565929](https://github.com/eiserv/easySFTP/commit/756592943333f7bed533b5fc5774abff5386e81d))
+* **uploader:** do not retry permanent SFTP status codes ([#202](https://github.com/eiserv/easySFTP/issues/202)) ([8e9ec63](https://github.com/eiserv/easySFTP/commit/8e9ec63c58db154a30240a0e23aeea88525a61be))
+* **uploader:** fall back when a server lacks posix-rename ([#203](https://github.com/eiserv/easySFTP/issues/203)) ([b4a6eac](https://github.com/eiserv/easySFTP/commit/b4a6eac7e5684ad5f86b5760c19c4413c3f6e25c)), closes [#152](https://github.com/eiserv/easySFTP/issues/152)
+* **uploader:** keep the full plan out of sync's stale-temp sweep ([#201](https://github.com/eiserv/easySFTP/issues/201)) ([9a940d6](https://github.com/eiserv/easySFTP/commit/9a940d6e94a3bdd1d1c8b999b05a8a4daffd6e5b)), closes [#186](https://github.com/eiserv/easySFTP/issues/186)
+
+
+### Documentation
+
+* publish providers guide on docs site ([#199](https://github.com/eiserv/easySFTP/issues/199)) ([d3d042d](https://github.com/eiserv/easySFTP/commit/d3d042ddef56eb16e4c768eb1ccf8b3bbbb6c8fc))
+
 ## [3.4.0](https://github.com/eiserv/easySFTP/compare/v3.3.2...v3.4.0) (2026-07-31)
 
 
