@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pkg/sftp"
+
 	"github.com/eiserv/easySFTP/internal/config"
 )
 
@@ -200,6 +202,19 @@ func TestIsRetryable(t *testing.T) {
 		{"wrapped permission", fmt.Errorf("open: %w", os.ErrPermission), false},
 		{"transient network error", errors.New("connection lost"), true},
 		{"wrapped context cancel", fmt.Errorf("copy: %w", context.Canceled), false},
+		// Server status codes. The permanent ones are named explicitly; the
+		// ambiguous and the connection-class ones keep their retry.
+		{"op unsupported", &sftp.StatusError{Code: uint32(sftp.ErrSSHFxOpUnsupported)}, false},
+		{"bad message", &sftp.StatusError{Code: uint32(sftp.ErrSSHFxBadMessage)}, false},
+		{"status no such file", &sftp.StatusError{Code: uint32(sftp.ErrSSHFxNoSuchFile)}, false},
+		{"status permission denied", &sftp.StatusError{Code: uint32(sftp.ErrSSHFxPermissionDenied)}, false},
+		{"wrapped op unsupported", fmt.Errorf("replacing %q: %w", "/www/a.txt",
+			&sftp.StatusError{Code: uint32(sftp.ErrSSHFxOpUnsupported)}), false},
+		// Quota, no space and read-only filesystems arrive as this one, but so
+		// do transient server-side failures; it stays retryable.
+		{"generic failure", &sftp.StatusError{Code: uint32(sftp.ErrSSHFxFailure)}, true},
+		{"connection lost status", &sftp.StatusError{Code: uint32(sftp.ErrSSHFxConnectionLost)}, true},
+		{"no connection status", &sftp.StatusError{Code: uint32(sftp.ErrSSHFxNoConnection)}, true},
 	}
 	for _, c := range cases {
 		if got := isRetryable(c.err); got != c.want {

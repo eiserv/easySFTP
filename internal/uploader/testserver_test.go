@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -101,6 +102,35 @@ func (f *faultyList) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 func withFailList(path string) serverOption {
 	return func(s *testServer) {
 		s.handlers.FileList = &faultyList{inner: s.handlers.FileList, path: path}
+	}
+}
+
+// statusOnPut answers every write-open of a path starting with prefix (the
+// upload's temp file is prefix + tmpSuffix + index, so the prefix is the
+// target path) with one fixed SFTP status code, delegating everything else to
+// the in-memory handler.
+//
+// pkg/sftp's statusFromError puts an sftp.ErrSSHFx* value on the wire as that
+// exact status code, which is how a test simulates a server answering an
+// upload with a considered protocol-level refusal rather than dropping the
+// connection. The client turns it back into a *sftp.StatusError, which is what
+// isPermanentStatus classifies.
+type statusOnPut struct {
+	inner  sftp.FileWriter
+	prefix string
+	code   error // an sftp.ErrSSHFx* code
+}
+
+func (w *statusOnPut) Filewrite(r *sftp.Request) (io.WriterAt, error) {
+	if strings.HasPrefix(r.Filepath, w.prefix) {
+		return nil, w.code
+	}
+	return w.inner.Filewrite(r)
+}
+
+func withStatusOnPut(prefix string, code error) serverOption {
+	return func(s *testServer) {
+		s.handlers.FilePut = &statusOnPut{inner: s.handlers.FilePut, prefix: prefix, code: code}
 	}
 }
 

@@ -104,6 +104,30 @@ The SFTP user cannot write to the target directory. Check ownership and
 permissions on the server. With chrooted SFTP setups remember that paths are
 relative to the chroot: `/upload/...`, not `/home/user/upload/...`.
 
+### Which upload failures easySFTP retries
+
+A failure the server itself reported reads like
+`sftp: "Disk quota exceeded" (SSH_FX_FAILURE)`. The quoted text is the server's
+own explanation and is usually the only part worth reading; the `SSH_FX_*` name
+after it is the protocol status code it sent, which decides whether easySFTP
+tries again.
+
+Codes that can only ever come back the same way fail the file immediately,
+whatever `retries` is set to: `SSH_FX_NO_SUCH_FILE` and
+`SSH_FX_PERMISSION_DENIED` (which reach you as `file does not exist` and
+`permission denied`), plus `SSH_FX_OP_UNSUPPORTED` and `SSH_FX_BAD_MESSAGE`,
+whose failures add `retrying would not have helped` so the skipped retries are
+not a mystery.
+
+`SSH_FX_FAILURE` is retried, because it is a catch-all: servers use it both for
+permanent conditions (a disk quota, a full or read-only filesystem, a path
+length limit) and for transient ones, and only the message text tells them
+apart. easySFTP does not guess from that text, so a quota-exceeded deploy pays
+the retry backoff for the files it has in flight when the quota runs out
+(remaining files are not started once one fails). If you already know the cause
+is permanent, `advanced.retries: 0` in the config file makes such a run fail
+immediately.
+
 ### Site deploys "successfully" but returns 403s, or files land with the wrong owner-readable bits
 
 Directories created by the run get whatever the server's umask produces, and
