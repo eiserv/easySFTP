@@ -124,8 +124,11 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		dirs = p.remoteDirs
 	}
 	// skip-unchanged is always off here: sync already decided what changed
-	// from the manifest hashes, which is strictly more precise.
-	completed, err := uploadFiles(ctx, cfg, sess, upload, dirs, base, stats, verb, watch, false, log)
+	// from the manifest hashes, which is strictly more precise. The full plan
+	// goes along with the changed subset because the stale-temp sweep must not
+	// remove an unchanged planned target that happens to be named like a temp
+	// file; see uploadFiles and issue #186.
+	completed, err := uploadFiles(ctx, cfg, sess, upload, p.files, dirs, base, stats, verb, watch, false, log)
 	if err != nil {
 		writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, nil), log)
 		return err

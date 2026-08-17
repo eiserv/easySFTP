@@ -234,6 +234,52 @@ func TestSweepStaysWithinDeploymentBase(t *testing.T) {
 	}
 }
 
+// Issue #186: sync narrows the upload to the changed files, but the sweep's
+// keep set must still cover the full plan. A literal-named target that is
+// unchanged this run is not in the upload subset, yet its directory is swept
+// because a sibling changed; removing it would be silent and permanent, since
+// the manifest still records it as up to date.
+func TestSyncSweepKeepsUnchangedTargetsNamedLikeTempFiles(t *testing.T) {
+	shrinkStaleTempMaxAge(t)
+
+	srv := startTestServer(t)
+	local := t.TempDir()
+	literal := "app.js" + tmpSuffix + ".3"
+	writeTree(t, local, map[string]string{literal: "real content", "other.txt": "1"})
+
+	cfg := syncConfig(srv, local)
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only the sibling changes, so the second sync uploads just other.txt
+	// while still sweeping /www, where the unchanged literal-named file lives.
+	writeTree(t, local, map[string]string{literal: "real content", "other.txt": "2"})
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	if _, err := Run(context.Background(), cfg, log); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readRemote(t, srv, "/www/"+literal); got != "real content" {
+		t.Errorf("unchanged literal-named file was lost: %q", got)
+	}
+	for _, msg := range log.infos {
+		if strings.Contains(msg, "removed stale temporary file") {
+			t.Errorf("an unchanged planned target was swept as a stale temp file: %q", msg)
+		}
+	}
+
+	// A third run must find it unchanged as well: had the second run deleted
+	// it, the manifest hash would keep sync from restoring it.
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readRemote(t, srv, "/www/"+literal); got != "real content" {
+		t.Errorf("sync did not leave the literal-named file in place: %q", got)
+	}
+}
+
 // The sync strategy uploads through the same path, so a directory a sync run
 // touches is swept too, and the orphan does not linger despite sync's
 // manifest never having known about it.

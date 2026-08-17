@@ -267,7 +267,9 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 	}
 
 	skipUnchanged := cfg.SkipUnchanged && p.strategy == config.StrategyOverlay
-	_, err := uploadFiles(ctx, cfg, sess, p.files, p.remoteDirs, base, stats, verb, watch, skipUnchanged, log)
+	// Overlay and clean upload the whole plan, so the uploaded set and the
+	// planned set are the same slice.
+	_, err := uploadFiles(ctx, cfg, sess, p.files, p.files, p.remoteDirs, base, stats, verb, watch, skipUnchanged, log)
 	return err
 }
 

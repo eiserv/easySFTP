@@ -56,10 +56,16 @@ type transferEnv struct {
 // same size is skipped instead of uploaded; the stat happens inside the
 // parallel workers so its latency is amortized by the concurrency.
 //
+// planned is the deployment's full plan, which is the same slice as files for
+// overlay and clean but a superset of it for sync (which narrows the upload to
+// the changed files). Only the stale-temp sweep needs the difference: the
+// directories it visits follow what is being uploaded, but the targets it must
+// not remove are every planned one. See sweepStaleTemps and issue #186.
+//
 // It returns which files completed, indexed like files, so that on a partial
 // failure the caller knows what actually made it to the server (the sync
 // strategy uses this to persist a recovery manifest).
-func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files []fileItem, dirs []string, base string, stats *Stats, verb string, watch *stallWatchdog, skipUnchanged bool, log Logger) ([]bool, error) {
+func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, planned []fileItem, dirs []string, base string, stats *Stats, verb string, watch *stallWatchdog, skipUnchanged bool, log Logger) ([]bool, error) {
 	// Declared before the first failure point: callers index the returned
 	// slice by file, so it must be sized even when nothing was uploaded.
 	completed := make([]bool, len(files))
@@ -82,7 +88,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files [
 		// run left in the directories this run uploads into; see
 		// sweepStaleTemps.
 		endSweep := metrics.Phase("sweep_stale_temps")
-		sweepStaleTemps(ctx, sess, watch, base, files, log)
+		sweepStaleTemps(ctx, sess, watch, base, files, planned, log)
 		endSweep()
 	}
 
@@ -315,7 +321,7 @@ func isTempFileName(name string) bool {
 // the target forever, publicly served when the target is a web root.
 //
 // The swept set is exactly the directories that receive files this run (the
-// parent directory of every planned remote path) plus the deployment's remote
+// parent directory of every uploaded remote path) plus the deployment's remote
 // base, where the sync manifest's temp file lives even when no changed file
 // does. Nothing above the base is ever listed or touched: a deploy to
 // /var/www/html/blog has no business reading /var. That keeps the added
@@ -326,7 +332,11 @@ func isTempFileName(name string) bool {
 // pattern (isTempFileName), the entry must be older than staleTempMaxAge (a
 // younger one is plausibly another live run's in-progress upload), and it
 // must not be a planned target of this run (a real deployed file can be named
-// like a temp file; see the literal-name test in atomic_test.go). Staleness
+// like a temp file; see the literal-name test in atomic_test.go). That third
+// guard reads the deployment's *full* plan, not the subset being uploaded:
+// under sync an unchanged file is absent from the upload subset, and sweeping
+// it would delete it silently and for good, because the manifest still records
+// it as up to date and no later run would restore it (issue #186). Staleness
 // compares the runner's clock against the mtime the server reports
 // (time.Since of the entry's ModTime), so a server clock running behind the
 // runner's can make a fresh temp file look older than it is; concurrent
@@ -344,9 +354,9 @@ func isTempFileName(name string) bool {
 // connection redials, but a listing or removal failure only warns and never
 // fails the deploy. Removals are logged, so a user who wondered what those
 // files were gets an answer.
-func sweepStaleTemps(ctx context.Context, sess *session, watch *stallWatchdog, base string, files []fileItem, log Logger) {
-	keep := make(map[string]struct{}, len(files))
-	for _, f := range files {
+func sweepStaleTemps(ctx context.Context, sess *session, watch *stallWatchdog, base string, files, planned []fileItem, log Logger) {
+	keep := make(map[string]struct{}, len(planned))
+	for _, f := range planned {
 		keep[f.remotePath] = struct{}{}
 	}
 	touched := make(map[string]struct{}, len(files)+1)

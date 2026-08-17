@@ -145,7 +145,10 @@ concurrently running deploy's in-progress upload. The sweep intentionally
 runs in every mode, `overlay` included, and is on by default: even though
 overlay never deletes your files, the sweep only ever removes the action's
 own `*.easysftp-tmp` / `*.easysftp-tmp.<n>` debris, never a file it did not
-name itself. An orphan in a directory that no later deploy uploads into
+name itself. A real file of yours that happens to carry such a name is part
+of the deployment and is therefore never swept, in `sync` too, where it is
+protected even on runs that leave it unchanged. An orphan in a directory
+that no later deploy uploads into
 stays until one does, or until you delete it manually. If the target is a
 public web root, also add a deny rule for these names next to the manifest
 rule; see [security.md](security.md#temporary-upload-files-in-web-roots).
