@@ -17,7 +17,10 @@ their measurements and outputs diffed, so every result stored here reads the
 same way whichever implementation wrote it.
 
 The analysis in [`analysis/`](analysis/) reads these files and is optional; the
-commands above need nothing from it.
+commands above need nothing from it. It plots the sweep as a grid and as
+curves, where a deployment's wall clock goes, what the round-trips cost, the
+delete sweeps, the measurement against the link's own control, and what
+easySFTP picks for itself against what a sweep would have picked.
 
 These numbers set no threshold and fail no build. They exist to see where the
 time goes (issues #158 and #169), so read them as one host's behaviour on
@@ -33,7 +36,7 @@ one day, not as a guarantee.
 | A connections/concurrency sweep | `matrix/matrix-*.md` / `.json` / `.csv` |
 | Runtime and throughput across releases | `trend.csv` |
 | An older result | `archive/<kind>/…` |
-| A sweep as a picture | `analysis/README.md` |
+| A sweep as a picture, where the time went, what auto picked | `analysis/README.md` |
 
 ## Layout
 

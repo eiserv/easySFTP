@@ -299,6 +299,19 @@ path: the byte-counting `net.Conn` must never end up in a production transfer.
 Phases are wall clock, operation samples are cumulative across the parallel
 upload workers; do not present the two as the same kind of number.
 
+`benchmarks/analysis/` is the optional Python layer that reads those documents
+and draws them (`benchdata.py` knows the schema, `plot.py` draws,
+`test_plot.py` checks both offline). It consumes canonical files only and must
+never become an input to the harness. Two rules make it survive the stored
+history: every field it reads is optional, because the results on disk span
+several schema versions, and every figure prints its provenance plus the
+caveats the stored file justifies (an unshaped link profile, failed repeats,
+refused connections). Its self-checks load *every* result committed under
+`benchmarks/`, so a reader that only understands the newest schema fails
+instead of silently dropping the older files. `out/` is ignored except for the
+gallery `benchmarks/analysis/README.md` refers to; regenerate those files with
+the commands printed under each image when a new sweep or release lands.
+
 ## Behavior worth knowing before you change it
 
 - Uploads from **Windows runners** have no local permission bits to mirror:

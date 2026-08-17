@@ -1,5 +1,6 @@
 # Pinned so a plot made today can be remade next year. Only what plot.py
-# imports directly; numpy arrives with matplotlib.
+# imports directly; numpy arrives with matplotlib. The self-checks
+# (test_plot.py) use unittest from the standard library and add nothing here.
 #
 # This file is for the optional analysis layer only. Running, storing or
 # validating a benchmark needs none of it (issue #190).

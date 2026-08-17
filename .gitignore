@@ -11,6 +11,7 @@
 # them; commit one only when a document refers to it.
 /benchmarks/analysis/out/
 /benchmarks/analysis/.venv/
+/benchmarks/analysis/__pycache__/
 
 # Editor/IDE
 .idea/
