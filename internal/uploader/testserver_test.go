@@ -403,6 +403,49 @@ func (f *faultyRename) PosixRename(r *sftp.Request) error {
 	return errors.New("injected rename failure")
 }
 
+// faultyPosixRename wraps a FileCmder and answers every posix-rename request
+// with one fixed error while leaving plain "Rename" working, simulating a
+// server that does not implement posix-rename@openssh.com. The request server
+// maps a returned sftp.ErrSSHFx* value onto exactly that status code, so a
+// test can pick which answer a non-OpenSSH server gives (issue #152).
+type faultyPosixRename struct {
+	inner sftp.FileCmder
+	code  error
+}
+
+func withFailPosixRename(code error) serverOption {
+	return func(s *testServer) {
+		s.handlers.FileCmd = &faultyPosixRename{inner: s.handlers.FileCmd, code: code}
+	}
+}
+
+func (f *faultyPosixRename) Filecmd(r *sftp.Request) error {
+	return f.inner.Filecmd(r)
+}
+
+func (f *faultyPosixRename) PosixRename(r *sftp.Request) error {
+	return f.code
+}
+
+// unadvertisePosixRename drops posix-rename@openssh.com from the extension
+// list servers announce in their SSH_FXP_VERSION packet, which is how a client
+// learns the extension is missing. pkg/sftp keeps that list in a package-level
+// variable, so this is process-global: only call it from a test that does not
+// run in parallel (no test in this package does), and note that the extension
+// is still *served* either way, so a test also needs withFailPosixRename to
+// simulate a server that really lacks it.
+func unadvertisePosixRename(t *testing.T) {
+	t.Helper()
+	if err := sftp.SetSFTPExtensions("hardlink@openssh.com", "statvfs@openssh.com"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := sftp.SetSFTPExtensions("hardlink@openssh.com", "posix-rename@openssh.com", "statvfs@openssh.com"); err != nil {
+			t.Errorf("restoring the advertised SFTP extensions: %v", err)
+		}
+	})
+}
+
 // faultySetstat wraps a FileCmder and fails every chmod (Setstat) request,
 // simulating a server that rejects SETSTAT, delegating everything else to the
 // real in-memory handler.

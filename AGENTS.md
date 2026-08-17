@@ -107,6 +107,15 @@ granularity is a separate, later decision; don't build it speculatively.
   `withDropOnRequest` closes *every* live connection, including any
   `verifyClient` session opened before the drop fires; open verification
   clients after the run, not before.
+- Simulating a **non-OpenSSH server** takes two pieces, because the fake server
+  serves `posix-rename@openssh.com` whether or not it announces it:
+  `withFailPosixRename(code)` makes the extension fail with one exact SFTP
+  status (any `sftp.ErrSSHFx*` value; plain `Rename` keeps working, so the
+  remove+rename fallback can succeed), and `unadvertisePosixRename(t)` leaves
+  the extension out of the announced list a client reads. The second mutates a
+  pkg/sftp package-level variable, so it is process-global and restores itself
+  via `t.Cleanup`; no test in this package runs in parallel, which is what
+  makes that safe.
 - A run may hold more than one connection (`advanced.connections`, issue
   #158). Only the per-file upload path spreads over them, by file index;
   `session.do` and therefore everything else always uses the first one. A

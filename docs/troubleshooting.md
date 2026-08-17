@@ -6,7 +6,9 @@ with the log of a `dry-run: true` run.
 
 Ports, chrooted paths and "SSH has to be enabled first" are usually not
 errors but provider quirks: see [Provider notes](providers.md), which also
-explains how to find your own port, path and host key in three commands.
+explains how to find your own port, path and host key in three commands, and
+lists [what easySFTP needs from a server](providers.md#what-easysftp-needs-from-a-server)
+if yours is not OpenSSH.
 
 ## Action startup problems
 
@@ -135,6 +137,14 @@ and renames it over the target (atomic on servers supporting the
 otherwise). A hard kill mid-upload (a cancelled workflow past its grace
 period, a job timeout, a reclaimed runner) can leave such a file behind; it
 is safe to delete manually.
+
+If **every** overwrite fails this way while new files upload fine, the server
+is refusing the rename rather than lacking the extension: easySFTP only falls
+back to remove+rename on a server that does not offer atomic rename, and never
+removes a live file to retry a rename the server has already declined. Check
+write permissions on the existing target files and any policy on the server
+that forbids replacing them. See
+[what easySFTP needs from a server](providers.md#what-easysftp-needs-from-a-server).
 
 Later deploys clean these up automatically: before uploading, every run
 sweeps the directories receiving files in that run, plus the deployment's

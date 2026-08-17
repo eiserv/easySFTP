@@ -248,6 +248,11 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 	return n, nil
 }
 
+// posixRenameExt is the OpenSSH extension that makes a rename replace an
+// existing target atomically. Servers announce the extensions they implement
+// in their SSH_FXP_VERSION packet, which pkg/sftp records per connection.
+const posixRenameExt = "posix-rename@openssh.com"
+
 // renameReplace atomically moves tmp onto final. It prefers the
 // posix-rename@openssh.com extension (a true atomic overwrite) and falls back
 // to a plain remove+rename for servers that do not support it.
@@ -256,14 +261,49 @@ func renameReplace(client *sftp.Client, tmp, final string) error {
 	if err == nil {
 		return nil
 	}
-	var se *sftp.StatusError
-	if !errors.As(err, &se) || se.FxCode() != sftp.ErrSSHFxOpUnsupported {
+	_, announced := client.HasExtension(posixRenameExt)
+	if !posixRenameUnsupported(err, announced) {
 		return err
 	}
 	// note: non-atomic fallback, a brief window where final is missing.
 	// Only reached on servers lacking posix-rename; unavoidable there.
 	_ = client.Remove(final)
 	return client.Rename(tmp, final)
+}
+
+// posixRenameUnsupported reports whether a failed posix-rename@openssh.com
+// request means "this server does not implement the extension" rather than
+// "the server refused this particular rename". Only the first justifies the
+// non-atomic remove+rename fallback: falling back on a refusal would remove a
+// live file the server was never going to let us replace (issue #152).
+//
+// SSH_FX_OP_UNSUPPORTED is the answer the protocol asks for, and OpenSSH gives
+// it. Other implementations answer an unknown extended request with the
+// generic SSH_FX_FAILURE (or, when they reject the packet itself,
+// SSH_FX_BAD_MESSAGE), which on its own is indistinguishable from a policy or
+// permission rejection. The server's own extension announcement breaks the
+// tie: a server that never announced posix-rename was never asked a question
+// it advertised being able to answer, so a generic failure there is the
+// extension missing. A server that did announce it and then fails generically
+// is refusing the rename, and that error is returned unchanged.
+//
+// Codes the client library translates away (SSH_FX_NO_SUCH_FILE and
+// SSH_FX_PERMISSION_DENIED become os.ErrNotExist / os.ErrPermission and carry
+// no *sftp.StatusError) therefore never reach the fallback either, which is
+// what we want: both name a rename the server understood and declined.
+func posixRenameUnsupported(err error, announced bool) bool {
+	var se *sftp.StatusError
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.FxCode() {
+	case sftp.ErrSSHFxOpUnsupported:
+		return true
+	case sftp.ErrSSHFxFailure, sftp.ErrSSHFxBadMessage:
+		return !announced
+	default:
+		return false
+	}
 }
 
 // cleanupTmp best-effort removes a leftover temp file, warning (but not

@@ -266,9 +266,11 @@ before you keep it. easySFTP's own numbers live in
 
 All three are best-effort: a server that rejects the `SETSTAT` request
 produces one warning per deployment (not one per file, and not a failure), so
-a multi-deployment run shows which deployments are affected. In inline mode
-the same three settings are the `file-mode`, `dir-mode` and `preserve-times`
-[inputs](#permissions-inline-mode).
+a multi-deployment run shows which deployments are affected. Servers without
+POSIX permissions behind them reject it as a matter of course; see
+[what easySFTP needs from a server](providers.md#what-easysftp-needs-from-a-server).
+In inline mode the same three settings are the `file-mode`, `dir-mode` and
+`preserve-times` [inputs](#permissions-inline-mode).
 
 > **Windows runners:** Windows has no POSIX permission bits, so "mirror local"
 > has nothing to mirror. Go reports `0666` for every writable file and `0444`

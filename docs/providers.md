@@ -12,6 +12,7 @@ missing or out of date, [add it](#adding-a-provider): the
 provider is all you need to contribute.
 
 - [First: find your own settings](#first-find-your-own-settings)
+- [What easySFTP needs from a server](#what-easysftp-needs-from-a-server)
 - [Hetzner Storage Box](#hetzner-storage-box)
 - [cPanel and similar shared webhosting](#cpanel-and-similar-shared-webhosting)
 - [Adding a provider](#adding-a-provider)
@@ -65,6 +66,65 @@ shell (very common on managed hosting, and the default on some storage
 products) is fully supported. Tools that fail on such accounts usually do so
 because they shell out to `mkdir`/`chmod`; easySFTP uses the SFTP protocol
 operations instead.
+
+## What easySFTP needs from a server
+
+"SFTP" is a family of implementations, and they do not all offer the same
+things. This section says which protocol operations easySFTP uses, which of
+them a deploy cannot work without, and what you see when one is missing. It
+describes easySFTP's own behaviour, so it holds for every server; it makes no
+claim about any particular product.
+
+It is worth reading if your server is not OpenSSH, in particular if it is a
+managed SFTP front end over object storage rather than a POSIX filesystem.
+Those are the setups where the best-effort features below are most likely to
+do nothing.
+
+**Required.** Without these a deploy cannot work at all:
+
+| Operation | Used for |
+| --- | --- |
+| SSH with the `sftp` subsystem (protocol version 3) | everything; easySFTP never opens a shell |
+| `open` / `write` / `close` | uploading file contents |
+| `rename` | moving each finished upload onto its target name |
+| `remove` | removing the temporary upload file, and deleting in `sync` / `clean` |
+| `mkdir` | creating the target tree (via `MkdirAll`, so existing directories are fine) |
+| `stat` | skip-unchanged checks, and reporting a target that exists as a file |
+| `readdir` | the stale-temp sweep, and the remote scan in `sync` / `clean` |
+| `open` / `read` on a written file | reading back the [sync manifest](strategies.md#sync) |
+
+**Best effort.** Missing these degrades a feature, never the deploy:
+
+| Feature | If the server does not have it |
+| --- | --- |
+| `posix-rename@openssh.com` | overwrites are done as remove + rename instead, which is not atomic: there is a brief window in which the target does not exist. See below. |
+| `SETSTAT` for permissions | `file-mode` and `dir-mode` do nothing. An explicit setting warns once per deployment (`could not set file-mode ... server may reject SETSTAT`); a mirrored local mode is silent. |
+| `SETSTAT` for timestamps | `preserve-times` does nothing, and warns once per deployment. |
+| `rmdir` | directories left empty by a `sync` deletion stay behind. Failures are ignored and never fail the run. |
+
+**Atomic overwrite in detail.** easySFTP uploads to a temporary sibling file
+and then replaces the target with it, preferring the
+`posix-rename@openssh.com` extension because that replacement is atomic: a
+reader of your site sees either the old file or the new one, never a partial
+one. Servers announce the extensions they implement when the SFTP session
+starts, and easySFTP uses that announcement to tell two different failures
+apart:
+
+- The server **did not announce** the extension, or answers
+  `SSH_FX_OP_UNSUPPORTED`: it does not have it. easySFTP removes the target
+  and renames the temporary file into place instead. Non-atomic, and
+  unavoidable on such a server.
+- The server **announced** it and still refuses the rename: that is a refusal
+  (a permission or policy rejection), not a missing feature. The run fails with
+  `replacing "<path>": ...` and the file already on the server is left exactly
+  as it was. easySFTP does not remove a live file to retry a rename the server
+  has already declined.
+
+**Large directories.** `sync` and `clean` list the whole target tree to work
+out what to delete. Servers that page or cap directory listings can therefore
+report fewer entries than are really there. `dry-run: true` prints the plan the
+listing produced, which is the cheapest way to see whether it matches what you
+expect.
 
 ## Hetzner Storage Box
 
