@@ -54,3 +54,50 @@ jobs:
     with:
       release-version: ${{ needs.release-please.outputs.tag_name }}
     secrets: inherit
+
+  # The same tag, swept. The job above measures the default cell and that stays
+  # the release's official number; this one measures every scenario the harness
+  # knows over the axis values each payload can use, so a release also says how
+  # the settings behave and not only how one of them did. It is stored as kind
+  # "matrix" under the tag as its label, which can never become latest.*.
+  #
+  # After the standard run, not next to it: both measure the same host, and two
+  # of them at once would measure each other. That is also why "needs" and not
+  # a shared concurrency group; see the header of benchmark-matrix.yml.
+  # "cancelled" is the one result that does not continue: a maintainer stopping
+  # the standard run is not an invitation to start a sweep of several hours.
+  benchmark-matrix:
+    name: Sweep the released tag
+    needs: [release-please, benchmark]
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.release-please.outputs.release_created == 'true' &&
+      needs.benchmark.result != 'cancelled'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/benchmark-matrix.yml
+    with:
+      candidate-ref: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit
+
+  # Last, and on a GitHub-hosted runner: the figures are drawn from what the
+  # two jobs above committed to main, so this has to follow both of them, and
+  # it contacts no server. A cancelled or failed measurement is not a reason to
+  # skip it, since drawing whatever is stored is exactly what someone wants
+  # then.
+  benchmark-analysis:
+    name: Draw the released tag
+    needs: [release-please, benchmark, benchmark-matrix]
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/benchmark-analysis.yml
+    with:
+      release-version: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit

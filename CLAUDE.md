@@ -172,7 +172,12 @@ granularity is a separate, later decision; don't build it speculatively.
   run, so such a job silently never runs (v3.3.0 shipped without its benchmark
   that way). Post-release work is a `uses:` call from `release-please.yml`,
   gated on `needs.release-please.outputs.release_created`, as
-  `release-binaries` and `benchmark` both do.
+  `release-binaries`, `benchmark`, `benchmark-matrix` and `benchmark-analysis`
+  all do. The last three run in that order via `needs:`: the first two measure
+  the same host, and the third reads what they committed. A called workflow
+  runs inside the caller's run, which is why the release sweep takes a
+  concurrency group of its own instead of queueing behind a group that same run
+  already holds.
 - The self-test job in `.github/workflows/ci.yml` is the only place a real
   OpenSSH server is exercised, and the only place `action.yml`'s composite
   wiring runs end to end. Unit tests set `EASYSFTP_*` directly and never see
@@ -299,9 +304,17 @@ path: the byte-counting `net.Conn` must never end up in a production transfer.
 Phases are wall clock, operation samples are cumulative across the parallel
 upload workers; do not present the two as the same kind of number.
 
+A release is measured twice: `benchmark.yml` produces the official number at
+the default settings, and `benchmark-matrix.yml` sweeps the same tag over every
+scenario, stored under the tag as a *matrix* result. The three store invariants
+still hold, and the second of them is why a release sweep can never become
+`latest.*` no matter what its label says.
+
 `benchmarks/analysis/` is the optional Python layer that reads those documents
 and draws them (`benchdata.py` knows the schema, `plot.py` draws,
-`test_plot.py` checks both offline). It consumes canonical files only and must
+`test_plot.py` checks both offline). `benchmark-analysis.yml` runs it after
+every release and publishes the figures as a release asset; that is the only
+automated consumer, and it must stay a consumer. It consumes canonical files only and must
 never become an input to the harness. Two rules make it survive the stored
 history: every field it reads is optional, because the results on disk span
 several schema versions, and every figure prints its provenance plus the

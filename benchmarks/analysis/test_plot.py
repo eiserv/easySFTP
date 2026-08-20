@@ -225,6 +225,30 @@ class Commands(unittest.TestCase):
                 if path.suffix == ".png":
                     self.assertIn(path.name, text, "an image the index does not list")
 
+    def test_report_names_its_sources_however_they_were_given(self):
+        # The paths a caller passes are normally relative to the working
+        # directory (the documented commands and the release workflow both do
+        # that), while the fallbacks are absolute. Both have to end up as the
+        # same repository path in the index.
+        absolute = bench.newest_release_json()
+        relative = absolute.relative_to(bench.REPO)
+        expected = relative.as_posix()
+        self.assertEqual(plot.source_label(absolute), expected)
+        self.assertEqual(plot.source_label(relative), expected)
+
+        with tempfile.TemporaryDirectory() as directory:
+            written = plot.report(
+                options(
+                    directory,
+                    paths=[relative],
+                    scenario=["small"],
+                    profile=["baseline"],
+                )
+            )
+            index = Path(directory) / "report.md"
+            self.assertIn(index, written)
+            self.assertIn(expected, index.read_text(encoding="utf-8"))
+
     def test_a_filter_that_matches_nothing_draws_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(

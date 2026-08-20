@@ -1,0 +1,201 @@
+name: Benchmark analysis
+
+# Draws the stored benchmark documents and publishes the figures.
+#
+# benchmarks/analysis/ is the optional Python layer: it reads the canonical
+# files the Go harness wrote (results.json, matrix.json, the CSVs, trend.csv)
+# and draws the grid, the scaling curves, the policy regret, the canary, the
+# phase and operation breakdowns, the delete sweeps, the link control and the
+# release trend. It is a reading of the data and never an input to it, so
+# nothing here can change what was measured or what is stored.
+#
+# Two ways in:
+#   workflow_dispatch  redraw at any time, optionally for one release tag.
+#   workflow_call      release-please.yml calls this last, after the release's
+#                      standard benchmark and after the release sweep have both
+#                      committed their results to main. That ordering is the
+#                      whole point: the figures are drawn from the numbers of
+#                      the release that just happened, not from the previous
+#                      one.
+#
+# Where the output goes: a workflow artifact for anyone reading the run, and,
+# for a release, one zip attached to the GitHub Release next to the benchmark
+# JSON and Markdown that benchmark.yml already puts there. Deliberately not a
+# commit: benchmarks/analysis/README.md says plots are a reading of the stored
+# data and are not committed by default, and a full set of figures per release
+# would add megabytes of binary history for something the release page can hold
+# instead.
+#
+# GitHub-hosted, unlike the two measuring workflows: this touches no server, so
+# it has no business on the self-hosted runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-version:
+        description: "Release tag to draw and attach the figures to (e.g. v3.5.0). Empty draws the newest stored result and attaches nothing."
+        required: false
+        default: ""
+        type: string
+      matrix-result:
+        description: "Path of a stored sweep to draw, relative to the repository root. Empty picks the release's own sweep, or the newest stored one."
+        required: false
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      release-version:
+        description: "Tag of the release whose result and sweep are drawn."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Draw the stored results
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Only the release path writes, and only as a release asset.
+      contents: write
+    steps:
+      # main, not the ref this was started from: the results were committed to
+      # main by the measuring runs this job follows, and there is nothing to
+      # draw anywhere else.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: benchmarks/analysis/requirements.txt
+
+      - name: Install the analysis dependencies
+        run: pip install -r benchmarks/analysis/requirements.txt
+
+      - name: Choose what to draw
+        id: inputs
+        env:
+          # Through the environment, never interpolated into the script: these
+          # are user input, and "${{ }}" in a run block is a shell injection.
+          VERSION: ${{ inputs.release-version }}
+          MATRIX_INPUT: ${{ inputs.matrix-result }}
+        run: |
+          set -euo pipefail
+          if [ -n "${VERSION:-}" ]; then
+            case "$VERSION" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::release-version must look like v3.3.0, got '$VERSION'"
+              exit 1
+              ;;
+            esac
+          fi
+
+          paths=""
+          if [ -n "${VERSION:-}" ]; then
+            if [ -f "benchmarks/releases/release-$VERSION.json" ]; then
+              paths="benchmarks/releases/release-$VERSION.json"
+            else
+              # Not fatal: the sweep and the trend are still worth drawing, and
+              # a release whose standard run failed is exactly when someone
+              # wants to look.
+              echo "::warning::no stored release result for $VERSION; drawing what is there"
+            fi
+          fi
+
+          sweep=""
+          if [ -n "${MATRIX_INPUT:-}" ]; then
+            if [ ! -f "$MATRIX_INPUT" ]; then
+              echo "::error::matrix-result '$MATRIX_INPUT' does not exist on main"
+              exit 1
+            fi
+            sweep=$MATRIX_INPUT
+          else
+            # The release's own sweep first: it carries the tag as its label.
+            # The stamps sort chronologically, so the last line is the newest.
+            if [ -n "${VERSION:-}" ]; then
+              sweep=$(ls -1 "benchmarks/matrix/matrix-"*"-$VERSION.json" 2>/dev/null | tail -1 || true)
+            fi
+            if [ -z "$sweep" ]; then
+              sweep=$(ls -1 benchmarks/matrix/matrix-*.json 2>/dev/null | tail -1 || true)
+            fi
+          fi
+          if [ -n "$sweep" ]; then
+            paths="$paths $sweep"
+          fi
+
+          echo "paths=$paths" >> "$GITHUB_OUTPUT"
+          echo "drawing: ${paths:-the newest stored result of each kind}"
+
+      - name: Draw everything the stored results support
+        env:
+          PATHS: ${{ steps.inputs.outputs.paths }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/analysis"
+          # Unquoted on purpose: PATHS is a space separated list this workflow
+          # built itself out of files it checked exist, and an empty one has to
+          # collapse to nothing so plot.py falls back to the newest stored
+          # result of each kind.
+          # shellcheck disable=SC2086
+          python benchmarks/analysis/plot.py report $PATHS --out "$RUNNER_TEMP/analysis"
+
+      - name: Summarise what was drawn
+        if: always()
+        run: |
+          set -euo pipefail
+          report=$RUNNER_TEMP/analysis/report.md
+          {
+            echo "## Benchmark analysis"
+            echo
+            echo "Figures drawn from the results stored on main. The images are in this"
+            echo "run's artifact; a release also gets them as an asset on its release page."
+            echo
+            if [ -f "$report" ]; then
+              echo "Sources:"
+              echo
+              grep '^- ' "$report" || true
+              echo
+              echo "| Figure |"
+              echo "|---|"
+              for file in "$RUNNER_TEMP"/analysis/*; do
+                echo "| \`$(basename "$file")\` |"
+              done
+            else
+              echo "Nothing was drawn."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the figures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-analysis-${{ github.run_id }}
+          path: ${{ runner.temp }}/analysis
+          if-no-files-found: warn
+
+      - name: Attach the figures to the release
+        if: inputs.release-version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release-version }}
+        run: |
+          set -euo pipefail
+          # One asset and not a dozen: the release page already carries the
+          # benchmark JSON, Markdown and CSV, and a wall of PNG rows next to
+          # them helps nobody.
+          ( cd "$RUNNER_TEMP/analysis" && zip -q -r "$RUNNER_TEMP/benchmark-analysis-$VERSION.zip" . )
+          gh release upload "$VERSION" "$RUNNER_TEMP/benchmark-analysis-$VERSION.zip" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+      # The self-checks load every result committed under benchmarks/, so this
+      # is where a stored document the analysis layer cannot read surfaces: on
+      # the day it was stored, not on the day someone needs the picture.
+      - name: Run the analysis self-checks
+        if: always()
+        run: python -m unittest discover -s benchmarks/analysis

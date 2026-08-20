@@ -415,7 +415,12 @@ existed) are empty rather than zero.
   ones and are clearly named, but they never become a reference.
 - **Matrix** results are `kind: "matrix"`. They sweep settings a normal deploy
   does not use, so they answer a different question than a release number does
-  and can never become one.
+  and can never become one. A release produces one of these too, labelled with
+  its tag (`matrix/matrix-<stamp>-vX.Y.Z.*`): the official number says how the
+  release behaved at the default cell, the sweep next to it says how it behaves
+  across the settings and across every scenario. The label being a version
+  changes nothing about the kind, so it stays out of `latest.*` and out of
+  `trend.csv` like every other sweep.
 - Release PRs are benchmarked once when they open, so the numbers are visible
   before the merge. That run stores nothing: its result belongs to a release
   that does not exist yet. The official file is the post-tag measurement.
@@ -516,6 +521,36 @@ per-scenario grid").
 
 Setting `request-concurrency` to the single token `default` turns that axis off
 again, which is the grid every result before issue #184 phase 5 was measured on.
+
+### What a release measures
+
+Nothing is triggered by the release event itself; each of these is a `uses:`
+call from `release-please.yml`, gated on the release actually having been
+created, for the reason in that file's comment. They run in order, because the
+first two measure the same host:
+
+1. **`SFTP benchmark`** measures the tag at the default settings and stores the
+   official reference (`releases/release-vX.Y.Z.*`, copied to `latest.*`, and
+   attached to the GitHub Release).
+2. **`SFTP benchmark matrix`** sweeps the same tag over every scenario the
+   harness knows, with the axes reduced per scenario as described above, and
+   stores it under the tag as a matrix result. That is hours of measuring, which
+   is why the job may take a day; the release itself does not wait for any of
+   it.
+3. **`Benchmark analysis`** draws both of them with the optional Python layer
+   and uploads the figures as a run artifact plus one
+   `benchmark-analysis-vX.Y.Z.zip` on the release page. It runs on a
+   GitHub-hosted runner, contacts nothing, and reads only what the two jobs
+   above committed here.
+
+A release whose standard run failed still gets its sweep, and a release whose
+sweep failed still gets its figures: the later jobs read whatever is stored
+rather than requiring the earlier ones to have succeeded. Only a *cancelled*
+standard run stops the sweep, since someone stopping a measurement by hand did
+not mean to start a longer one.
+
+Each of the three can also be started by hand from the Actions tab, which is how
+a release that missed one is repaired.
 
 ### About `connections` above `concurrency`
 

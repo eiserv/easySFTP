@@ -23,6 +23,15 @@ JSON disagree, the JSON is right. Do not commit generated plots by default;
 commit one only when a document refers to it. The gallery below is that
 exception, and the commands under it regenerate exactly those files.
 
+Every release draws itself. The `Benchmark analysis` workflow
+([`.github/workflows/benchmark-analysis.yml`](../../.github/workflows/benchmark-analysis.yml))
+runs `plot.py report` after the release's standard benchmark and its sweep have
+both stored their results, and publishes the figures as a run artifact and as
+`benchmark-analysis-vX.Y.Z.zip` on the release page. Published rather than
+committed, for the reason above. The same workflow can be started by hand for
+any stored release or sweep, and it runs the self-checks below afterwards, so a
+stored document this layer cannot read surfaces on the day it was stored.
+
 ```
 benchdata.py    reads the stored documents; knows the schema, not matplotlib
 plot.py         draws; one function per command

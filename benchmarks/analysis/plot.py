@@ -1362,6 +1362,22 @@ REPORT_SECTIONS = [
 ]
 
 
+def source_label(path):
+    """How a source is named in the index: its path inside the repository.
+
+    Resolved first, because a path given on the command line is normally
+    relative to the working directory ("benchmarks/latest.json") while the
+    fallbacks are absolute, and comparing the two forms directly is what used
+    to make `report` raise on exactly the invocation the documentation shows.
+    A file from outside the repository keeps the name it was given.
+    """
+    given = Path(path)
+    try:
+        return given.resolve().relative_to(bench.REPO).as_posix()
+    except ValueError:
+        return given.as_posix()
+
+
 def report(args):
     """Every plot the given files support, plus a Markdown index of them."""
     paths = args.paths or [bench.newest_release_json(), bench.newest_matrix_json()]
@@ -1411,7 +1427,7 @@ def report(args):
         "",
     ]
     for path in paths:
-        lines.append(f"- `{Path(path).relative_to(bench.REPO).as_posix()}`")
+        lines.append(f"- `{source_label(path)}`")
     lines.append("")
 
     for name, title, description in REPORT_SECTIONS:
