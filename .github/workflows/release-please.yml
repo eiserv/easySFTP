@@ -100,4 +100,6 @@ jobs:
     uses: ./.github/workflows/benchmark-analysis.yml
     with:
       release-version: ${{ needs.release-please.outputs.tag_name }}
-    secrets: inherit
+    # No "secrets: inherit": this job reads committed files and uploads one
+    # release asset with the job token. It needs no server credentials, so it
+    # is not given any.
