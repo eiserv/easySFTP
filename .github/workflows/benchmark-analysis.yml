@@ -161,11 +161,16 @@ jobs:
               echo
               grep '^- ' "$report" || true
               echo
-              echo "| Figure |"
-              echo "|---|"
-              for file in "$RUNNER_TEMP"/analysis/*; do
-                echo "| \`$(basename "$file")\` |"
-              done
+              # Counted per kind, not listed one by one: a sweep over every
+              # scenario draws dozens of heatmaps, and a wall of file names is
+              # not a summary.
+              echo "| Figure | Files |"
+              echo "|---|---|"
+              ls "$RUNNER_TEMP/analysis" | grep -e '.png$' | cut -d- -f1 |
+                sort | uniq -c |
+                while read -r count kind; do
+                  echo "| $kind | $count |"
+                done
             else
               echo "Nothing was drawn."
             fi
