@@ -141,7 +141,13 @@ jobs:
     # The one job in this repo on the self-hosted runner. Everything else stays
     # on GitHub-hosted runners; see the "Self-hosted runner" note in the header.
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 60
+    # Six hours, not the one hour this used to have. A standard run of the
+    # three fixed scenarios takes minutes, but the timeout is what decides
+    # whether a heavier scenario set, more repeats or a second link profile can
+    # be asked for at all, and a measurement killed halfway is worth nothing.
+    # The sweep next door (benchmark-matrix.yml) gets a whole day for the same
+    # reason.
+    timeout-minutes: 360
     # The maintainer gate issue #169 asks for. See the header: protect
     # "benchmark" with required reviewers, leave "benchmark-release" open.
     # "push" is only ever release-please.yml calling this workflow; a manual

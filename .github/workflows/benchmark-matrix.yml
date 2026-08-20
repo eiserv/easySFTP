@@ -9,10 +9,26 @@ name: SFTP benchmark matrix
 # advanced.concurrency and stores one cell per combination, so the result can
 # be read as a heatmap instead of as a single number.
 #
-# Manual only, and never official: a matrix result is a settings sweep, so it
-# is stored as kind "matrix" and can never become latest.*. It shares the
-# "sftp-benchmark" concurrency group with benchmark.yml, since both measure the
-# same host and two of them at once would measure each other.
+# Never official: a matrix result is a settings sweep, so it is stored as kind
+# "matrix" and can never become latest.*, no matter which ref it measured.
+#
+# Two ways in:
+#   workflow_dispatch  a manual sweep of any ref, with the axes as inputs so a
+#                      quick look can stay a quick look.
+#   workflow_call      release-please.yml calls this after the release's
+#                      standard run, so a release is described by a whole grid
+#                      over every use case the harness knows and not only by
+#                      the default cell. The standard result stays the official
+#                      reference; this one is filed next to it under the tag as
+#                      its label.
+#
+# Concurrency: a manual sweep joins the "sftp-benchmark" group that benchmark.yml
+# uses, since both measure the same host and two of them at once would measure
+# each other. The release sweep takes a group of its own. A called workflow runs
+# inside its caller's run, and the release run already holds that group through
+# the standard benchmark it called first, so queueing the sweep behind it would
+# be a job waiting for its own run to end. Ordering there comes from "needs:" in
+# release-please.yml, which is stricter than a queue anyway.
 #
 # Cost: the grid is per scenario, not global. An axis value above a scenario's
 # file count is the same configuration under another name, and
@@ -96,20 +112,90 @@ on:
         required: false
         default: "22"
         type: string
+  # The release sweep. Its defaults are the "all use cases" grid: every
+  # scenario the harness knows, over the axes each payload can actually use,
+  # measured twice. That is hours of runner time per release, which is what the
+  # timeout below is for, and it is the reason the release still gets its cheap
+  # three-scenario standard number from benchmark.yml as well.
+  workflow_call:
+    inputs:
+      candidate-ref:
+        description: "Ref to sweep. release-please.yml passes the tag it just created, which also becomes the stored label."
+        required: true
+        type: string
+      scenarios:
+        description: "Scenarios to sweep. The default is every use case the harness knows: flat and deep trees, a redeploy, a sync, one huge file and the calibration payload."
+        required: false
+        default: "small mixed large single redeploy sync deep bulk calib-100x64k"
+        type: string
+      connections:
+        description: "advanced.connections values to sweep, space separated."
+        required: false
+        default: "1 2 4 8"
+        type: string
+      concurrency:
+        description: "advanced.concurrency values to sweep, space separated. Each scenario is swept over the values its file count can use."
+        required: false
+        default: "1 2 4 8 16 32 64"
+        type: string
+      request-concurrency:
+        description: "Third axis (advanced.request_concurrency), space separated. The token 'default' is a pass that sets nothing."
+        required: false
+        default: "1 16 64"
+        type: string
+      link-profiles:
+        description: "Optional network axis, space separated. Empty = the real line only. Every profile multiplies the whole grid, and shaping needs tc plus NET_ADMIN on the runner."
+        required: false
+        default: ""
+        type: string
+      link-iface:
+        description: "Interface to shape. Empty derives it from the route to the benchmark host."
+        required: false
+        default: ""
+        type: string
+      repeats:
+        description: "Measured repeats per cell; the median is reported. Two is the smallest number that still yields a MAD."
+        required: false
+        default: "2"
+        type: string
+      store:
+        description: "Commit the result to benchmarks/matrix/ on main."
+        required: false
+        default: true
+        type: boolean
+      remote-base:
+        description: "Remote directory the benchmark owns. Everything below it is disposable."
+        required: false
+        default: "/easysftp-benchmark"
+        type: string
+      port:
+        description: "SFTP port of the benchmark server."
+        required: false
+        default: "22"
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: sftp-benchmark
+  # See the header. "push" is only ever release-please.yml calling this
+  # workflow; nothing else can reach it with that event name.
+  group: sftp-benchmark${{ github.event_name == 'push' && format('-release-{0}', github.run_id) || '' }}
   cancel-in-progress: false
 
 jobs:
   matrix:
     name: Sweep connections against concurrency
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 360
-    environment: benchmark
+    # A day. The release sweep covers every scenario over every axis value its
+    # payload can use, which is thousands of measured deployments, and the six
+    # hours this used to allow are less than a full sweep has taken since the
+    # grid grew (the stored 2026-08-16 run measured for 11h25m). A timeout that
+    # cuts a sweep in half throws away the whole run, not half of it.
+    timeout-minutes: 1440
+    # Same gate as benchmark.yml: a manual sweep waits for a maintainer, the
+    # automatic post-release one must not, or every release stalls on a click.
+    environment: ${{ github.event_name == 'push' && 'benchmark-release' || 'benchmark' }}
     permissions:
       contents: write
     steps:
