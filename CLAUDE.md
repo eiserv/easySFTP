@@ -308,9 +308,12 @@ several schema versions, and every figure prints its provenance plus the
 caveats the stored file justifies (an unshaped link profile, failed repeats,
 refused connections). Its self-checks load *every* result committed under
 `benchmarks/`, so a reader that only understands the newest schema fails
-instead of silently dropping the older files. `out/` is ignored except for the
-gallery `benchmarks/analysis/README.md` refers to; regenerate those files with
-the commands printed under each image when a new sweep or release lands.
+instead of silently dropping the older files. CI runs them in ci.yml's
+`analysis-tests` job whenever a pull request touches `benchmarks/`, so a
+change here (or a stored document the layer cannot read) fails on the PR that
+makes it. `out/` is ignored except for the gallery
+`benchmarks/analysis/README.md` refers to; regenerate those files with the
+commands printed under each image when a new sweep or release lands.
 
 ## Behavior worth knowing before you change it
 

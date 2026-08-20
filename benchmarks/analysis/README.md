@@ -221,6 +221,11 @@ silently dropping the older files; and every command is drawn into a temporary
 directory, so a plot that raises on a field that moved fails here rather than
 on the day someone needs the picture.
 
+CI runs them too, in the `analysis-tests` job of `.github/workflows/ci.yml`,
+on every pull request that touches `benchmarks/` and on every push to main.
+Pull requests that touch nothing here skip the job's steps, because these
+checks have nothing to say about a change to the uploader.
+
 ## Adding to this
 
 Keep it reproducible and keep it optional: read only the canonical files, pin
