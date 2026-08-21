@@ -220,7 +220,7 @@ sync:
 | `retries` | `2` | Retries per file on transient errors, and the reconnect budget for dropped connections. Failures the server reports with a permanent status code are never retried; see [which upload failures are retried](troubleshooting.md#which-upload-failures-easysftp-retries). `0` disables. |
 | `timeout` | `30` | Connection timeout in seconds. `0` disables. |
 | `stall_timeout` | `0` (off) | Abort when active remote operations make no progress for this many seconds. |
-| `concurrency` | `auto` (4) | Files uploaded in parallel. Also bounds the sync hashing worker pool. `auto` uses the built-in default. |
+| `concurrency` | `auto` (4) | Files uploaded in parallel. `auto` uses the built-in default. Sync hashing uses the runner's available Go CPU parallelism independently. |
 | `request_concurrency` | `auto` (16) | Max in-flight SFTP requests per file (pipelining within one transfer). |
 | `connections` | `1` | SSH connections the parallel uploads spread over. Never more than `concurrency`. See below. |
 | `skip_unchanged` | `false` | For `overlay`, skip a file whose remote counterpart has the same size (coarse; `sync` compares content hashes). |

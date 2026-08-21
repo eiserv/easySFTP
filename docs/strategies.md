@@ -74,8 +74,9 @@ Notes:
 - A run that fails partway still records what it actually changed in the
   manifest (best effort), so a retried deploy resumes where it left off
   instead of re-uploading files that already made it.
-- Local files are hashed in parallel through a worker pool bounded by
-  `advanced.concurrency`, so planning a large tree uses the available runner CPU.
+- Local files are hashed in parallel using the runner's available Go CPU
+  parallelism. This is independent of `advanced.concurrency`, which can be
+  lowered for an SFTP server without serializing local hashing.
 - Remote directories are only created (or confirmed) for files actually being
   uploaded, so a sync with nothing to do costs just the manifest read and
   rewrite, no per-directory round-trips. Exception: with `permissions.directories`

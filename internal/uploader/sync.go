@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"runtime"
 	"sort"
 
 	"github.com/pkg/sftp"
@@ -77,7 +78,11 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		cached = old.Files
 	}
 	endHash := metrics.Phase("hash")
-	err = hashPlanFiles(ctx, p.files, cfg.Concurrency, cached)
+	// Hashing is local CPU and disk work, so its worker count follows the
+	// runner rather than the server-facing upload limit. A user may reduce
+	// advanced.concurrency because their SFTP server rejects parallel writes;
+	// that must not serialize an unrelated local phase (issue #155).
+	err = hashPlanFiles(ctx, p.files, runtime.GOMAXPROCS(0), cached)
 	endHash()
 	if err != nil {
 		return fmt.Errorf("hashing local files under %q: %w", p.pair.Local, err)
