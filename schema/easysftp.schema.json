@@ -153,7 +153,7 @@
           "minimum": 0
         },
         "concurrency": {
-          "description": "Maximum parallel file uploads and independent remote scan, file delete, and same-depth directory delete requests. \"auto\" (the default) sizes it to the number of independent items the phase has, capped at 64.",
+          "description": "Maximum parallel file uploads and independent remote metadata requests, including directory setup, stale-temp cleanup, scans, and deletes. \"auto\" (the default) sizes it to the number of independent items the phase has, capped at 64.",
           "$ref": "#/$defs/autoInt"
         },
         "request_concurrency": {

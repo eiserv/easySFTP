@@ -8,6 +8,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pkg/sftp"
 
@@ -20,35 +21,66 @@ import (
 // directories: MkdirAll creates any missing parents in the same walk and
 // treats an already-existing directory as success, so ancestors are never
 // stat'd or created one level at a time. Only when a creation fails does it
-// look closer, to report a path that already exists as a file clearly.
-func createRemoteDirs(client *sftp.Client, dirs []string, dirMode *fs.FileMode, watch *stallWatchdog, log Logger) error {
-	for _, dir := range leafDirs(dirs) {
-		done := metrics.Op("sftp_mkdirall")
-		err := client.MkdirAll(dir)
-		done(err)
-		if err != nil {
-			if bad := nonDirConflict(client, dir); bad != "" {
-				return fmt.Errorf("remote path %q exists but is not a directory", bad)
+// look closer, to report a path that already exists as a file clearly. Leaves
+// and directory chmods run through the session's bounded worker pool, with one
+// idempotent operation per sess.do retry scope.
+func createRemoteDirs(ctx context.Context, sess *session, dirs []string, dirMode *fs.FileMode, watch *stallWatchdog, log Logger) error {
+	leaves := leafDirs(dirs)
+	err := runBounded(ctx, sess.workers(len(leaves)), len(leaves), func(groupCtx context.Context, i int) error {
+		dir := leaves[i]
+		return sess.do(groupCtx, watch, func(client *sftp.Client) error {
+			done := metrics.Op("sftp_mkdirall")
+			err := client.MkdirAll(dir)
+			done(err)
+			watch.tick()
+			if err != nil {
+				// Two leaves may share a missing parent. pkg/sftp's MkdirAll
+				// normally resolves that race itself, but a connection drop
+				// between its failed Mkdir and confirming Lstat can hide the
+				// directory another worker just created behind the Mkdir error.
+				// Confirm the final state before treating the operation as failed.
+				info, statErr := client.Stat(dir)
+				watch.tick()
+				if statErr == nil && info.IsDir() {
+					return nil
+				}
+				if isConnError(statErr) {
+					return statErr
+				}
+				bad, conflictErr := nonDirConflict(client, dir, watch)
+				if conflictErr != nil {
+					return conflictErr
+				}
+				if bad != "" {
+					return fmt.Errorf("remote path %q exists but is not a directory", bad)
+				}
+				return fmt.Errorf("creating remote directory %q: %w", dir, err)
 			}
-			return fmt.Errorf("creating remote directory %q: %w", dir, err)
-		}
-		watch.tick()
+			return nil
+		})
+	})
+	if err != nil {
+		return err
 	}
 
 	if dirMode != nil {
-		warned := false
-		for _, dir := range dirs {
-			done := metrics.Op("sftp_chmod_dir")
-			err := client.Chmod(dir, dirMode.Perm())
-			done(err)
-			if err != nil && !warned {
+		var warned atomic.Bool
+		_ = runBounded(ctx, sess.workers(len(dirs)), len(dirs), func(groupCtx context.Context, i int) error {
+			dir := dirs[i]
+			err := sess.do(groupCtx, watch, func(client *sftp.Client) error {
+				done := metrics.Op("sftp_chmod_dir")
+				err := client.Chmod(dir, dirMode.Perm())
+				done(err)
+				watch.tick()
+				return err
+			})
+			if err != nil && !warned.Swap(true) {
 				// Scoped to this pass (one per deployment), like the file-mode
 				// and preserve-times warnings in transfer.go; see issue #121.
 				log.Warningf("could not set dir-mode %04o on %s (server may reject SETSTAT); not warning again for this deployment: %v", dirMode.Perm(), dir, err)
-				warned = true
 			}
-			watch.tick()
-		}
+			return nil
+		})
 	}
 	return nil
 }
@@ -76,14 +108,20 @@ func leafDirs(dirs []string) []string {
 // nonDirConflict returns the shallowest ancestor of dir (dir itself included)
 // that exists on the server but is not a directory, or "" if there is none. It
 // is consulted only after MkdirAll fails, to turn a low-level error into a
-// clear message naming the offending path.
-func nonDirConflict(client *sftp.Client, dir string) string {
+// clear message naming the offending path. Connection errors are returned so
+// sess.do can retry the idempotent leaf operation.
+func nonDirConflict(client *sftp.Client, dir string, watch *stallWatchdog) (string, error) {
 	for _, d := range append(parentDirs(dir), dir) {
-		if info, err := client.Stat(d); err == nil && !info.IsDir() {
-			return d
+		info, err := client.Stat(d)
+		watch.tick()
+		if isConnError(err) {
+			return "", err
+		}
+		if err == nil && !info.IsDir() {
+			return d, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // checkRemoteRoot refuses a destructive mode whose target resolves to the

@@ -5,7 +5,7 @@ easySFTP has three settings that decide how much work it does at once:
 | Setting | What it controls |
 |---|---|
 | `advanced.connections` | How many SSH connections the uploads spread over. |
-| `advanced.concurrency` | How many files are transferred in parallel, and how many independent remote scan / delete requests run at once. |
+| `advanced.concurrency` | How many files are transferred in parallel, and how many independent remote metadata requests run at once (directory setup, stale-temp cleanup, scans and deletes). |
 | `advanced.request_concurrency` | How many SFTP write requests **one file** may have in flight (pipelining inside a single transfer). |
 
 All three default to `auto`, and `auto` means easySFTP works the value out for

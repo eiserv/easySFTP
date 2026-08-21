@@ -34,9 +34,9 @@ type conn struct {
 // that number is one connection's ceiling: one TCP congestion window and one
 // cipher stream carry the whole run, which neither concurrency nor
 // request_concurrency can lift (issue #158). Parallel uploads spread over the
-// pool. Remote scans and delete sweeps may issue concurrent requests, but keep
-// them on the first connection; manifest writes and directory setup do too.
-// Their reconnect behavior therefore stays independent of the upload pool.
+// pool. Remote scans, directory setup, stale-temp sweeps and deletes may issue
+// concurrent requests, but keep them on the first connection. Their reconnect
+// behavior therefore stays independent of the upload pool.
 type session struct {
 	cfg  *config.Config
 	tune *tuning
@@ -394,7 +394,7 @@ func (s *session) closeSSH() {
 // do runs op against the first connection, redialing on a connection-class
 // failure so the retried op runs against a fresh client instead of the dead one.
 // Everything outside the per-file upload path goes through here, which keeps
-// remote scans, delete sweeps and manifest writes on the first connection.
+// remote metadata phases and manifest writes on the first connection.
 // Several callers may use do concurrently; acquire/reconnect uses the failed
 // connection generation to collapse their simultaneous redials into one.
 // Reconnects share the run-wide budget (the retries input) with the upload
@@ -402,8 +402,8 @@ func (s *session) closeSSH() {
 // errors are returned as-is, untouched.
 //
 // The op is marked active for the stall watchdog for its duration, so a
-// server that hangs during a remote scan, a delete sweep or a manifest write
-// trips stall-timeout just like a hung transfer. Ops must be idempotent: a
+// server that hangs during a remote metadata phase or a manifest write trips
+// stall-timeout just like a hung transfer. Ops must be idempotent: a
 // retried op may have partially (or fully) taken effect on the server before
 // the connection died.
 func (s *session) do(ctx context.Context, watch *stallWatchdog, op func(*sftp.Client) error) error {

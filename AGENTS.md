@@ -158,7 +158,8 @@ not that the test needs relaxing.
   `withDropFirstConnAfter`), request-triggered drops
   (`withDropOnRequest(method, path)`, which kills the live connection the
   first time a matching SFTP request arrives; use it to simulate a drop
-  during a non-transfer phase like a delete sweep or remote scan) and
+  during a non-transfer phase like directory setup, a stale-temp sweep, a
+  delete sweep or remote scan) and
   request-triggered hangs (`withStallOnRequest`) and refused connections
   (`withMaxConns(n)`, which closes everything accepted beyond the first n; the
   connection pool's degradation path uses it). Follow that pattern (wrap
@@ -179,13 +180,19 @@ not that the test needs relaxing.
 - A run may hold more than one connection (`advanced.connections`, issue
   #158; how many is the policy's, issue #209). Only the per-file upload path
   spreads over them, by file index modulo `session.spread`; `session.do` and
-  therefore everything else always uses the first one. Remote scans, file
-  deletes and same-depth directory deletes may call `session.do` concurrently,
-  bounded by `session.workers(items)`; they still open no extra connections. A
-  connection the server refuses is not an error: that pool slot falls back to
-  the first connection after one warning, and the run stops asking. The
-  reconnect budget stays run-wide and the stall watchdog closes every
-  connection.
+  therefore everything else always uses the first one. Remote scans, directory
+  creation/chmod, stale-temp sweeps, file deletes and same-depth directory
+  deletes may call `session.do` concurrently, bounded by
+  `session.workers(items)`; they still open no extra connections. A connection
+  the server refuses is not an error: that pool slot falls back to the first
+  connection after one warning, and the run stops asking. The reconnect budget
+  stays run-wide and the stall watchdog closes every connection.
+- Parallel `MkdirAll` calls for different leaves can share a missing parent.
+  `pkg/sftp` normally resolves that race, but a connection drop between its
+  failed `Mkdir` and confirming `Lstat` can surface a misleading already-exists
+  error. `createRemoteDirs` confirms the completed leaf before failing and
+  turns a failed confirmation connection into a `session.do` retry; keep that
+  final-state check.
 - Every remote operation outside the per-file upload path must go through
   `session.do` (see `internal/uploader/session.go`): it redials on
   connection-class errors sharing the `retries` reconnect budget and marks

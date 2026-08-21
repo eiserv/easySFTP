@@ -76,13 +76,10 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 	skipped := make([]bool, len(files))
 
 	if !cfg.DryRun {
-		// Through sess.do so a connection drop during directory setup redials
-		// instead of failing the run; MkdirAll and chmod are idempotent, so
-		// rerunning the whole pass on a fresh client is safe.
+		// Each idempotent operation has its own sess.do retry scope, so a
+		// connection drop does not replay directories that already completed.
 		endDirs := metrics.Phase("create_dirs")
-		err := sess.do(ctx, watch, func(client *sftp.Client) error {
-			return createRemoteDirs(client, dirs, cfg.DirMode, watch, log)
-		})
+		err := createRemoteDirs(ctx, sess, dirs, cfg.DirMode, watch, log)
 		endDirs()
 		if err != nil {
 			return completed, err
@@ -411,10 +408,11 @@ func isTempFileName(name string) bool {
 // against safety.max_deletes (which budgets deletions of deployed files) and
 // are not reported in the run's delete stats.
 //
-// Everything is best-effort: each directory runs through sess.do so a dropped
-// connection redials, but a listing or removal failure only warns and never
-// fails the deploy. Removals are logged, so a user who wondered what those
-// files were gets an answer.
+// Everything is best-effort: directories run concurrently through the
+// session's bounded worker pool, with each one in its own sess.do so a dropped
+// connection redials. A listing or removal failure only warns and never fails
+// the deploy. Removals are logged, so a user who wondered what those files were
+// gets an answer.
 func sweepStaleTemps(ctx context.Context, sess *session, watch *stallWatchdog, base string, files, planned []fileItem, log Logger) {
 	keep := make(map[string]struct{}, len(planned))
 	for _, f := range planned {
@@ -435,11 +433,12 @@ func sweepStaleTemps(ctx context.Context, sess *session, watch *stallWatchdog, b
 		dirs = append(dirs, dir)
 	}
 	sort.Strings(dirs)
-	for _, dir := range dirs {
-		_ = sess.do(ctx, watch, func(client *sftp.Client) error {
-			return sweepDirStaleTemps(client, dir, keep, watch, log)
+	_ = runBounded(ctx, sess.workers(len(dirs)), len(dirs), func(groupCtx context.Context, i int) error {
+		_ = sess.do(groupCtx, watch, func(client *sftp.Client) error {
+			return sweepDirStaleTemps(client, dirs[i], keep, watch, log)
 		})
-	}
+		return nil
+	})
 }
 
 // sweepDirStaleTemps sweeps a single remote directory; see sweepStaleTemps.

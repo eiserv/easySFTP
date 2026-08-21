@@ -13,6 +13,11 @@ Set the mode inline with the `mode` input, or in the
 [config file](configuration.md#the-config-file) as `defaults.mode` (global)
 or a per-deployment `mode`.
 
+Before uploading, easySFTP creates remote directory leaves in parallel and
+checks touched directories for stale temporary files with up to
+`advanced.concurrency` SFTP requests. Directory permission updates use the
+same bound. These metadata requests stay on the first SSH connection.
+
 > **Renamed in v3.** What v2 called the `strategy` input (and `strategy:` in
 > the config file) is the `mode` input and `mode:` field in v3. The three
 > behaviors are unchanged. See the [migration guide](migration-v3.md).
