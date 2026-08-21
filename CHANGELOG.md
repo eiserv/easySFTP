@@ -5,6 +5,21 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0](https://github.com/eiserv/easySFTP/compare/v3.5.0...v3.6.0) (2026-08-21)
+
+
+### Features
+
+* **benchmark:** add analysis plots for phases, operations, auto and the link ([#204](https://github.com/eiserv/easySFTP/issues/204)) ([359421d](https://github.com/eiserv/easySFTP/commit/359421d2099464439508920f8a99ad46935465a3))
+* **uploader:** make auto a real adaptive transport policy ([#211](https://github.com/eiserv/easySFTP/issues/211)) ([ad0e449](https://github.com/eiserv/easySFTP/commit/ad0e4491144d4d75671162899b4e0d737fe48283))
+
+
+### Performance
+
+* **uploader:** decouple sync hashing from uploads ([#208](https://github.com/eiserv/easySFTP/issues/208)) ([3ba223a](https://github.com/eiserv/easySFTP/commit/3ba223a354e83fca68b393695e49af3910be5ef1))
+* **uploader:** parallelize remaining remote phases ([#214](https://github.com/eiserv/easySFTP/issues/214)) ([d6b8bad](https://github.com/eiserv/easySFTP/commit/d6b8bad0e3d5f417df5d846d1d41b4ffd2eb9dac))
+* **uploader:** parallelize remote scans and deletes ([#210](https://github.com/eiserv/easySFTP/issues/210)) ([0ad36fd](https://github.com/eiserv/easySFTP/commit/0ad36fd283f7ef5e2ec89f24234576a6d5e26bad))
+
 ## [3.5.0](https://github.com/eiserv/easySFTP/compare/v3.4.0...v3.5.0) (2026-08-17)
 
 
