@@ -12,6 +12,7 @@ var REPO = "https://github.com/eiserv/easySFTP";
 /* dir: what links inside the source file are relative to, in the repo */
 var PAGES = [
   { id: "configuration", title: "configuration", group: "guide", dir: "docs/" },
+  { id: "tuning", title: "tuning", group: "guide", dir: "docs/" },
   { id: "strategies", title: "strategies", group: "guide", dir: "docs/" },
   { id: "examples", title: "examples", group: "guide", dir: "docs/" },
   { id: "security", title: "security", group: "guide", dir: "docs/" },

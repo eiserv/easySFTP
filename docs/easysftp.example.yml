@@ -67,16 +67,20 @@ safety:
   # Deleting the remote root ("/") is always refused, independent of this.
   max_deletes: 200
 
-# Transfer tuning; the defaults suit most deployments.
+# Transfer tuning. All three of these default to "auto", which means easySFTP
+# picks the value per deployment from what it is sending and from the link it
+# measured; see docs/tuning.md. A number is used verbatim and never tuned, and
+# each key is resolved on its own, so pinning one leaves the others adaptive.
 advanced:
   retries: 2 # per-file retries and reconnect budget; 0 disables
   timeout: 30 # connection timeout in seconds; 0 disables
   stall_timeout: 0 # abort after this many seconds without progress; 0 = off
-  concurrency: auto # files uploaded in parallel ("auto" = built-in default)
+  concurrency: auto # files uploaded in parallel
   request_concurrency: auto # in-flight SFTP requests per file
   # SSH connections uploads spread over. >1 lifts the single-TCP-flow ceiling
-  # on high-latency links; some servers limit connections per account.
-  connections: 1
+  # on high-latency links; some servers limit connections per account, so pin
+  # a number if yours does.
+  connections: auto
   skip_unchanged: false # overlay only: skip same-size remote files
 
 # Remote permission and timestamp handling (all best-effort).

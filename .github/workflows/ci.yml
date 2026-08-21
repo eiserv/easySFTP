@@ -448,8 +448,25 @@ jobs:
                    and ((.operations | map(select(.name == "sftp_open")) | first | .count) == 300)
                    and .process.max_rss_bytes > 0
                    and .process.user_cpu_ms > 0
-                   and .process.net_write_bytes > 0
-                   and .counters.connections_opened == 1' "$OUT_DIR/results.json"
+                   and .process.net_write_bytes > 0' "$OUT_DIR/results.json"
+          # The adaptive settings (issue #209) against a real server, which is
+          # the only place the link probe and the connection pool run at all.
+          # The standard benchmark is an inline run, so all three settings are
+          # at auto: the policy must have read the workload, measured the link
+          # and stayed inside its own bounds.
+          jq -e '.results[] | select(.label == "candidate" and .scenario == "small")
+                 | (.operations | map(select(.name == "sftp_realpath")) | first | .count) >= 3
+                   and .counters.workload_files == 300
+                   and .counters.workload_probes == 0
+                   and .counters.link_rtt_us > 0
+                   and .counters.link_handshake_us > 0
+                   and .counters.auto_initial_connections >= 1
+                   and .counters.config_connections >= .counters.auto_initial_connections
+                   and .counters.config_connections <= 8
+                   and .counters.config_concurrency == 64
+                   and .counters.config_request_concurrency == 16
+                   and .counters.connections_opened <= 8
+                   and ((.counters.connections_refused // 0) == 0)' "$OUT_DIR/results.json"
 
       # A two-by-two grid of the matrix sweep: enough to prove the plumbing
       # (config generation for both axes, per-cell aggregation, the CSV) without

@@ -59,6 +59,7 @@ OPERATION_ORDER = [
     "sftp_mkdirall",
     "sftp_stat",
     "sftp_readdir",
+    "sftp_realpath",
     "ssh_connect",
 ]
 

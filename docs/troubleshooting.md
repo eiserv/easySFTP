@@ -57,6 +57,24 @@ This is automatic and not configurable. If transfers still die mid-run, the
 connection itself is being reset (not just idled out); check for a very
 short server-side session/idle limit, or a flaky network path.
 
+### `the server would not open more than N SSH connection(s)`
+
+easySFTP sizes its connection pool itself (see [transfer tuning](tuning.md)),
+and this host allows fewer connections per account than it asked for. sshd's
+`MaxStartups` and the per-account limits of shared hosting are the usual
+reasons.
+
+It is a degradation, not a failure: the deploy finishes on the connections it
+has, and easySFTP stops asking for more for the rest of the run. If you see it
+on every deploy, pin the number your host allows and the warning goes away:
+
+```yaml
+advanced:
+  connections: 1
+```
+
+The other two settings stay adaptive; each one is resolved on its own.
+
 ### `connecting to <host>:22: ssh: handshake failed: ... unable to authenticate`
 
 The server rejected the credentials.

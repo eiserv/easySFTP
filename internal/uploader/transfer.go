@@ -48,6 +48,10 @@ type transferEnv struct {
 	modeWarned *atomic.Bool
 	// timesWarned doubles as the preserve-times switch: nil means off.
 	timesWarned *atomic.Bool
+	// progress is what stage 3 of the auto policy watches. It is nil when
+	// there is nothing to tune (every setting pinned, or a dry run), and
+	// every method on it tolerates that.
+	progress *uploadProgress
 }
 
 // uploadFiles creates the needed remote directories and uploads files in
@@ -93,10 +97,25 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 	}
 
 	defer metrics.Phase("upload")()
+
+	// Stages 1 and 2 of the auto policy, for this deployment: the workload is
+	// the transfer that is about to start (for sync, the changed set the
+	// manifest just produced), and the link is what the first connection
+	// measured. Everything the configuration pinned comes back unchanged.
+	settings := sess.tune.planFor(uploadWorkload(files, skipUnchanged))
+	sess.setSpread(settings.Connections)
+	logTuning(cfg, sess, files, skipUnchanged, settings, log)
+
 	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(cfg.Concurrency)
+	g.SetLimit(settings.Concurrency)
 	results := make([]int64, len(files))
 	env := &transferEnv{cfg: cfg, sess: sess, watch: watch, log: log}
+	if sess.tune.adaptive() && !cfg.DryRun && len(files) > 0 {
+		// Stage 3. A dry run moves no bytes, so there is nothing to measure
+		// and nothing a wider pool could carry.
+		env.progress = newUploadProgress(files)
+		defer startTuningController(ctx, sess, settings, env.progress, log)()
+	}
 	// modeWarned is only armed when file-mode is an explicit override: a
 	// mirrored local mode (the default) stays silent on failure, as before.
 	if cfg.FileMode != nil {
@@ -127,6 +146,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 						log.Infof("%sskip %s (remote file has the same size)", verb, f.remotePath)
 					}
 					skipped[i] = true
+					env.progress.skip(f.size)
 					return nil
 				}
 			}
@@ -150,6 +170,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 			}
 			results[i] = n
 			completed[i] = true
+			env.progress.upload(n, f.size)
 			return nil
 		})
 	}

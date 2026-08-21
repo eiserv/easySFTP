@@ -120,6 +120,16 @@ type Safety struct {
 	MaxDeletes int
 }
 
+// AutoSettings marks the transport settings whose value easySFTP works out
+// for itself. They are independent on purpose: a run may pin connections and
+// leave the other two adaptive, and the policy then optimizes within the
+// constraint the pinned one imposes.
+type AutoSettings struct {
+	Connections        bool
+	Concurrency        bool
+	RequestConcurrency bool
+}
+
 // Config holds the fully parsed action configuration.
 type Config struct {
 	Server              string
@@ -167,6 +177,15 @@ type Config struct {
 	// Concurrency: a connection without a worker on it is a handshake for
 	// nothing.
 	Connections int
+
+	// Auto records which of the three transport settings above the user left
+	// at "auto" (or did not write at all), and is therefore easySFTP's to
+	// choose. The int fields keep the historical fixed defaults so that code
+	// which never consults the policy (and a Config built directly in a test)
+	// behaves exactly as it did; internal/autotune replaces them per
+	// deployment once the plan and the link are known. See docs/tuning.md and
+	// issue #209.
+	Auto AutoSettings
 
 	Retries      int
 	Timeout      time.Duration
@@ -232,7 +251,10 @@ func (c *Config) SyncManifestName() string {
 
 const envPrefix = "EASYSFTP_"
 
-// Run-wide defaults, applied in inline mode and overridable per config file.
+// Run-wide defaults. The three transport numbers are the values easySFTP used
+// before the settings became adaptive; they are the fallback a Config carries
+// while the policy has not run (and the value a directly constructed Config
+// keeps), never a choice the policy makes. See AutoSettings.
 const (
 	defaultConcurrency        = 4
 	defaultRequestConcurrency = 16
@@ -319,9 +341,13 @@ func Load() (*Config, error) {
 		Concurrency:            defaultConcurrency,
 		SftpRequestConcurrency: defaultRequestConcurrency,
 		Connections:            defaultConnections,
-		Retries:                defaultRetries,
-		Timeout:                defaultTimeoutSec * time.Second,
-		ManifestName:           DefaultManifestName,
+		// Adaptive unless the config file pins a number. Inline mode has no
+		// input for any of the three (every non-secret setting has exactly
+		// one home in v3), so an inline run is always fully adaptive.
+		Auto:         AutoSettings{Connections: true, Concurrency: true, RequestConcurrency: true},
+		Retries:      defaultRetries,
+		Timeout:      defaultTimeoutSec * time.Second,
+		ManifestName: DefaultManifestName,
 	}
 
 	var err error

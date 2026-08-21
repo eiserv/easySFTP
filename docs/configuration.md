@@ -162,9 +162,9 @@ advanced:
   retries: 2
   timeout: 30
   stall_timeout: 0
-  concurrency: auto            # or a number
+  concurrency: auto            # or a number; see docs/tuning.md
   request_concurrency: auto
-  connections: 1               # SSH connections uploads spread over
+  connections: auto            # SSH connections uploads spread over
   skip_unchanged: false
 
 permissions:
@@ -220,17 +220,17 @@ sync:
 | `retries` | `2` | Retries per file on transient errors, and the reconnect budget for dropped connections. Failures the server reports with a permanent status code are never retried; see [which upload failures are retried](troubleshooting.md#which-upload-failures-easysftp-retries). `0` disables. |
 | `timeout` | `30` | Connection timeout in seconds. `0` disables. |
 | `stall_timeout` | `0` (off) | Abort when active remote operations make no progress for this many seconds. |
-| `concurrency` | `auto` (4) | Files uploaded in parallel. `auto` uses the built-in default. Sync hashing uses the runner's available Go CPU parallelism independently. |
-| `request_concurrency` | `auto` (16) | Max in-flight SFTP requests per file (pipelining within one transfer). |
-| `connections` | `1` | SSH connections the parallel uploads spread over. Never more than `concurrency`. See below. |
+| `concurrency` | `auto` | Files uploaded in parallel, and independent remote scan / delete requests. `auto` sizes it to the work (see [transfer tuning](tuning.md)). Sync hashing uses the runner's available Go CPU parallelism independently. |
+| `request_concurrency` | `auto` | Max in-flight SFTP requests per file (pipelining within one transfer). `auto` sizes it to the largest file. |
+| `connections` | `auto` | SSH connections the parallel uploads spread over. Never more than `concurrency`. `auto` opens another one only while it would save more time than its handshake costs. See below. |
 | `skip_unchanged` | `false` | For `overlay`, skip a file whose remote counterpart has the same size (coarse; `sync` compares content hashes). |
 
 ##### `connections`: more than one TCP flow
 
-By default a run does everything over a single SSH connection, so the whole
-deploy shares one TCP congestion window and one cipher stream, no matter how
-high `concurrency` and `request_concurrency` are. On a long-distance link that
-window is what caps throughput, and neither knob can lift it.
+A single SSH connection carries the whole deploy over one TCP congestion window
+and one cipher stream, no matter how high `concurrency` and
+`request_concurrency` are. On a long-distance link that window is what caps
+throughput, and neither knob can lift it.
 
 `connections: 4` opens up to four connections and spreads the parallel uploads
 over them. Remote scans and deletes issue up to `concurrency` independent
@@ -238,25 +238,27 @@ requests over the first connection; the sync manifest stays there too. This
 keeps the server-facing parallelism under one limit without paying for extra
 SSH handshakes during metadata-only work.
 
-It is off by default because it is not free:
+At `auto` (the default) easySFTP decides per deployment, because a connection
+is not free:
 
+- **Each connection repeats the handshake**, including host key verification.
+  A short run of a few files pays that for nothing, so `auto` opens another
+  connection only while the time it would save is larger than the handshake it
+  costs. A one-second redeploy gets one connection; a two-thousand-file upload
+  over a link with real latency gets several. [Transfer tuning](tuning.md)
+  explains the rule and how to read the log line it prints.
 - **Server limits are real.** sshd's `MaxStartups` and per-account connection
   limits on shared hosting will refuse the extra connections. easySFTP then
-  warns once per refused connection and finishes the deploy on the ones it
-  has, so a too-high value costs a warning, not a failed deploy.
-- **Each connection repeats the handshake**, including host key verification.
-  A short run of a few files pays that for nothing, which is why connections
-  past the first are only opened when a file actually needs one.
+  warns, finishes the deploy on the ones it has and stops asking for more, so a
+  too-high value costs a warning, not a failed deploy.
 - **The `retries` budget is shared.** Reconnects are counted per run, not per
   connection.
 - **The stall watchdog closes all of them.** `stall_timeout` only knows that
   the run stopped moving bytes, not which connection stalled.
 
-Worth trying when the server is far away or the link has real latency, and the
-transfer is clearly not saturating it. On a nearby server, or with many small
-files where per-file round-trips dominate, expect little or nothing: measure
-before you keep it. easySFTP's own numbers live in
-[`benchmarks/`](../benchmarks/README.md).
+Pin a number when your host has a connection limit you already know, or when
+you measured something better than what `auto` picks. easySFTP's own numbers
+live in [`benchmarks/`](../benchmarks/README.md).
 
 #### `permissions`
 

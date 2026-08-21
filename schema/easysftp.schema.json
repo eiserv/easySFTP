@@ -153,15 +153,15 @@
           "minimum": 0
         },
         "concurrency": {
-          "description": "Maximum parallel file uploads and independent remote scan, file delete, and same-depth directory delete requests, or \"auto\" for the built-in default.",
+          "description": "Maximum parallel file uploads and independent remote scan, file delete, and same-depth directory delete requests. \"auto\" (the default) sizes it to the number of independent items the phase has, capped at 64.",
           "$ref": "#/$defs/autoInt"
         },
         "request_concurrency": {
-          "description": "Maximum in-flight SFTP requests per file (pipelining within one file's transfer), or \"auto\" for the built-in default.",
+          "description": "Maximum in-flight SFTP requests per file (pipelining within one file's transfer). \"auto\" (the default) sizes it to the largest file being uploaded: 16 for a tree of small files, up to 64 for large ones.",
           "$ref": "#/$defs/autoInt"
         },
         "connections": {
-          "description": "Number of SSH connections uploads may spread over (default 1, never more than concurrency). More connections lift the single-TCP-flow and single-cipher-stream ceiling on high-latency links, but some servers and shared hosts limit concurrent connections per account.",
+          "description": "Number of SSH connections uploads may spread over (never more than concurrency). More connections lift the single-TCP-flow and single-cipher-stream ceiling on high-latency links, but some servers and shared hosts limit concurrent connections per account. \"auto\" (the default) opens another one only while it would save more time than its SSH handshake costs, up to 8, and widens the pool while a long transfer runs if the measured throughput justifies it.",
           "$ref": "#/$defs/autoInt"
         },
         "skip_unchanged": {
@@ -220,6 +220,7 @@
       "items": { "type": "string" }
     },
     "autoInt": {
+      "description": "A fixed number, or \"auto\" to let easySFTP choose the value per deployment from the workload and the measured link. Absent means \"auto\". Each setting is resolved on its own, so pinning one leaves the others adaptive.",
       "oneOf": [
         { "type": "integer", "minimum": 1 },
         { "const": "auto" }

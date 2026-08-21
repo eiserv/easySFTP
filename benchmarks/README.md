@@ -103,7 +103,7 @@ Markdown:
 | `results[].process` | CPU time, peak RSS, Go allocations, GC count and pause, peak goroutines, disk and network bytes |
 | `results[].phases[]` | wall clock per phase (connect, local_scan, remote_scan, hash, create_dirs, sweep_stale_temps, upload, delete_sweep, manifest_read, manifest_write, prune_dirs, cleanup) |
 | `results[].operations[]` | per round-trip: count, cumulative total, average, p50/p90/p99, max, errors |
-| `results[].counters` | connections opened/used/refused, reconnects, retries, stalls, errors |
+| `results[].counters` | connections opened/used/refused, reconnects, retries, stalls, errors, the settings the run used (`config_*`), what the policy first picked (`auto_initial_*`, `auto_changes`), the features it read (`workload_*`) and the link it measured (`link_rtt_us`, `link_handshake_us`) |
 | `comparison[]` | each build against the reference build: `delta_ms`, `delta_percent`, and `within_noise` (is the delta smaller than the reference's MAD?) |
 | `deletes[]` | the delete sweeps, one row per (build, scenario, link profile); see "The delete sweeps" below |
 | `runs[]` | every individual repeat, verbatim, including its own metrics document |
@@ -189,13 +189,22 @@ candidate build, and scores it against the grid:
 
 | Field | What it is |
 |---|---|
-| `chosen` | the `connections`, `concurrency` and `request_concurrency` the run used, read from its own counters rather than assumed |
+| `chosen` | the `connections`, `concurrency` and `request_concurrency` the run ended up using, read from its own counters rather than assumed |
+| `chosen.initial_*`, `chosen.changes` | what the policy picked before the transfer taught it anything, and how many times it widened the pool while the transfer ran; equal to `chosen` on a run the runtime stage left alone |
+| `workload` | the features the policy was looking at: `files`, `bytes`, `largest_bytes`, `probes`, and the `rtt_ms` / `handshake_ms` the run measured itself |
 | `median_ms`, `min_ms`, `max_ms`, `mad_ms`, `durations_ms`, `mib_per_s`, `files_per_s` | the same statistics a cell carries |
 | `best` | the fastest candidate cell of that scenario and profile |
 | `regret_ms`, `regret_percent` | the gap: how much slower the policy is than the settings a sweep would have picked |
 | `chosen_in_grid`, `chosen_cell_median_ms` | the same coordinates measured as an ordinary cell, when the grid contains them |
 
-Three things about it:
+`workload` and the `initial_*` fields are null in every result stored before
+issue #209, where `auto` was a fixed 1/4/16 and there was nothing to record.
+`workload.rtt_ms` is easySFTP's own probe, taken on its first connection, and is
+a different measurement from `link.probes[]`, which comes from `cmd/linkprobe`
+and never goes through the uploader. Both are kept, because the interesting case
+is the one where they disagree.
+
+Four things about it:
 
 - **It is not a cell.** `auto` does not sit at a coordinate, it chooses one, so
   it stays out of `cells[]`, `scaling[]`, `comparison[]` and the CSV. A build
@@ -209,9 +218,15 @@ Three things about it:
   (see "The link profile"), and a policy that is only good on the benchmark
   host's line is the failure class of #62 all over again. A policy within ~15%
   of optimum on every profile is defensible; one that only wins here is not.
-  This is the number the auto-config work of #156 has to beat, and today it
-  scores a hardcoded default, which is exactly what #156 says `auto` currently
-  is.
+- **The grid cannot score the runtime stage.** A cell is a fixed configuration
+  measured from its first byte, so there is nothing in it for the controller to
+  react to. What `chosen.changes` records is that the controller acted; whether
+  it acted well shows up in `median_ms` and nowhere else.
+
+The policy itself lives in `internal/autotune` (issue #209), and its own test
+replays it against every sweep committed here and fails when the regret goes
+over the target. That test is the fast feedback loop; the sweep is the
+measurement it is fitted to.
 
 ### The canary
 

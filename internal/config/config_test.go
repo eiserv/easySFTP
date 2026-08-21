@@ -417,8 +417,112 @@ advanced:
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The int field keeps the pre-adaptive default as a fallback; what makes
+	// the setting adaptive is the flag next to it, which internal/autotune
+	// resolves per deployment (issue #209).
 	if cfg.Concurrency != 4 {
-		t.Errorf("expected 'auto' to resolve to the default concurrency, got %d", cfg.Concurrency)
+		t.Errorf("expected the fixed fallback to stay at 4, got %d", cfg.Concurrency)
+	}
+	if !cfg.Auto.Concurrency {
+		t.Error("'auto' must mark the concurrency as easySFTP's to choose")
+	}
+}
+
+// TestAutoIsPerSettingAndOptOut: each of the three transport settings resolves
+// on its own, so a config file may pin one and leave the others adaptive
+// (issue #209, "Manual override semantics"). Not writing a key at all means
+// the same as writing "auto".
+func TestAutoIsPerSettingAndOptOut(t *testing.T) {
+	const header = `version: 3
+connection:
+  host: sftp.example.com
+  username: deploy
+  host_key: SHA256:abc
+deployments:
+  website:
+    source: ./dist/
+    target: /www/
+`
+	for _, tc := range []struct {
+		name     string
+		advanced string
+		want     AutoSettings
+		values   [3]int // connections, concurrency, request_concurrency
+	}{
+		{
+			name: "nothing written is fully adaptive",
+			want: AutoSettings{Connections: true, Concurrency: true, RequestConcurrency: true},
+			// The fixed fallbacks the run carries until the policy replaces them.
+			values: [3]int{1, 4, 16},
+		},
+		{
+			name: "auto written out is the same thing",
+			advanced: `advanced:
+  connections: auto
+  concurrency: auto
+  request_concurrency: auto
+`,
+			want:   AutoSettings{Connections: true, Concurrency: true, RequestConcurrency: true},
+			values: [3]int{1, 4, 16},
+		},
+		{
+			name: "the mixed example from the issue",
+			advanced: `advanced:
+  connections: auto
+  concurrency: auto
+  request_concurrency: 32
+`,
+			want:   AutoSettings{Connections: true, Concurrency: true},
+			values: [3]int{1, 4, 32},
+		},
+		{
+			name: "a pinned pool with the rest adaptive",
+			advanced: `advanced:
+  connections: 2
+`,
+			want:   AutoSettings{Concurrency: true, RequestConcurrency: true},
+			values: [3]int{2, 4, 16},
+		},
+		{
+			name: "everything pinned",
+			advanced: `advanced:
+  connections: 2
+  concurrency: 8
+  request_concurrency: 4
+`,
+			want:   AutoSettings{},
+			values: [3]int{2, 8, 4},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setConfigModeEnv(t, header+tc.advanced)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Auto != tc.want {
+				t.Errorf("Auto = %+v, want %+v", cfg.Auto, tc.want)
+			}
+			got := [3]int{cfg.Connections, cfg.Concurrency, cfg.SftpRequestConcurrency}
+			if got != tc.values {
+				t.Errorf("values = %v, want %v", got, tc.values)
+			}
+		})
+	}
+}
+
+// TestInlineModeIsFullyAdaptive: inline mode has no input for any of the three
+// (every non-secret setting has exactly one home in v3), so a workflow that
+// writes source/target gets the adaptive behaviour without asking for it.
+func TestInlineModeIsFullyAdaptive(t *testing.T) {
+	setBaseEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := AutoSettings{Connections: true, Concurrency: true, RequestConcurrency: true}
+	if cfg.Auto != want {
+		t.Errorf("Auto = %+v, want %+v", cfg.Auto, want)
 	}
 }
 

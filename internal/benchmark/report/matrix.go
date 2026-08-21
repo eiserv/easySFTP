@@ -273,10 +273,10 @@ func (m Matrix) autoCost(b *buf) {
 	b.line("")
 	// Through "%s": the sentence carries a literal per cent sign, and vet reads
 	// a bare string here as a format.
-	b.line("%s", "One run per scenario and profile with `connections`, `concurrency` and `request_concurrency` all set to `auto`, on the candidate build, measured next to the cells it is scored against. `Picked` is read out of the run's own counters, so it is what easySFTP did and not what this script assumes; `Best` is the fastest cell of the same scenario and profile. `Regret` is the gap between them: how much slower the policy is than the settings a sweep would have chosen. A policy within ~15% on every profile is defensible, one that only wins on the house line is not (issue #184, phase 5; the policy itself is #156).")
+	b.line("%s", "One run per scenario and profile with `connections`, `concurrency` and `request_concurrency` all set to `auto`, on the candidate build, measured next to the cells it is scored against. `Picked` is read out of the run's own counters, so it is what easySFTP did and not what this script assumes; `Best` is the fastest cell of the same scenario and profile. `Regret` is the gap between them: how much slower the policy is than the settings a sweep would have chosen. A policy within ~15% on every profile is defensible, one that only wins on the house line is not (issue #184, phase 5; the policy itself is #209).")
 	b.line("")
-	b.line("| Scenario | Profile | Picked (conn/conc/req) | auto | Best cell | Best | Regret | Same cell in grid |")
-	b.line("|---|---|---|---|---|---|---|---|")
+	b.line("| Scenario | Profile | Picked (conn/conc/req) | Started at | Changes | auto | Best cell | Best | Regret | Same cell in grid |")
+	b.line("|---|---|---|---|---|---|---|---|---|---|")
 	for _, a := range m.Result.Auto {
 		best := "-"
 		bestMS := "-"
@@ -289,13 +289,49 @@ func (m Matrix) autoCost(b *buf) {
 		if a.ChosenInGrid {
 			inGrid = raw(a.ChosenCellMedianMS) + " ms"
 		}
-		b.line("| %s | %s | %s/%s/%s | %s ms | %s | %s | %s | %s |",
+		b.line("| %s | %s | %s/%s/%s | %s/%s/%s | %s | %s ms | %s | %s | %s | %s |",
 			a.Scenario, a.LinkProfile,
 			raw(a.Chosen.Connections), raw(a.Chosen.Concurrency), raw(a.Chosen.RequestConcurrency),
+			raw(a.Chosen.InitialConnections), raw(a.Chosen.InitialConcurrency), raw(a.Chosen.InitialRequestConcurrency),
+			raw(a.Chosen.Changes),
 			num(a.MedianMS), best, bestMS, percent(a.RegretPercent), inGrid)
 	}
 	b.line("")
-	b.line("The last column is the same coordinates measured as an ordinary cell. It is a control, not a result: a large gap between it and the `auto` column means the two runs saw different conditions, and then the regret next to it is drift rather than policy. Where it says \"not swept\", the settings easySFTP picked are not on this grid at all.")
+	b.line("`Started at` is what the policy chose before the transfer taught it anything, and `Changes` how many times it widened the connection pool while the transfer ran; when the two coordinate columns agree, the run was decided entirely up front. The last column is the same coordinates measured as an ordinary cell. It is a control, not a result: a large gap between it and the `auto` column means the two runs saw different conditions, and then the regret next to it is drift rather than policy. Where it says \"not swept\", the settings easySFTP picked are not on this grid at all.")
+	m.autoWorkload(b)
+}
+
+// autoWorkload prints the input side of each decision. The regret table says
+// what the policy chose; this says what it was looking at, which is what makes
+// a surprising choice readable without rerunning the sweep (issue #209).
+func (m Matrix) autoWorkload(b *buf) {
+	rows := 0
+	for _, a := range m.Result.Auto {
+		if a.Workload != nil {
+			rows++
+		}
+	}
+	if rows == 0 {
+		return
+	}
+	b.line("")
+	b.line("<details><summary>What the policy was looking at</summary>")
+	b.line("")
+	b.line("| Scenario | Profile | Files | Bytes | Largest file | Probes | RTT | Handshake |")
+	b.line("|---|---|---|---|---|---|---|---|")
+	for _, a := range m.Result.Auto {
+		w := a.Workload
+		if w == nil {
+			continue
+		}
+		b.line("| %s | %s | %s | %s | %s | %s | %s ms | %s ms |",
+			a.Scenario, a.LinkProfile, raw(w.Files), raw(w.Bytes), raw(w.LargestBytes), raw(w.Probes),
+			raw(w.RTTMS), raw(w.HandshakeMS))
+	}
+	b.line("")
+	b.line("`Probes` are the remote round-trips that are not uploads, which is what an `advanced.skip_unchanged` redeploy is made of. The RTT and handshake here are easySFTP's own measurement, taken on its first connection; `The link` above is the same path measured by `cmd/linkprobe`, which does not go through the uploader. The two should agree, and where they do not, one of them is measuring something else.")
+	b.line("")
+	b.line("</details>")
 }
 
 func (m Matrix) canary(b *buf) {

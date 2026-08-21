@@ -79,10 +79,12 @@ func stubMain() {
 		source = stubQuoted(text, "    source:")
 		target = stubQuoted(text, "    target:")
 		mode = stubBare(text, "    mode:")
-		// "auto" resolves to easySFTP's own defaults here, exactly as autoInt.or
-		// does in internal/config/configfile.go: an auto run has to come out
-		// somewhere on the grid, otherwise the regret arithmetic has nothing to
-		// compare.
+		// "auto" resolves to a fixed 1/4/16 here, which is what a real build
+		// did before internal/autotune existed. The stub deliberately does not
+		// reimplement the policy: what these tests check is that an auto run
+		// is measured, kept off the grid and scored against it, and for that
+		// the run only has to land somewhere on the grid. Whether the policy
+		// lands well is internal/autotune's own regret test.
 		connections = stubSetting(text, "  connections:", 1)
 		concurrency = stubSetting(text, "  concurrency:", 4)
 		requests = stubSetting(text, "  request_concurrency:", 16)

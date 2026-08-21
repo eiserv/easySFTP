@@ -110,14 +110,15 @@ func checkMaxDeletes(n int, cfg *config.Config) error {
 // breadth-first boundary keeps a deterministic parent-before-child result.
 // Each ReadDir has its own sess.do call, so a dropped connection retries only
 // that idempotent listing instead of replaying the whole scan.
-func listRemoteContents(ctx context.Context, sess *session, root string, concurrency int, watch *stallWatchdog) (files, dirs []string, err error) {
-	if concurrency < 1 {
-		concurrency = 1
-	}
+//
+// The worker count is asked for per level rather than fixed for the scan: with
+// advanced.concurrency at auto it is the width of the level being listed, and a
+// tree whose levels are one directory wide never opens a worker it cannot use.
+func listRemoteContents(ctx context.Context, sess *session, root string, watch *stallWatchdog) (files, dirs []string, err error) {
 	level := []string{root}
 	for len(level) > 0 {
 		entries := make([][]fs.FileInfo, len(level))
-		err := runBounded(ctx, concurrency, len(level), func(groupCtx context.Context, i int) error {
+		err := runBounded(ctx, sess.workers(len(level)), len(level), func(groupCtx context.Context, i int) error {
 			dir := level[i]
 			err := sess.do(groupCtx, watch, func(client *sftp.Client) error {
 				done := metrics.Op("sftp_readdir")

@@ -139,7 +139,10 @@ func logHostKeyStatus(h hop, log Logger) {
 // opens an SFTP session on top of SSH. The returned cleanup function closes
 // the jump-host transport (it is a no-op for direct connections) and must be
 // called after the SSH client is closed.
-func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, func(), error) {
+// requests is the resolved advanced.request_concurrency: pkg/sftp fixes it
+// when the client is created, which is why it is a parameter here rather than
+// read off the config (see internal/uploader/tuning.go).
+func connect(cfg *config.Config, requests int, log Logger) (*ssh.Client, *sftp.Client, func(), error) {
 	noop := func() {}
 	target := targetHop(cfg)
 	targetConfig, err := target.clientConfig(cfg.Timeout, log)
@@ -165,7 +168,7 @@ func connect(cfg *config.Config, log Logger) (*ssh.Client, *sftp.Client, func(),
 
 	sftpClient, err := sftp.NewClient(sshClient,
 		sftp.UseConcurrentWrites(true),
-		sftp.MaxConcurrentRequestsPerFile(cfg.SftpRequestConcurrency),
+		sftp.MaxConcurrentRequestsPerFile(requests),
 	)
 	if err != nil {
 		sshClient.Close()

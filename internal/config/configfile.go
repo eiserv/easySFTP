@@ -84,7 +84,9 @@ type yamlSync struct {
 }
 
 // autoInt is an integer that also accepts the literal "auto" (or being
-// absent), both meaning "let easySFTP pick the default".
+// absent), both meaning "let easySFTP work the value out for itself". What
+// that resolves to is internal/autotune's job, per deployment and per link;
+// this type only records which of the two the user wrote.
 type autoInt struct {
 	set bool
 	v   int
@@ -101,13 +103,18 @@ func (a *autoInt) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// or returns the configured value, or def when unset/"auto".
+// or returns the configured value, or def when unset/"auto". def is the
+// pre-adaptive fixed default, which the run carries only until the policy
+// replaces it; auto reports which of the two happened.
 func (a autoInt) or(def int) int {
 	if a.set {
 		return a.v
 	}
 	return def
 }
+
+// auto reports whether easySFTP chooses this value.
+func (a autoInt) auto() bool { return !a.set }
 
 // allowedKeys lists the valid option names per config-file section, keyed by
 // the section's dotted path ("" is the file's top level, "deployments.*" any
@@ -348,6 +355,15 @@ func applyYAML(cfg *Config, yc *yamlConfig) error {
 	cfg.Concurrency = yc.Advanced.Concurrency.or(defaultConcurrency)
 	cfg.SftpRequestConcurrency = yc.Advanced.RequestConcurrency.or(defaultRequestConcurrency)
 	cfg.Connections = yc.Advanced.Connections.or(defaultConnections)
+	// Each key is resolved on its own: a file that pins connections and
+	// leaves concurrency at auto gets exactly that, and the policy then
+	// chooses the concurrency knowing the connection count it has to live
+	// with (issue #209).
+	cfg.Auto = AutoSettings{
+		Connections:        yc.Advanced.Connections.auto(),
+		Concurrency:        yc.Advanced.Concurrency.auto(),
+		RequestConcurrency: yc.Advanced.RequestConcurrency.auto(),
+	}
 	cfg.SkipUnchanged = yc.Advanced.SkipUnchanged
 
 	var err error

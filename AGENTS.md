@@ -76,6 +76,66 @@ whole workflow into a config file. Each setting still has exactly one home
 *per mode*, which is what keeps "no precedence question" true. Per-deployment
 granularity is a separate, later decision; don't build it speculatively.
 
+## The adaptive transport settings (`auto`)
+
+`advanced.connections`, `advanced.concurrency` and `advanced.request_concurrency`
+default to `auto`, and since issue #209 `auto` is a real policy rather than a
+synonym for a fixed 1/4/16. `internal/autotune` is that policy: a cost model
+with no clock, no I/O and no state, plus a small runtime controller. Read its
+package comment before changing anything here; the short version:
+
+- `concurrency` is the number of independent items the phase has, capped at 64.
+  There is no trade-off (a worker with nothing to do never starts), which is
+  why nothing measures it and why the runtime controller never moves it.
+- `request_concurrency` follows the largest file (it counts 32 KiB write
+  packets in flight for *one* file) and is capped by the SSH channel window,
+  which is 64 packets. It is fixed when an SFTP client is created, so it is
+  resolved once, run-wide, before the first connection.
+- `connections` is the only interesting one. `T(k) = W/k + (k-1)*H` is smallest
+  at `k = sqrt(W/H)`: open another connection while it saves more than its
+  handshake costs. Everything else in the package exists to estimate `W`.
+
+Three rules that are load-bearing:
+
+1. **A number in the config file is never touched**, at any stage.
+   `config.AutoSettings` records which of the three the user left to easySFTP;
+   the int fields keep the old fixed defaults as a fallback. A `config.Config`
+   built directly (every uploader test) therefore has all three *pinned*, which
+   is why the pre-existing tests still measure what they measured.
+2. **The pool only grows.** `session.conns` is allocated once to the ceiling
+   and `session.spread` is what moves; slots are dialed on first use, so
+   widening costs nothing until a worker lands on a fresh slot. A refused
+   connection latches `session.refused`, pulls the spread back and stops the
+   run asking again.
+3. **Never derive parallelism from `runtime.NumCPU()`.** The constraint is the
+   server and the path, not the runner (issue #156 says so explicitly). The one
+   place the runner's CPU count belongs is sync hashing, which is local work
+   (issue #155).
+
+The three stages and where they run:
+
+| Stage | Where | What it adds |
+|---|---|---|
+| 1, workload | `uploader.Run` (run-wide) and `uploadFiles` (per deployment) | the plan: files, bytes, largest file, metadata round-trips |
+| 2, link | `newSession` via `probeLink` | the handshake it just paid, and an RTT from three `SSH_FXP_REALPATH` round-trips |
+| 3, runtime | `startTuningController` inside `uploadFiles` | the throughput the transfer is actually achieving |
+
+An overlay deployment with `advanced.skip_unchanged` is the case stage 1 cannot
+settle: the upload set is decided file by file while the run goes. It is
+planned as metadata only (`Workload.Unknown`), which is what keeps a redeploy
+that changed three files from paying for a pool, and stage 3 widens it if the
+observed ratio says most files really are being sent.
+
+`internal/autotune/regret_test.go` is the acceptance test issue #209 asks for:
+it replays the policy over every sweep committed under `benchmarks/matrix/`
+with at least three repeats and fails when the regret against the best measured
+cell goes over 15% (a gap under 300 ms passes on its absolute size, which is
+what the issue allows for sub-two-second runs). A sibling test asserts that the
+old fixed 1/4/16 would *fail* it, so the replay cannot quietly stop
+discriminating. **Changing a constant in `internal/autotune` means running that
+test**, and a new stored sweep that fails it means the policy needs refitting,
+not that the test needs relaxing.
+
 ## Testing quirks
 
 - `internal/uploader/testserver_test.go` runs an in-process SSH/SFTP server
@@ -117,13 +177,15 @@ granularity is a separate, later decision; don't build it speculatively.
   via `t.Cleanup`; no test in this package runs in parallel, which is what
   makes that safe.
 - A run may hold more than one connection (`advanced.connections`, issue
-  #158). Only the per-file upload path spreads over them, by file index;
-  `session.do` and therefore everything else always uses the first one. Remote
-  scans, file deletes and same-depth directory deletes may call `session.do`
-  concurrently, bounded by `advanced.concurrency`; they still open no extra
-  connections. A connection the server refuses is not an error: that pool slot
-  falls back to the first connection after one warning. The reconnect budget
-  stays run-wide and the stall watchdog closes every connection.
+  #158; how many is the policy's, issue #209). Only the per-file upload path
+  spreads over them, by file index modulo `session.spread`; `session.do` and
+  therefore everything else always uses the first one. Remote scans, file
+  deletes and same-depth directory deletes may call `session.do` concurrently,
+  bounded by `session.workers(items)`; they still open no extra connections. A
+  connection the server refuses is not an error: that pool slot falls back to
+  the first connection after one warning, and the run stops asking. The
+  reconnect budget stays run-wide and the stall watchdog closes every
+  connection.
 - Every remote operation outside the per-file upload path must go through
   `session.do` (see `internal/uploader/session.go`): it redials on
   connection-class errors sharing the `retries` reconnect budget and marks

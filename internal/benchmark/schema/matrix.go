@@ -180,6 +180,11 @@ type Auto struct {
 	// did rather than what the script believes it does.
 	Chosen Chosen `json:"chosen"`
 
+	// Workload is what the policy was looking at when it chose (issue #209).
+	// Null for the sweeps stored before the policy existed, where "auto" was a
+	// fixed 1/4/16 and there was nothing to record.
+	Workload *AutoWorkload `json:"workload,omitzero"`
+
 	MiBPerS   float64 `json:"mib_per_s"`
 	FilesPerS float64 `json:"files_per_s"`
 
@@ -196,10 +201,47 @@ type Auto struct {
 }
 
 // Chosen is what an auto run resolved its three knobs to.
+//
+// The three plain fields are the *effective* settings, the largest the run
+// ended up using. Initial* is what the policy picked before the transfer
+// taught it anything, and Changes how many times the runtime controller
+// widened the pool while it ran; the two are equal on a run the controller
+// left alone, which is the common case (issue #209, stage 3). All four are
+// null for the sweeps stored before the policy existed.
 type Chosen struct {
 	Connections        *float64 `json:"connections"`
 	Concurrency        *float64 `json:"concurrency"`
 	RequestConcurrency *float64 `json:"request_concurrency"`
+
+	InitialConnections        *float64 `json:"initial_connections,omitzero"`
+	InitialConcurrency        *float64 `json:"initial_concurrency,omitzero"`
+	InitialRequestConcurrency *float64 `json:"initial_request_concurrency,omitzero"`
+	Changes                   *float64 `json:"changes,omitzero"`
+}
+
+// AutoWorkload is the input side of one policy decision: the features the run
+// computed from its plan and the link it measured. It is recorded so a stored
+// result explains why auto picked what it picked, without the reader having to
+// rerun anything (issue #209, "Observability").
+//
+// Every field is a pointer because every one of them is genuinely absent in a
+// result stored by a build that did not report it, and a zero RTT would read
+// as a measurement rather than as a gap.
+type AutoWorkload struct {
+	// Files and Bytes are the transfer the policy sized for, LargestBytes the
+	// biggest single file (the only size request_concurrency can act on) and
+	// Probes the metadata round-trips that are not uploads.
+	Files        *float64 `json:"files"`
+	Bytes        *float64 `json:"bytes"`
+	LargestBytes *float64 `json:"largest_bytes"`
+	Probes       *float64 `json:"probes"`
+
+	// RTTMS and HandshakeMS are what the run's own probe measured, which is
+	// not the same measurement as link.probes[]: those come from
+	// cmd/linkprobe, outside the code under test. Comparing the two is worth
+	// doing, which is why both are kept.
+	RTTMS       *float64 `json:"rtt_ms"`
+	HandshakeMS *float64 `json:"handshake_ms"`
 }
 
 // MatrixCompare pairs a build's cell with the reference build's cell at

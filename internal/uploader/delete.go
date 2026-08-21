@@ -31,7 +31,7 @@ func deleteRemoteFiles(ctx context.Context, cfg *config.Config, sess *session, p
 		return deleted, nil
 	}
 
-	err := runBounded(ctx, cfg.Concurrency, len(paths), func(groupCtx context.Context, i int) error {
+	err := runBounded(ctx, sess.workers(len(paths)), len(paths), func(groupCtx context.Context, i int) error {
 		remotePath := paths[i]
 		if cfg.LogPerFile() {
 			log.Infof("delete %s", remotePath)
@@ -85,13 +85,9 @@ func removeRemoteDirs(ctx context.Context, cfg *config.Config, sess *session, wa
 		byDepth[depth] = append(byDepth[depth], dir)
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(depths)))
-	workers := cfg.Concurrency
-	if workers < 1 {
-		workers = 1
-	}
 	for _, depth := range depths {
 		level := byDepth[depth]
-		_ = runBounded(ctx, workers, len(level), func(groupCtx context.Context, i int) error {
+		_ = runBounded(ctx, sess.workers(len(level)), len(level), func(groupCtx context.Context, i int) error {
 			dir := level[i]
 			_ = sess.do(groupCtx, watch, func(client *sftp.Client) error {
 				done := metrics.Op("sftp_rmdir")

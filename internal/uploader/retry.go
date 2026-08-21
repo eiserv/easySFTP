@@ -35,6 +35,7 @@ func uploadFileWithRetry(ctx context.Context, env *transferEnv, f fileItem, inde
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
 			metrics.Count("retries", 1)
+			env.progress.failed()
 			backoff := time.Duration(1<<(attempt-1)) * time.Second
 			log.Warningf("retrying upload of %s in %s (attempt %d/%d): %v", f.localPath, backoff, attempt+1, retries+1, lastErr)
 			if err := sleepCtx(ctx, backoff); err != nil {

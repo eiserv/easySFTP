@@ -62,11 +62,12 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	stats := &Stats{}
 	defer func() { stats.Duration = time.Since(start) }()
 
-	// The benchmark reads these back out of the metrics file to label a cell of
-	// its connections/concurrency matrix; a normal run collects nothing.
-	metrics.Set("config_connections", int64(cfg.Connections))
-	metrics.Set("config_concurrency", int64(cfg.Concurrency))
-	metrics.Set("config_request_concurrency", int64(cfg.SftpRequestConcurrency))
+	// Everything the configuration left at "auto" is this value's to decide;
+	// see internal/autotune and docs/tuning.md. The benchmark reads the
+	// decision back out of the metrics file to score the policy against the
+	// grid it was measured next to; a normal run collects nothing.
+	tune := newTuning(cfg)
+	defer tune.report()
 
 	// Build the full local plan first so config/path errors surface before
 	// we touch the network.
@@ -100,8 +101,15 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	}
 	endScan()
 
+	// Stage 1 of the policy, run-wide: request_concurrency is baked into every
+	// SFTP client when it is created and the connection pool is one slice, so
+	// both are sized here, against every deployment's plan, before the first
+	// handshake. Stage 2 (the link) happens inside newSession, stage 3 during
+	// each transfer.
+	tune.resolveRunWide(runWorkload(plans))
+
 	endConnect := metrics.Phase("connect")
-	sess, err := newSession(ctx, cfg, log)
+	sess, err := newSession(ctx, cfg, tune, log)
 	endConnect()
 	if err != nil {
 		return stats, err
@@ -202,7 +210,7 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		}
 		var files, dirs []string
 		endRemoteScan := metrics.Phase("remote_scan")
-		files, dirs, err := listRemoteContents(ctx, sess, base, cfg.Concurrency, watch)
+		files, dirs, err := listRemoteContents(ctx, sess, base, watch)
 		endRemoteScan()
 		if err != nil {
 			return fmt.Errorf("scanning remote directory %q: %w", p.pair.Remote, err)

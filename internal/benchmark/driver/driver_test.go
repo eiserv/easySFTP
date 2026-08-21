@@ -241,8 +241,9 @@ func TestMatrix(t *testing.T) {
 	}
 
 	// The policy measurement of issue #184 phase 5. The stub resolves "auto" to
-	// easySFTP's own defaults (1/4/16) and gets faster with more parallelism,
-	// so the best cell of "small" is 2/4 and auto must come out behind it.
+	// a fixed 1/4/16 (see the comment in stub_test.go) and gets faster with
+	// more parallelism, so the best cell of "small" is 2/4 and auto must come
+	// out behind it.
 	if len(result.Auto) != 2 {
 		t.Errorf("measured auto %d time(s), want once per scenario and profile", len(result.Auto))
 	}

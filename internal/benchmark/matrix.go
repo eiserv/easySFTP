@@ -317,7 +317,16 @@ func matrixAuto(runs []RunRecord, cells []schema.Cell) []schema.Auto {
 			Connections:        stats.Median(counterValues(ms, "config_connections")),
 			Concurrency:        stats.Median(counterValues(ms, "config_concurrency")),
 			RequestConcurrency: stats.Median(counterValues(ms, "config_request_concurrency")),
+
+			// What the policy picked up front, next to what the run ended
+			// with: the gap between the two is the runtime controller's doing
+			// (issue #209).
+			InitialConnections:        stats.Median(counterValues(ms, "auto_initial_connections")),
+			InitialConcurrency:        stats.Median(counterValues(ms, "auto_initial_concurrency")),
+			InitialRequestConcurrency: stats.Median(counterValues(ms, "auto_initial_request_concurrency")),
+			Changes:                   stats.Median(counterValues(ms, "auto_changes")),
 		}
+		workload := autoWorkload(ms)
 
 		auto := schema.Auto{
 			Scenario:    group[0].Scenario,
@@ -334,6 +343,7 @@ func matrixAuto(runs []RunRecord, cells []schema.Cell) []schema.Auto {
 			MaxMS:       stats.Or(stats.Max(stats.Nums(durations)), 0),
 			MadMS:       stats.Mad(durations),
 			Chosen:      chosen,
+			Workload:    workload,
 			MiBPerS:     stats.MiBPerS(bytes, median),
 			FilesPerS:   stats.Ratio(files, median),
 		}
@@ -358,6 +368,34 @@ func matrixAuto(runs []RunRecord, cells []schema.Cell) []schema.Auto {
 		return stats.Key{a.LinkProfile, a.Scenario}
 	})
 	return out
+}
+
+// autoWorkload reads back the features the policy saw. A build that does not
+// report them (every one before issue #209) leaves the whole block out rather
+// than filling it with zeros, which would read as "measured nothing".
+func autoWorkload(ms []*schema.Metrics) *schema.AutoWorkload {
+	w := schema.AutoWorkload{
+		Files:        stats.Median(counterValues(ms, "workload_files")),
+		Bytes:        stats.Median(counterValues(ms, "workload_bytes")),
+		LargestBytes: stats.Median(counterValues(ms, "workload_largest_bytes")),
+		Probes:       stats.Median(counterValues(ms, "workload_probes")),
+		RTTMS:        micros(stats.Median(counterValues(ms, "link_rtt_us"))),
+		HandshakeMS:  micros(stats.Median(counterValues(ms, "link_handshake_us"))),
+	}
+	if w == (schema.AutoWorkload{}) {
+		return nil
+	}
+	return &w
+}
+
+// micros converts a counter kept in microseconds (counters are integers, and a
+// 13 ms RTT rounds to nothing in whole milliseconds) into the milliseconds
+// every other duration in these documents is in.
+func micros(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	return stats.Ptr(*v / 1000)
 }
 
 func bestCandidateCell(cells []schema.Cell, scenario, profile string) *schema.Cell {
