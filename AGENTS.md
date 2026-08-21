@@ -118,10 +118,12 @@ granularity is a separate, later decision; don't build it speculatively.
   makes that safe.
 - A run may hold more than one connection (`advanced.connections`, issue
   #158). Only the per-file upload path spreads over them, by file index;
-  `session.do` and therefore everything else always uses the first one. A
-  connection the server refuses is not an error: that pool slot falls back to
-  the first connection after one warning. The reconnect budget stays run-wide
-  and the stall watchdog closes every connection.
+  `session.do` and therefore everything else always uses the first one. Remote
+  scans, file deletes and same-depth directory deletes may call `session.do`
+  concurrently, bounded by `advanced.concurrency`; they still open no extra
+  connections. A connection the server refuses is not an error: that pool slot
+  falls back to the first connection after one warning. The reconnect budget
+  stays run-wide and the stall watchdog closes every connection.
 - Every remote operation outside the per-file upload path must go through
   `session.do` (see `internal/uploader/session.go`): it redials on
   connection-class errors sharing the `retries` reconnect budget and marks

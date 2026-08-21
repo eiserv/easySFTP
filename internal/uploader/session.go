@@ -33,9 +33,9 @@ type conn struct {
 // that number is one connection's ceiling: one TCP congestion window and one
 // cipher stream carry the whole run, which neither concurrency nor
 // request_concurrency can lift (issue #158). Parallel uploads spread over the
-// pool; every other remote operation (remote scans, delete sweeps, manifest
-// writes, directory setup) stays on the first connection, where its reconnect
-// behavior is exactly what it was before the pool existed.
+// pool. Remote scans and delete sweeps may issue concurrent requests, but keep
+// them on the first connection; manifest writes and directory setup do too.
+// Their reconnect behavior therefore stays independent of the upload pool.
 type session struct {
 	cfg *config.Config
 	log Logger
@@ -267,7 +267,9 @@ func (s *session) closeSSH() {
 // do runs op against the first connection, redialing on a connection-class
 // failure so the retried op runs against a fresh client instead of the dead one.
 // Everything outside the per-file upload path goes through here, which keeps
-// remote scans, delete sweeps and manifest writes on one connection.
+// remote scans, delete sweeps and manifest writes on the first connection.
+// Several callers may use do concurrently; acquire/reconnect uses the failed
+// connection generation to collapse their simultaneous redials into one.
 // Reconnects share the run-wide budget (the retries input) with the upload
 // path; past that budget the original failure is returned. Non-connection
 // errors are returned as-is, untouched.

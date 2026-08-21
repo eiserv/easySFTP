@@ -134,35 +134,24 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		return err
 	}
 
-	var deleted []string // relative paths actually removed, for the recovery manifest
-	endSweep := metrics.Phase("delete_sweep")
-	for _, rel := range toDelete {
-		full := path.Join(base, rel)
-		if cfg.LogPerFile() {
-			log.Infof("%sdelete %s", verb, full)
-		}
-		if !cfg.DryRun {
-			err := sess.do(ctx, watch, func(client *sftp.Client) error {
-				// Already-gone counts as deleted: a retried delete may have
-				// landed before the connection died.
-				done := metrics.Op("sftp_remove")
-				err := client.Remove(full)
-				done(err)
-				if err != nil && !errors.Is(err, os.ErrNotExist) {
-					return err
-				}
-				return nil
-			})
-			if err != nil {
-				endSweep()
-				writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, deleted), log)
-				return fmt.Errorf("deleting %q: %w", full, err)
-			}
-		}
-		stats.FilesDeleted++
-		deleted = append(deleted, rel)
+	deletePaths := make([]string, len(toDelete))
+	for i, rel := range toDelete {
+		deletePaths[i] = path.Join(base, rel)
 	}
+	endSweep := metrics.Phase("delete_sweep")
+	deleteResults, deleteErr := deleteRemoteFiles(ctx, cfg, sess, deletePaths, watch, log)
+	var deleted []string // relative paths actually removed, for the recovery manifest
+	for i, ok := range deleteResults {
+		if ok {
+			deleted = append(deleted, toDelete[i])
+		}
+	}
+	stats.FilesDeleted += len(deleted)
 	endSweep()
+	if deleteErr != nil {
+		writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, deleted), log)
+		return deleteErr
+	}
 	stats.FilesSkipped += len(p.files) - len(upload)
 
 	if cfg.DryRun {
@@ -173,7 +162,7 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	for i, rel := range deleted {
 		deletedFull[i] = path.Join(base, rel)
 	}
-	pruneEmptyDirs(ctx, sess, watch, base, deletedFull)
+	pruneEmptyDirs(ctx, cfg, sess, watch, base, deletedFull)
 	endWrite := metrics.Phase("manifest_write")
 	err = sess.do(ctx, watch, func(client *sftp.Client) error {
 		return writeManifest(client, base, cfg.SyncManifestName(), manifest{Version: manifestVersion, Files: local})
@@ -331,7 +320,7 @@ func writeManifest(client *sftp.Client, dir, name string, m manifest) error {
 // deepest first, walking up to (but not including) base. Each removal runs
 // through sess.do: the outcome stays best-effort, but a dropped connection is
 // redialed rather than silently failing every remaining removal.
-func pruneEmptyDirs(ctx context.Context, sess *session, watch *stallWatchdog, base string, deleted []string) {
+func pruneEmptyDirs(ctx context.Context, cfg *config.Config, sess *session, watch *stallWatchdog, base string, deleted []string) {
 	seen := map[string]struct{}{}
 	var candidates []string
 	for _, f := range deleted {
@@ -343,17 +332,8 @@ func pruneEmptyDirs(ctx context.Context, sess *session, watch *stallWatchdog, ba
 			candidates = append(candidates, dir)
 		}
 	}
-	// Deepest paths sort last; remove them first so parents can then empty out.
-	sort.Sort(sort.Reverse(sort.StringSlice(candidates)))
 	defer metrics.Phase("prune_dirs")()
-	for _, dir := range candidates {
-		_ = sess.do(ctx, watch, func(client *sftp.Client) error {
-			done := metrics.Op("sftp_rmdir")
-			err := client.RemoveDirectory(dir)
-			done(err)
-			return err
-		})
-	}
+	removeRemoteDirs(ctx, cfg, sess, watch, candidates)
 }
 
 // hashFile returns the sha256 hex digest of a local file's contents.

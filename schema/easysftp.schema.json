@@ -153,7 +153,7 @@
           "minimum": 0
         },
         "concurrency": {
-          "description": "Number of files uploaded in parallel, or \"auto\" for the built-in default.",
+          "description": "Maximum parallel file uploads and independent remote scan, file delete, and same-depth directory delete requests, or \"auto\" for the built-in default.",
           "$ref": "#/$defs/autoInt"
         },
         "request_concurrency": {

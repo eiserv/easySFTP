@@ -502,6 +502,61 @@ type faultyPathCmd struct {
 	enabled atomic.Bool
 }
 
+// faultyNthCmd fails the nth matching command while enabled. The commands
+// before it still reach the in-memory filesystem, which makes partial-progress
+// accounting tests independent of goroutine completion order.
+type faultyNthCmd struct {
+	inner   sftp.FileCmder
+	method  string
+	failAt  int64
+	seen    atomic.Int64
+	enabled atomic.Bool
+}
+
+func withFaultyNthCmd(f *faultyNthCmd) serverOption {
+	return func(s *testServer) {
+		f.inner = s.handlers.FileCmd
+		s.handlers.FileCmd = f
+	}
+}
+
+func (f *faultyNthCmd) Filecmd(r *sftp.Request) error {
+	if f.enabled.Load() && r.Method == f.method && f.seen.Add(1) == f.failAt {
+		return fmt.Errorf("injected failure on %s request %d", f.method, f.failAt)
+	}
+	return f.inner.Filecmd(r)
+}
+
+func (f *faultyNthCmd) PosixRename(r *sftp.Request) error {
+	return posixRenamePassthrough(f.inner, r)
+}
+
+// slowCmd delays matching commands but lets them succeed, simulating a server
+// that makes steady progress more slowly than a whole parallel phase lasts.
+type slowCmd struct {
+	inner  sftp.FileCmder
+	method string
+	delay  time.Duration
+}
+
+func withSlowCmd(slow *slowCmd) serverOption {
+	return func(s *testServer) {
+		slow.inner = s.handlers.FileCmd
+		s.handlers.FileCmd = slow
+	}
+}
+
+func (s *slowCmd) Filecmd(r *sftp.Request) error {
+	if r.Method == s.method {
+		time.Sleep(s.delay)
+	}
+	return s.inner.Filecmd(r)
+}
+
+func (s *slowCmd) PosixRename(r *sftp.Request) error {
+	return posixRenamePassthrough(s.inner, r)
+}
+
 // withFaultyPath installs f as the FileCmd handler (wrapping the real one).
 func withFaultyPath(f *faultyPathCmd) serverOption {
 	return func(s *testServer) {

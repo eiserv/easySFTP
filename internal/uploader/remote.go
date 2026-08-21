@@ -1,6 +1,7 @@
 package uploader
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -103,34 +104,58 @@ func checkMaxDeletes(n int, cfg *config.Config) error {
 	return nil
 }
 
-// listRemoteContents returns every regular file and directory under dir
-// (recursively, dir itself excluded), directories parents-first. A missing
-// dir yields empty lists and no error. Each completed directory listing ticks
-// the stall watchdog, so a deep but progressing scan is not read as a stall.
-func listRemoteContents(client *sftp.Client, dir string, watch *stallWatchdog) (files, dirs []string, err error) {
-	done := metrics.Op("sftp_readdir")
-	entries, err := client.ReadDir(dir)
-	done(err)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil, nil
-		}
-		return nil, nil, err
+// listRemoteContents returns every regular file and directory under root
+// (root itself excluded), directories parents-first. Directories at the same
+// depth are listed concurrently: their requests are independent, while the
+// breadth-first boundary keeps a deterministic parent-before-child result.
+// Each ReadDir has its own sess.do call, so a dropped connection retries only
+// that idempotent listing instead of replaying the whole scan.
+func listRemoteContents(ctx context.Context, sess *session, root string, concurrency int, watch *stallWatchdog) (files, dirs []string, err error) {
+	if concurrency < 1 {
+		concurrency = 1
 	}
-	watch.tick()
-	for _, e := range entries {
-		full := path.Join(dir, e.Name())
-		if e.IsDir() {
-			dirs = append(dirs, full)
-			subFiles, subDirs, err := listRemoteContents(client, full, watch)
+	level := []string{root}
+	for len(level) > 0 {
+		entries := make([][]fs.FileInfo, len(level))
+		err := runBounded(ctx, concurrency, len(level), func(groupCtx context.Context, i int) error {
+			dir := level[i]
+			err := sess.do(groupCtx, watch, func(client *sftp.Client) error {
+				done := metrics.Op("sftp_readdir")
+				listed, err := client.ReadDir(dir)
+				done(err)
+				if err != nil {
+					if os.IsNotExist(err) {
+						return nil
+					}
+					return err
+				}
+				entries[i] = listed
+				watch.tick()
+				return nil
+			})
 			if err != nil {
-				return nil, nil, err
+				return fmt.Errorf("listing %q: %w", dir, err)
 			}
-			files = append(files, subFiles...)
-			dirs = append(dirs, subDirs...)
-			continue
+			return nil
+		})
+		if err != nil {
+			return nil, nil, err
 		}
-		files = append(files, full)
+
+		var next []string
+		for i, dir := range level {
+			for _, entry := range entries[i] {
+				full := path.Join(dir, entry.Name())
+				if entry.IsDir() {
+					dirs = append(dirs, full)
+					next = append(next, full)
+					continue
+				}
+				files = append(files, full)
+			}
+		}
+		sort.Strings(next)
+		level = next
 	}
 	return files, dirs, nil
 }

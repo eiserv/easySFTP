@@ -13,12 +13,9 @@ package uploader
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"time"
 
-	"github.com/pkg/sftp"
 	ignore "github.com/sabhiram/go-gitignore"
 
 	"github.com/eiserv/easySFTP/internal/config"
@@ -203,17 +200,9 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		if err := checkRemoteRoot(p.pair.Remote); err != nil {
 			return err
 		}
-		// The whole sweep runs through sess.do, so a connection drop mid-scan
-		// or mid-delete redials (within the shared reconnect budget) instead
-		// of failing the run; see issue #107. The scan is idempotent and
-		// simply reruns on a fresh client.
 		var files, dirs []string
 		endRemoteScan := metrics.Phase("remote_scan")
-		err := sess.do(ctx, watch, func(client *sftp.Client) error {
-			var err error
-			files, dirs, err = listRemoteContents(client, base, watch)
-			return err
-		})
+		files, dirs, err := listRemoteContents(ctx, sess, base, cfg.Concurrency, watch)
 		endRemoteScan()
 		if err != nil {
 			return fmt.Errorf("scanning remote directory %q: %w", p.pair.Remote, err)
@@ -221,49 +210,17 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		if err := checkMaxDeletes(len(files), cfg); err != nil {
 			return err
 		}
-		// The sweep is its own function literal only so the phase timer ends
-		// with it, instead of running on into the upload phase below.
-		if err := func() error {
-			defer metrics.Phase("delete_sweep")()
-			for _, f := range files {
-				if cfg.LogPerFile() {
-					log.Infof("%sdelete %s", verb, f)
-				}
-				if !cfg.DryRun {
-					err := sess.do(ctx, watch, func(client *sftp.Client) error {
-						// Already-gone counts as deleted: a retried delete may
-						// have landed before the connection died.
-						done := metrics.Op("sftp_remove")
-						err := client.Remove(f)
-						done(err)
-						if err != nil && !errors.Is(err, os.ErrNotExist) {
-							return err
-						}
-						return nil
-					})
-					if err != nil {
-						return fmt.Errorf("deleting %q: %w", f, err)
-					}
-				}
-				stats.FilesDeleted++
-			}
-			// Remove the now-empty directories, deepest first. Best effort: a
-			// directory that is not empty (e.g. an unreadable entry) is left be.
-			for i := len(dirs) - 1; i >= 0; i-- {
-				if !cfg.DryRun {
-					dir := dirs[i]
-					_ = sess.do(ctx, watch, func(client *sftp.Client) error {
-						done := metrics.Op("sftp_rmdir")
-						err := client.RemoveDirectory(dir)
-						done(err)
-						return err
-					})
-				}
-			}
-			return nil
-		}(); err != nil {
+		endSweep := metrics.Phase("delete_sweep")
+		deleted, err := deleteRemoteFiles(ctx, cfg, sess, files, watch, log)
+		stats.FilesDeleted += countDeleted(deleted)
+		if err != nil {
+			endSweep()
 			return err
 		}
+		// Best effort, but parallel within a depth: siblings are independent;
+		// parents still wait for every child level to finish.
+		removeRemoteDirs(ctx, cfg, sess, watch, dirs)
+		endSweep()
 	}
 
 	skipUnchanged := cfg.SkipUnchanged && p.strategy == config.StrategyOverlay

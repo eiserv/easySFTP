@@ -233,8 +233,10 @@ high `concurrency` and `request_concurrency` are. On a long-distance link that
 window is what caps throughput, and neither knob can lift it.
 
 `connections: 4` opens up to four connections and spreads the parallel uploads
-over them. Everything else (remote scans, deletes, the sync manifest) stays on
-the first one.
+over them. Remote scans and deletes issue up to `concurrency` independent
+requests over the first connection; the sync manifest stays there too. This
+keeps the server-facing parallelism under one limit without paying for extra
+SSH handshakes during metadata-only work.
 
 It is off by default because it is not free:
 

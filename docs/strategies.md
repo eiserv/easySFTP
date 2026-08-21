@@ -138,6 +138,12 @@ Deletes **everything** inside the remote target directory first, then uploads
 all local files. Use it when you want a guaranteed-fresh deploy and nothing in
 the target directory needs to survive.
 
+The recursive scan and file deletions run with up to `advanced.concurrency`
+independent SFTP requests. Empty directories are removed deepest-first, with
+siblings at the same depth handled in parallel. `sync` uses the same bounded
+delete pool. The guards below are evaluated against the complete file list
+before any delete worker starts.
+
 ## Delete guards
 
 Two safety nets apply before `sync` or `clean` delete anything:

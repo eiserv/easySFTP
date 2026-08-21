@@ -50,6 +50,9 @@ func TestCleanReconnectsDuringDeletePhase(t *testing.T) {
 	if !loggedReconnect(log) {
 		t.Errorf("expected a reconnect warning, got %v", log.warnings)
 	}
+	if got := reconnectWarnings(log); got != 1 {
+		t.Errorf("reconnect warnings: got %d, want one collapsed redial; warnings: %v", got, log.warnings)
+	}
 }
 
 // A connection drop during the clean strategy's remote scan must redial and
@@ -152,10 +155,15 @@ func TestStallTimeoutCoversDeletePhase(t *testing.T) {
 
 // loggedReconnect reports whether the run logged a reconnect warning.
 func loggedReconnect(log *recordingLogger) bool {
+	return reconnectWarnings(log) > 0
+}
+
+func reconnectWarnings(log *recordingLogger) int {
+	count := 0
 	for _, w := range log.warnings {
 		if strings.Contains(w, "reconnecting") {
-			return true
+			count++
 		}
 	}
-	return false
+	return count
 }

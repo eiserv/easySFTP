@@ -639,6 +639,7 @@ func TestSyncPartialDeleteFailureWritesRecoveryManifest(t *testing.T) {
 	writeTree(t, local, map[string]string{"a.txt": "a", "b.txt": "b", "c.txt": "c"})
 
 	cfg := syncConfig(srv, local)
+	cfg.Concurrency = 1 // keep this older ordered-progress check deterministic
 	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
 		t.Fatal(err)
 	}
