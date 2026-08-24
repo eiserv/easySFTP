@@ -489,14 +489,20 @@ func (p *uploadProgress) snapshot(elapsed time.Duration, refused bool) autotune.
 
 // startTuningController runs stage 3 for one deployment: it watches the
 // transfer and widens the connection pool while the work that is left still
-// justifies another handshake. The returned function stops the watcher and
-// must be called before the phase ends.
+// justifies another handshake, then narrows it again if that turned out not to
+// help. The returned function stops the watcher and must be called before the
+// phase ends.
 //
 // Only the pool moves; see the comment on autotune.Controller for why the
-// other two settings are already where they belong. Growth is applied through
-// session.setSpread, which hands the next files to more slots without dialing
-// anything itself, so a decision that turns out to be unnecessary (the phase
-// ends first) costs nothing at all.
+// other two settings are already where they belong. Both directions go through
+// session.setSpread, which points the next files at a different number of
+// slots without dialing or closing anything itself, so a decision that turns
+// out to be unnecessary (the phase ends first, the step is taken back) costs
+// nothing at all.
+//
+// The workload goes in as well as the settings: what the controller may
+// conclude from the bytes it sees depends on what kind of files produced
+// them (autotune.Controller.bandwidthBound).
 func startTuningController(ctx context.Context, sess *session, w autotune.Workload, start autotune.Settings, prog *uploadProgress, log Logger) func() {
 	ctrl := autotune.NewController(w, start, sess.tune.currentLink(), sess.tune.fixed)
 	if stopped, _ := ctrl.Stopped(); stopped {

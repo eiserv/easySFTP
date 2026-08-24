@@ -221,7 +221,7 @@ sync:
 | `timeout` | `30` | Connection timeout in seconds. `0` disables. |
 | `stall_timeout` | `0` (off) | Abort when active remote operations make no progress for this many seconds. |
 | `concurrency` | `auto` | Files uploaded in parallel, and independent remote metadata requests such as directory setup, stale-temp cleanup, scans and deletes. `auto` sizes it to the work (see [transfer tuning](tuning.md)). Sync hashing uses the runner's available Go CPU parallelism independently. |
-| `request_concurrency` | `auto` | Max in-flight SFTP requests per file (pipelining within one transfer). `auto` sizes it to the largest file. |
+| `request_concurrency` | `auto` | Max in-flight SFTP requests per file (pipelining within one transfer). `auto` sizes it to the largest file and to what the whole set costs to hold in flight (see [transfer tuning](tuning.md)). |
 | `connections` | `auto` | SSH connections the parallel uploads spread over. Never more than `concurrency`. `auto` opens another one only while it would save more time than its handshake costs. See below. |
 | `skip_unchanged` | `false` | For `overlay`, skip a file whose remote counterpart has the same size (coarse; `sync` compares content hashes). |
 
