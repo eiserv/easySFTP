@@ -264,10 +264,11 @@ func (t *tuning) report() {
 }
 
 // planWorkload turns a set of planned files into the features the policy
-// reads: the totals, the size distribution stage 1 works on, and the remote
-// round-trips that are not uploads (the one stat per file advanced.
-// skip_unchanged costs). unknown marks a set whose members may turn out not to
-// be uploaded at all.
+// reads: the totals and the size distribution stage 1 works on. probes counts
+// the remote round-trips that are not uploads (the one stat per file
+// advanced.skip_unchanged costs) and unknown marks a set whose members may
+// turn out not to be uploaded at all; both are the caller's to say, since
+// neither is visible in a list of files.
 func planWorkload(files []fileItem, probes int, unknown bool) autotune.Workload {
 	w := autotune.SummarizeUploads(uploadSizes(files))
 	w.Probes, w.Unknown = probes, unknown

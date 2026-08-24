@@ -171,6 +171,15 @@ func TestBDPDrivesRequestConcurrencyOnlyOnceMeasured(t *testing.T) {
 		t.Errorf("a measured narrow path should fall back to the floor, got %d", got)
 	}
 
+	// A LAN: enormous bandwidth, but a fifth of a millisecond of delay holds
+	// almost nothing in flight. Bandwidth alone is not the argument for
+	// pipelining; bandwidth times delay is.
+	lan := autotune.Link{RTT: 200 * time.Microsecond, Handshake: 20 * time.Millisecond,
+		StreamBytesPerSecond: 100 * MiB, ThroughputSource: autotune.SourceRuntime}
+	if got := autotune.Plan(w, lan, autotune.Fixed{}).RequestConcurrency; got != autotune.MinRequestConcurrency {
+		t.Errorf("a fast link with no delay needs no deep pipeline, got %d", got)
+	}
+
 	// And whatever the link says, a file that is one packet long cannot use a
 	// second request.
 	tiny := autotune.Workload{Uploads: 500, UploadBytes: 2 * MiB, LargestUpload: 4 * KiB, P90Upload: 4 * KiB}
