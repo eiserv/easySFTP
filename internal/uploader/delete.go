@@ -38,15 +38,26 @@ func deleteRemoteFiles(ctx context.Context, cfg *config.Config, sess *session, p
 		}
 		err := sess.do(groupCtx, watch, func(client *sftp.Client) error {
 			// Already-gone counts as deleted: a retried delete may have
-			// landed before the connection died.
+			// landed before the connection died, and sync deletes what its
+			// manifest recorded, which someone may have removed on the server
+			// since. Servers that do not distinguish "not there" from
+			// "refused" in the status code are asked directly; see
+			// remoteAbsent.
 			done := metrics.Op("sftp_remove")
 			err := client.Remove(remotePath)
 			done(err)
 			watch.tick()
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
+			if err == nil || errors.Is(err, os.ErrNotExist) {
+				return nil
 			}
-			return nil
+			absent, aerr := remoteAbsent(client, remotePath, watch)
+			if aerr != nil {
+				return aerr
+			}
+			if absent {
+				return nil
+			}
+			return err
 		})
 		if err != nil {
 			return fmt.Errorf("deleting %q: %w", remotePath, err)

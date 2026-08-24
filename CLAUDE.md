@@ -177,6 +177,14 @@ not that the test needs relaxing.
   pkg/sftp package-level variable, so it is process-global and restores itself
   via `t.Cleanup`; no test in this package runs in parallel, which is what
   makes that safe.
+- `withCoarseStatus(code)` is the other half of a non-OpenSSH server: it
+  answers every "not there" with one generic status code (`SSH_FX_FAILURE`,
+  `SSH_FX_BAD_MESSAGE`) instead of `SSH_FX_NO_SUCH_FILE`, across all four
+  handler roles at once, so a missing path looks the same whether the run
+  listed, stat'd, removed or opened it. It intercepts exactly the errors that
+  satisfy `os.ErrNotExist` and passes real refusals through, which is what
+  makes `remoteAbsent`'s tie-break testable in both directions (issue #152).
+  Give it before `withFailOpen`/`withFailList` when a test needs both.
 - A run may hold more than one connection (`advanced.connections`, issue
   #158; how many is the policy's, issue #209). Only the per-file upload path
   spreads over them, by file index modulo `session.spread`; `session.do` and

@@ -247,13 +247,24 @@ func writeRecoveryManifest(ctx context.Context, cfg *config.Config, sess *sessio
 // older manifest costs one full re-hash and then writes v3 from then on.
 func readManifest(client *sftp.Client, dir, name string, log Logger) (manifest, error) {
 	empty := manifest{Version: manifestVersion, Files: map[string]manifestEntry{}}
-	f, err := client.Open(path.Join(dir, name))
+	manifestPath := path.Join(dir, name)
+	f, err := client.Open(manifestPath)
 	if err != nil {
 		if isConnError(err) {
 			return empty, err
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			log.Warningf("could not open sync manifest in %s (%v); treating as first sync", dir, err)
+			// A server that answers a missing file with the generic
+			// SSH_FX_FAILURE would otherwise warn on every first sync, which
+			// is the one run where no manifest is the expected state. Asking
+			// costs a round-trip only when the open already failed.
+			absent, aerr := remoteAbsent(client, manifestPath, nil)
+			if aerr != nil {
+				return empty, aerr
+			}
+			if !absent {
+				log.Warningf("could not open sync manifest in %s (%v); treating as first sync", dir, err)
+			}
 		}
 		return empty, nil
 	}

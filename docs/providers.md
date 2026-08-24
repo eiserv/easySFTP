@@ -120,6 +120,26 @@ apart:
   as it was. easySFTP does not remove a live file to retry a rename the server
   has already declined.
 
+**Status codes.** SFTP version 3 has eight status codes, and implementations
+disagree on how precisely they use them. OpenSSH answers a path that is not
+there with `SSH_FX_NO_SUCH_FILE`; others answer the generic `SSH_FX_FAILURE`,
+which on its own does not say whether the path was missing or the request was
+refused. easySFTP does not take that for granted anywhere the difference
+decides whether a run continues:
+
+- **The first `clean` deployment**, whose scan of the target runs before the
+  target exists. A listing that fails is followed by a stat, and a target the
+  server has nothing at is scanned as empty rather than ending the run.
+- **Deleting a file that is already gone**, which `sync` does whenever
+  something it recorded was removed on the server since. That is the outcome
+  the delete wanted, so it counts as deleted.
+
+The stat is what tells the two apart, and it costs a round-trip only when the
+operation already failed. A directory that *is* there and that the server
+refuses to list still fails the run: a `clean` deployment that silently
+skipped its scan would leave behind exactly the stale files it exists to
+remove.
+
 **Large directories.** `sync` and `clean` list the whole target tree to work
 out what to delete. Servers that page or cap directory listings can therefore
 report fewer entries than are really there. `dry-run: true` prints the plan the

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -474,6 +475,69 @@ func unadvertisePosixRename(t *testing.T) {
 			t.Errorf("restoring the advertised SFTP extensions: %v", err)
 		}
 	})
+}
+
+// coarseStatus answers every "not there" with one fixed generic status code
+// instead of SSH_FX_NO_SUCH_FILE, simulating a server that does not map its
+// errors onto the specific version-3 status codes the way OpenSSH does. It
+// wraps all four handler roles, so a missing path looks the same whether the
+// run listed it, stat'd it, removed it or opened it (issue #152).
+//
+// pkg/sftp's statusFromError puts an sftp.ErrSSHFx* value on the wire as that
+// exact code, and the in-memory handler reports every missing path with an
+// error satisfying os.ErrNotExist, which is what this intercepts. Everything
+// else, including a real refusal, passes through untouched.
+type coarseStatus struct {
+	cmd  sftp.FileCmder
+	list sftp.FileLister
+	get  sftp.FileReader
+	put  sftp.FileWriter
+	code error // an sftp.ErrSSHFx* code
+}
+
+func withCoarseStatus(code error) serverOption {
+	return func(s *testServer) {
+		c := &coarseStatus{
+			cmd:  s.handlers.FileCmd,
+			list: s.handlers.FileList,
+			get:  s.handlers.FileGet,
+			put:  s.handlers.FilePut,
+			code: code,
+		}
+		s.handlers.FileCmd = c
+		s.handlers.FileList = c
+		s.handlers.FileGet = c
+		s.handlers.FilePut = c
+	}
+}
+
+// coarsen replaces a "no such file" with the generic status this server gives.
+func (c *coarseStatus) coarsen(err error) error {
+	if err != nil && errors.Is(err, os.ErrNotExist) {
+		return c.code
+	}
+	return err
+}
+
+func (c *coarseStatus) Filecmd(r *sftp.Request) error { return c.coarsen(c.cmd.Filecmd(r)) }
+
+func (c *coarseStatus) PosixRename(r *sftp.Request) error {
+	return c.coarsen(posixRenamePassthrough(c.cmd, r))
+}
+
+func (c *coarseStatus) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
+	l, err := c.list.Filelist(r)
+	return l, c.coarsen(err)
+}
+
+func (c *coarseStatus) Fileread(r *sftp.Request) (io.ReaderAt, error) {
+	f, err := c.get.Fileread(r)
+	return f, c.coarsen(err)
+}
+
+func (c *coarseStatus) Filewrite(r *sftp.Request) (io.WriterAt, error) {
+	f, err := c.put.Filewrite(r)
+	return f, c.coarsen(err)
 }
 
 // faultySetstat wraps a FileCmder and fails every chmod (Setstat) request,

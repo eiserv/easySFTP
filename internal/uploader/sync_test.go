@@ -30,6 +30,11 @@ func syncConfig(srv *testServer, local string) *config.Config {
 
 func TestReadManifestWarnsWhenOpenFails(t *testing.T) {
 	srv := startTestServer(t, withFailOpen("/www/"+manifestName))
+	// The manifest has to be there for this to be the case it names: a
+	// manifest that cannot be opened *and is not there* is a first sync, and
+	// is silent whether or not the server says so in its status code
+	// (issue #152).
+	seedRemoteFile(t, srv, "/www", manifestName, `{"version":3,"files":{}}`)
 	log := &recordingLogger{testLogger: testLogger{t}}
 
 	got, err := readManifest(srv.verifyClient(t), "/www", manifestName, log)

@@ -2,6 +2,7 @@ package uploader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -124,6 +125,44 @@ func nonDirConflict(client *sftp.Client, dir string, watch *stallWatchdog) (stri
 	return "", nil
 }
 
+// remoteAbsent reports whether the server has nothing at p. It is the
+// tie-breaker for an operation that failed without saying why.
+//
+// OpenSSH answers a missing path with SSH_FX_NO_SUCH_FILE, which pkg/sftp
+// turns into os.ErrNotExist, so "it was not there" is normally visible in the
+// error itself. Other implementations answer the generic SSH_FX_FAILURE,
+// which on its own is indistinguishable from a refusal, and easySFTP has two
+// places where reading the one as the other ends the run: listing a clean
+// deployment's target before it exists, and deleting a file that is already
+// gone (issue #152). A stat settles it, and only on the error path, so a
+// server that does say SSH_FX_NO_SUCH_FILE never pays the round-trip.
+//
+// Lstat, not Stat: a dangling symlink is still an entry, and a delete that
+// reported it gone would leave it behind.
+//
+// The stat's own answer is read the same way round. A connection-class
+// failure is returned as an error, so sess.do redials and reruns the
+// idempotent operation rather than reading a dead connection as an empty
+// server. SSH_FX_PERMISSION_DENIED counts as present: a server with a
+// specific code for a refusal that chose to use it is being specific, not
+// coarse, and the caller's original error is the one worth reporting.
+// Everything else counts as absent, which is the safe direction for both
+// callers, since a listing that finds nothing deletes nothing.
+func remoteAbsent(client *sftp.Client, p string, watch *stallWatchdog) (bool, error) {
+	_, err := client.Lstat(p)
+	watch.tick()
+	switch {
+	case err == nil:
+		return false, nil
+	case isConnError(err):
+		return false, err
+	case errors.Is(err, os.ErrPermission):
+		return false, nil
+	default:
+		return true, nil
+	}
+}
+
 // checkRemoteRoot refuses a destructive mode whose target resolves to the
 // filesystem root or an unspecific path: the one guard that is always on.
 func checkRemoteRoot(remote string) error {
@@ -163,7 +202,19 @@ func listRemoteContents(ctx context.Context, sess *session, root string, watch *
 				listed, err := client.ReadDir(dir)
 				done(err)
 				if err != nil {
+					// A directory that is not there has nothing to list: a
+					// clean deployment whose target does not exist yet, or a
+					// subdirectory removed between its parent's listing and
+					// this one. Servers that do not say so in the status code
+					// are asked directly; see remoteAbsent.
 					if os.IsNotExist(err) {
+						return nil
+					}
+					absent, aerr := remoteAbsent(client, dir, watch)
+					if aerr != nil {
+						return aerr
+					}
+					if absent {
 						return nil
 					}
 					return err

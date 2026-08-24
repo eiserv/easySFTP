@@ -255,6 +255,32 @@ jobs:
           docker exec sftp test -f /home/demo/upload/index.html
           [ "${{ steps.clean-upload.outputs.files-deleted }}" -ge 1 ]
 
+      # The other clean-mode case: a target that does not exist yet, so the
+      # remote scan runs before there is anything to scan. Nothing to delete is
+      # the expected state of a first deployment, not a failure. Covered here
+      # because the unit tests reach it through a fake server; this is the same
+      # path against a real one (issue #152).
+      - name: Clean mode into a target that does not exist yet
+        id: fresh-clean
+        uses: ./
+        with:
+          host: localhost
+          port: 2222
+          username: demo
+          password: demopass
+          host-key: ${{ steps.hostkey.outputs.fingerprints }}
+          source: ./selftest-site/
+          target: /upload/fresh-clean/
+          exclude: "*.log"
+          mode: clean
+
+      - name: Verify the first clean deployment
+        run: |
+          docker exec sftp test -f /home/demo/upload/fresh-clean/index.html
+          docker exec sftp test -f /home/demo/upload/fresh-clean/assets/style.css
+          [ "${{ steps.fresh-clean.outputs.files-uploaded }}" = "2" ]
+          [ "${{ steps.fresh-clean.outputs.files-deleted }}" = "0" ]
+
       # config-mode end-to-end: unit tests set EASYSFTP_* variables directly
       # and never see action.yml's declared defaults; only a real composite
       # run does. This is how #62 (a declared default tripping the config
