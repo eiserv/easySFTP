@@ -374,8 +374,11 @@ func TestRuntimeControllerNarrowsTheSpreadWithoutClosingConnections(t *testing.T
 	stop := sync.OnceFunc(startTuningController(context.Background(), sess, poolWork, start, prog, log))
 	defer stop()
 
-	// A first window worth growing on.
-	for range 10 {
+	// A first window worth growing on. The amount is deliberately far larger
+	// than the second window's: how long a window turns out to be depends on
+	// when a loaded machine got round to the tick, and the two rates have to
+	// be ordered by what this test is about rather than by the scheduler.
+	for range 100 {
 		prog.upload(1<<20, 1<<20)
 	}
 	if !waitForSpread(t, sess, func(n int) bool { return n > 1 }) {
@@ -390,10 +393,11 @@ func TestRuntimeControllerNarrowsTheSpreadWithoutClosingConnections(t *testing.T
 		t.Fatal("the widened pool handed out no client")
 	}
 
-	// A second window that is slower than the first, so the step bought
-	// nothing and the controller puts the spread back.
-	for range 6 {
-		prog.upload(1<<20, 1<<20)
+	// A second window that is far slower than the first, but still carries
+	// enough bytes over enough files to be an observation at all: the step
+	// bought nothing, so the controller puts the spread back.
+	for range 8 {
+		prog.upload(96<<10, 96<<10)
 	}
 	ok := waitForSpread(t, sess, func(n int) bool { return n == 1 })
 	stop()
