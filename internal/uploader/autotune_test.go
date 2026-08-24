@@ -3,6 +3,7 @@ package uploader
 import (
 	"context"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -339,6 +340,101 @@ func TestRuntimeControllerWidensThePoolWhileTheTransferRuns(t *testing.T) {
 	if effective < 2 {
 		t.Errorf("the effective connection count stayed at %d; the benchmark reads this back", effective)
 	}
+}
+
+// TestRuntimeControllerNarrowsTheSpreadWithoutClosingConnections is the wiring
+// of stage 5 of issue #215. A growth step that does not pay for itself is taken
+// back, and "taken back" must mean that the next files go somewhere else, not
+// that a live SSH connection is torn down under the transfers running on it.
+func TestRuntimeControllerNarrowsTheSpreadWithoutClosingConnections(t *testing.T) {
+	defer func(v time.Duration) { tuningInterval = v }(tuningInterval)
+	tuningInterval = 10 * time.Millisecond
+
+	srv := startTestServer(t)
+	cfg := autoConfig(srv)
+	tune := newTuning(cfg)
+	tune.resolveRunWide(autotune.Workload{Uploads: 1000, UploadBytes: 1000 << 20, LargestUpload: 1 << 20})
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	sess, err := newSession(context.Background(), cfg, tune, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.close()
+	tune.setLink(autotune.Link{RTT: 13 * time.Millisecond, Handshake: 360 * time.Millisecond})
+
+	prog := &uploadProgress{totalFiles: 1000, totalBytes: 1000 << 20}
+	start := autotune.Settings{Connections: 1, Concurrency: 64, RequestConcurrency: 16}
+	sess.setSpread(start.Connections)
+
+	// stop must run before the assertions read the log: it waits for the
+	// controller's goroutine, which is the only other writer.
+	stop := sync.OnceFunc(startTuningController(context.Background(), sess, start, prog, log))
+	defer stop()
+
+	// A first window worth growing on.
+	for range 10 {
+		prog.upload(1<<20, 1<<20)
+	}
+	if !waitForSpread(t, sess, func(n int) bool { return n > 1 }) {
+		stop()
+		t.Fatalf("the pool never widened; log: %v", log.infos)
+	}
+
+	// The second connection is now real: a worker lands on it and it is
+	// dialed. This is the connection the step back must leave alone.
+	client, _, _ := sess.acquire(1)
+	if client == nil {
+		t.Fatal("the widened pool handed out no client")
+	}
+
+	// A second window that is slower than the first, so the step bought
+	// nothing and the controller puts the spread back.
+	for range 6 {
+		prog.upload(1<<20, 1<<20)
+	}
+	ok := waitForSpread(t, sess, func(n int) bool { return n == 1 })
+	stop()
+	if !ok {
+		t.Fatalf("the spread never came back down; log: %v", log.infos)
+	}
+
+	if _, ok := findLine(log.infos, "without closing any"); !ok {
+		t.Errorf("a step back must say the connections stay open: %v", log.infos)
+	}
+	// The point of a logical spread: the connection is still there, still
+	// usable, and still carrying whatever was already on it.
+	if _, err := client.Getwd(); err != nil {
+		t.Errorf("the connection the spread stopped using was closed: %v", err)
+	}
+	tune.mu.Lock()
+	up, down, final, effective := tune.spreadUp, tune.spreadDown, tune.finalSpread, tune.effective.Connections
+	tune.mu.Unlock()
+	switch {
+	case up != 1 || down != 1:
+		t.Errorf("recorded %d increase(s) and %d decrease(s), want one of each", up, down)
+	case final != 1:
+		t.Errorf("the run settled at %d connection(s), want 1", final)
+	case effective < 2:
+		t.Errorf("effective connections = %d: the handshake the run paid for does not become unpaid", effective)
+	}
+}
+
+// waitForSpread waits for the session's spread to satisfy want, which is how a
+// test observes a decision taken on the controller's own goroutine.
+func waitForSpread(t *testing.T, sess *session, want func(int) bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		sess.mu.Lock()
+		spread := sess.spread
+		sess.mu.Unlock()
+		if want(spread) {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
 }
 
 // TestRuntimeControllerStaysOutOfDryRunsAndPinnedRuns: neither has anything to

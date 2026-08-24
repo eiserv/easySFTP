@@ -325,6 +325,13 @@ func matrixAuto(runs []RunRecord, cells []schema.Cell) []schema.Auto {
 			InitialConcurrency:        stats.Median(counterValues(ms, "auto_initial_concurrency")),
 			InitialRequestConcurrency: stats.Median(counterValues(ms, "auto_initial_request_concurrency")),
 			Changes:                   stats.Median(counterValues(ms, "auto_changes")),
+
+			// And which way they went: a run that grew and then took the step
+			// back reports one of each and settles below its own high-water
+			// mark (issue #215).
+			SpreadIncreases:  stats.Median(counterValues(ms, "auto_spread_increases")),
+			SpreadDecreases:  stats.Median(counterValues(ms, "auto_spread_decreases")),
+			FinalConnections: stats.Median(counterValues(ms, "auto_final_connections")),
 		}
 		workload := autoWorkload(ms)
 
@@ -379,8 +386,14 @@ func autoWorkload(ms []*schema.Metrics) *schema.AutoWorkload {
 		Bytes:        stats.Median(counterValues(ms, "workload_bytes")),
 		LargestBytes: stats.Median(counterValues(ms, "workload_largest_bytes")),
 		Probes:       stats.Median(counterValues(ms, "workload_probes")),
+		P50Bytes:     stats.Median(counterValues(ms, "workload_p50_bytes")),
+		P90Bytes:     stats.Median(counterValues(ms, "workload_p90_bytes")),
+		SmallFiles:   stats.Median(counterValues(ms, "workload_small_files")),
 		RTTMS:        micros(stats.Median(counterValues(ms, "link_rtt_us"))),
 		HandshakeMS:  micros(stats.Median(counterValues(ms, "link_handshake_us"))),
+
+		StreamBytesPerSecond: stats.Median(counterValues(ms, "link_stream_bytes_per_second")),
+		BDPBytes:             stats.Median(counterValues(ms, "link_bdp_bytes")),
 	}
 	if w == (schema.AutoWorkload{}) {
 		return nil

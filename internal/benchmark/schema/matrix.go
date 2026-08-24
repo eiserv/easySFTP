@@ -217,6 +217,16 @@ type Chosen struct {
 	InitialConcurrency        *float64 `json:"initial_concurrency,omitzero"`
 	InitialRequestConcurrency *float64 `json:"initial_request_concurrency,omitzero"`
 	Changes                   *float64 `json:"changes,omitzero"`
+
+	// Where those changes went. Once a growth step can be taken back
+	// (issue #215, stage 5), "the run changed its mind twice" no longer says
+	// whether it ended up wider or back where it started: SpreadIncreases and
+	// SpreadDecreases split the count by direction and FinalConnections is the
+	// spread the last deployment settled on. The plain Connections above stays
+	// the high-water mark, which is what the server saw.
+	SpreadIncreases  *float64 `json:"spread_increases,omitzero"`
+	SpreadDecreases  *float64 `json:"spread_decreases,omitzero"`
+	FinalConnections *float64 `json:"final_connections,omitzero"`
 }
 
 // AutoWorkload is the input side of one policy decision: the features the run
@@ -236,12 +246,30 @@ type AutoWorkload struct {
 	LargestBytes *float64 `json:"largest_bytes"`
 	Probes       *float64 `json:"probes"`
 
+	// The shape of that transfer: the median and ninetieth-percentile file
+	// size and how many files fit in a single SFTP write packet. Totals and a
+	// largest file cannot tell a tree of 4 KiB files with one archive in it
+	// from a tree of megabyte files, and the two are pipelined differently
+	// (issue #215, stage 1).
+	P50Bytes   *float64 `json:"p50_bytes,omitzero"`
+	P90Bytes   *float64 `json:"p90_bytes,omitzero"`
+	SmallFiles *float64 `json:"small_files,omitzero"`
+
 	// RTTMS and HandshakeMS are what the run's own probe measured, which is
 	// not the same measurement as link.probes[]: those come from
 	// cmd/linkprobe, outside the code under test. Comparing the two is worth
 	// doing, which is why both are kept.
 	RTTMS       *float64 `json:"rtt_ms"`
 	HandshakeMS *float64 `json:"handshake_ms"`
+
+	// StreamBytesPerSecond is the per-connection throughput the pipelining was
+	// sized against, and BDPBytes the bandwidth-delay product that follows from
+	// it: how many bytes one stream has to keep in flight to fill this path
+	// (issue #215, stage 3). A zero throughput means nothing had been measured
+	// and the run used the built-in prior, which is the normal case for a plan
+	// taken before the first byte moves.
+	StreamBytesPerSecond *float64 `json:"stream_bytes_per_second,omitzero"`
+	BDPBytes             *float64 `json:"bdp_bytes,omitzero"`
 }
 
 // MatrixCompare pairs a build's cell with the reference build's cell at

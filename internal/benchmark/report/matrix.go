@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -267,6 +268,18 @@ func (m Matrix) candidateAgainstBaseline(b *buf) {
 	}
 }
 
+// changeSummary renders the runtime changes as "total (+up/-down)", so a run
+// that grew once and took the step back reads differently from one that never
+// moved and from one that grew twice (issue #215, stage 5). Builds that report
+// only the total keep the plain number.
+func changeSummary(c schema.Chosen) string {
+	total := raw(c.Changes)
+	if c.SpreadIncreases == nil && c.SpreadDecreases == nil {
+		return total
+	}
+	return fmt.Sprintf("%s (+%s/-%s)", total, raw(c.SpreadIncreases), raw(c.SpreadDecreases))
+}
+
 func (m Matrix) autoCost(b *buf) {
 	b.line("")
 	b.line("### What `auto` costs (policy regret)")
@@ -293,11 +306,11 @@ func (m Matrix) autoCost(b *buf) {
 			a.Scenario, a.LinkProfile,
 			raw(a.Chosen.Connections), raw(a.Chosen.Concurrency), raw(a.Chosen.RequestConcurrency),
 			raw(a.Chosen.InitialConnections), raw(a.Chosen.InitialConcurrency), raw(a.Chosen.InitialRequestConcurrency),
-			raw(a.Chosen.Changes),
+			changeSummary(a.Chosen),
 			num(a.MedianMS), best, bestMS, percent(a.RegretPercent), inGrid)
 	}
 	b.line("")
-	b.line("`Started at` is what the policy chose before the transfer taught it anything, and `Changes` how many times it widened the connection pool while the transfer ran; when the two coordinate columns agree, the run was decided entirely up front. The last column is the same coordinates measured as an ordinary cell. It is a control, not a result: a large gap between it and the `auto` column means the two runs saw different conditions, and then the regret next to it is drift rather than policy. Where it says \"not swept\", the settings easySFTP picked are not on this grid at all.")
+	b.line("`Started at` is what the policy chose before the transfer taught it anything, and `Changes` how many times it moved the connection spread while the transfer ran, as `total (+up/-down)`: a step back leaves the connections open and hands the remaining files to fewer of them (issue #215). When the two coordinate columns agree, the run was decided entirely up front. The last column is the same coordinates measured as an ordinary cell. It is a control, not a result: a large gap between it and the `auto` column means the two runs saw different conditions, and then the regret next to it is drift rather than policy. Where it says \"not swept\", the settings easySFTP picked are not on this grid at all.")
 	m.autoWorkload(b)
 }
 
@@ -317,19 +330,20 @@ func (m Matrix) autoWorkload(b *buf) {
 	b.line("")
 	b.line("<details><summary>What the policy was looking at</summary>")
 	b.line("")
-	b.line("| Scenario | Profile | Files | Bytes | Largest file | Probes | RTT | Handshake |")
-	b.line("|---|---|---|---|---|---|---|---|")
+	b.line("| Scenario | Profile | Files | Bytes | p50 | p90 | Largest file | One-packet files | Probes | RTT | Handshake | BDP |")
+	b.line("|---|---|---|---|---|---|---|---|---|---|---|---|")
 	for _, a := range m.Result.Auto {
 		w := a.Workload
 		if w == nil {
 			continue
 		}
-		b.line("| %s | %s | %s | %s | %s | %s | %s ms | %s ms |",
-			a.Scenario, a.LinkProfile, raw(w.Files), raw(w.Bytes), raw(w.LargestBytes), raw(w.Probes),
-			raw(w.RTTMS), raw(w.HandshakeMS))
+		b.line("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s ms | %s ms | %s |",
+			a.Scenario, a.LinkProfile, raw(w.Files), raw(w.Bytes),
+			raw(w.P50Bytes), raw(w.P90Bytes), raw(w.LargestBytes), raw(w.SmallFiles), raw(w.Probes),
+			raw(w.RTTMS), raw(w.HandshakeMS), raw(w.BDPBytes))
 	}
 	b.line("")
-	b.line("`Probes` are the remote round-trips that are not uploads, which is what an `advanced.skip_unchanged` redeploy is made of. The RTT and handshake here are easySFTP's own measurement, taken on its first connection; `The link` above is the same path measured by `cmd/linkprobe`, which does not go through the uploader. The two should agree, and where they do not, one of them is measuring something else.")
+	b.line("`p50` and `p90` are the median and ninetieth-percentile file size and `One-packet files` how many of them fit in a single 32 KiB SFTP write, which is what tells a tree of tiny files with one archive in it from a tree of large ones; the pipelining depth is sized against the distribution rather than against the largest file alone (issue #215). `BDP` is bandwidth times delay: how many bytes one stream has to keep in flight to fill this path. `Probes` are the remote round-trips that are not uploads, which is what an `advanced.skip_unchanged` redeploy is made of. The RTT and handshake here are easySFTP's own measurement, taken on its first connection; `The link` above is the same path measured by `cmd/linkprobe`, which does not go through the uploader. The two should agree, and where they do not, one of them is measuring something else.")
 	b.line("")
 	b.line("</details>")
 }

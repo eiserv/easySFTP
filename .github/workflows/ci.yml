@@ -449,18 +449,28 @@ jobs:
                    and .process.max_rss_bytes > 0
                    and .process.user_cpu_ms > 0
                    and .process.net_write_bytes > 0' "$OUT_DIR/results.json"
-          # The adaptive settings (issue #209) against a real server, which is
-          # the only place the link probe and the connection pool run at all.
-          # The standard benchmark is an inline run, so all three settings are
-          # at auto: the policy must have read the workload, measured the link
-          # and stayed inside its own bounds.
+          # The adaptive settings (issues #209 and #215) against a real server,
+          # which is the only place the link probe and the connection pool run
+          # at all. The standard benchmark is an inline run, so all three
+          # settings are at auto: the policy must have read the workload
+          # including its shape, measured the link, left the throughput at the
+          # prior (nothing observes one before the first byte moves) and stayed
+          # inside its own bounds. auto_changes has to add up to the two
+          # directions, or a step back is being counted as a step forward.
           jq -e '.results[] | select(.label == "candidate" and .scenario == "small")
                  | (.operations | map(select(.name == "sftp_realpath")) | first | .count) >= 3
                    and .counters.workload_files == 300
                    and .counters.workload_probes == 0
+                   and .counters.workload_p50_bytes == 4096
+                   and .counters.workload_p90_bytes == 4096
+                   and .counters.workload_small_files == 300
                    and .counters.link_rtt_us > 0
                    and .counters.link_handshake_us > 0
+                   and .counters.link_stream_bytes_per_second == 0
                    and .counters.auto_initial_connections >= 1
+                   and .counters.auto_final_connections >= 1
+                   and .counters.auto_changes == (.counters.auto_spread_increases + .counters.auto_spread_decreases)
+                   and .counters.config_connections >= .counters.auto_final_connections
                    and .counters.config_connections >= .counters.auto_initial_connections
                    and .counters.config_connections <= 8
                    and .counters.config_concurrency == 64

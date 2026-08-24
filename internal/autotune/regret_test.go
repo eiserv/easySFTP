@@ -140,26 +140,38 @@ func workloadOf(name string) (autotune.Workload, error) {
 	}
 	shape := scenario.ShapeOf(name)
 
-	var files int
-	var bytes, largest int64
+	// The sizes the payload really has, in the order a scan would produce
+	// them, so the distribution features of the workload (issue #215, stage 1)
+	// are the ones a run would compute rather than a summary of a summary.
+	var sizes []int64
 	for _, g := range groups {
-		files += g.Count
-		bytes += int64(g.Count) * int64(g.KiB) * KiB
-		largest = max(largest, int64(g.KiB)*KiB)
+		for range g.Count {
+			sizes = append(sizes, int64(g.KiB)*KiB)
+		}
 	}
+	files := len(sizes)
 
 	switch {
 	case shape.Prepopulate && shape.Mode == "sync":
+		// A sync knows what changed before it uploads: the manifest already
+		// told it. The harness changes the first ChangedFiles files of the
+		// tree, which is what those sizes describe.
 		changed := min(scenario.ChangedFiles, files)
-		return autotune.Workload{
-			Uploads:       changed,
-			UploadBytes:   bytes / int64(max(files, 1)) * int64(changed),
-			LargestUpload: largest,
-		}, nil
+		return autotune.SummarizeUploads(sizes[:changed]), nil
 	case shape.Prepopulate:
-		return autotune.Workload{Probes: files, LargestUpload: largest, Unknown: true}, nil
+		// An overlay redeploy with skip_unchanged has not decided anything
+		// yet: every file costs a stat and only some are then sent.
+		w := autotune.SummarizeUploads(sizes)
+		return autotune.Workload{
+			Probes:        files,
+			Unknown:       true,
+			LargestUpload: w.LargestUpload,
+			P50Upload:     w.P50Upload,
+			P90Upload:     w.P90Upload,
+			SmallUploads:  w.SmallUploads,
+		}, nil
 	default:
-		return autotune.Workload{Uploads: files, UploadBytes: bytes, LargestUpload: largest}, nil
+		return autotune.SummarizeUploads(sizes), nil
 	}
 }
 

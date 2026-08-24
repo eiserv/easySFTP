@@ -51,22 +51,32 @@ func TestControllerGrowsOnMeasuredThroughputThenStops(t *testing.T) {
 	}
 
 	// This window is slower than the one before the growth, so the pool has
-	// stopped scaling and the controller stops with it.
-	if _, ok := c.Observe(autotune.Progress{
+	// stopped scaling. The step is taken back rather than merely stopped at:
+	// the four connections stay open and the files that are left go over the
+	// two that were carrying them before (issue #215, stage 5).
+	back, ok := c.Observe(autotune.Progress{
 		Elapsed: 3 * time.Second, Uploaded: 45, Remaining: 955,
 		RemainingBytes: 955 * MiB, UploadedBytes: 45 * MiB,
-	}); ok {
-		t.Fatal("a step that did not pay off must not be followed by another")
+	})
+	if !ok {
+		t.Fatal("a step that did not pay off must be taken back")
+	}
+	if !back.Shrinks() || back.From.Connections != 4 || back.To.Connections != 2 {
+		t.Fatalf("step back went %d -> %d (shrinks: %v), want the spread returned to 2",
+			back.From.Connections, back.To.Connections, back.Shrinks())
+	}
+	if !strings.Contains(back.String(), "without closing any") {
+		t.Errorf("a step back must say the connections stay open: %s", back)
 	}
 	stopped, why := c.Stopped()
 	if !stopped {
 		t.Fatal("the controller must settle once growing stops helping")
 	}
-	if !strings.Contains(why, "no faster") {
+	if !strings.Contains(why, "did not improve") {
 		t.Errorf("the reason should say the measurement did not improve, got %q", why)
 	}
-	if c.Settings().Connections != 4 {
-		t.Errorf("settled at %d connections, want the last accepted 4", c.Settings().Connections)
+	if c.Settings().Connections != 2 {
+		t.Errorf("settled at %d connections, want the spread back at 2", c.Settings().Connections)
 	}
 }
 
@@ -181,5 +191,93 @@ func TestControllerExtrapolatesAnUnsettledUploadSet(t *testing.T) {
 	})
 	if !ok || change.To.Connections <= change.From.Connections {
 		t.Fatalf("a redeploy that is really uploading must widen the pool, got %+v (changed: %v)", change, ok)
+	}
+}
+
+// TestControllerNeedsBytesBeforeItDecides is stage 6 of issue #215. The window
+// that grew the stored 'small' sweep from four connections to eight was
+// 250 ms long and carried a few dozen kilobytes: it satisfied "enough time" and
+// "enough files" while saying nothing at all about throughput. A window has to
+// carry real bytes before it may size a pool.
+func TestControllerNeedsBytesBeforeItDecides(t *testing.T) {
+	c := autotune.NewController(start, house, autotune.Fixed{})
+
+	// 4 KiB files, one second in: long enough, four files, 16 KiB moved.
+	if _, ok := c.Observe(autotune.Progress{
+		Elapsed: time.Second, Uploaded: 4, Remaining: 296,
+		RemainingBytes: 296 * 4 * KiB, UploadedBytes: 4 * 4 * KiB,
+	}); ok {
+		t.Fatal("16 KiB is not a throughput measurement, whatever the clock says")
+	}
+
+	// A window that never becomes evidence must not become the baseline
+	// either: the next report is still measured from the start of the phase,
+	// so the evidence accumulates instead of being reset every tick.
+	if _, ok := c.Observe(autotune.Progress{
+		Elapsed: 2 * time.Second, Uploaded: 8, Remaining: 292,
+		RemainingBytes: 292 * 4 * KiB, UploadedBytes: 8 * 4 * KiB,
+	}); ok {
+		t.Fatal("two thin windows in a row are not one thick one")
+	}
+
+	// The same phase once it has really moved something.
+	if _, ok := c.Observe(autotune.Progress{
+		Elapsed: 3 * time.Second, Uploaded: 200, Remaining: 800,
+		RemainingBytes: 800 * MiB, UploadedBytes: 8 * MiB,
+	}); !ok {
+		t.Error("a window carrying megabytes over three seconds is a measurement")
+	}
+}
+
+// TestControllerSettlesAfterASingleStepBack: taking one step back is a
+// correction, taking a second would be the start of an oscillation. Whatever
+// arrives after the reversal, the spread stays where the reversal put it.
+func TestControllerSettlesAfterASingleStepBack(t *testing.T) {
+	c := autotune.NewController(start, house, autotune.Fixed{})
+
+	if _, ok := c.Observe(autotune.Progress{
+		Elapsed: time.Second, Uploaded: 10, Remaining: 990,
+		RemainingBytes: 990 * MiB, UploadedBytes: 10 * MiB,
+	}); !ok {
+		t.Fatal("a stream measured far slower than the prior must widen the pool")
+	}
+	back, ok := c.Observe(autotune.Progress{
+		Elapsed: 2 * time.Second, Uploaded: 18, Remaining: 982,
+		RemainingBytes: 982 * MiB, UploadedBytes: 18 * MiB,
+	})
+	if !ok || !back.Shrinks() || back.To.Connections != 1 {
+		t.Fatalf("a step that bought nothing must go back to 1, got %+v (changed: %v)", back, ok)
+	}
+	for i := range 3 {
+		if _, ok := c.Observe(autotune.Progress{
+			Elapsed: time.Duration(3+i) * time.Second, Uploaded: 100 * (i + 1), Remaining: 900 - 100*i,
+			RemainingBytes: int64(900-100*i) * MiB, UploadedBytes: int64(100*(i+1)) * MiB,
+		}); ok {
+			t.Fatalf("the controller moved again after settling (observation %d)", i)
+		}
+	}
+	if c.Settings().Connections != 1 {
+		t.Errorf("settled at %d connections, want the spread left where the step back put it", c.Settings().Connections)
+	}
+}
+
+// TestControllerJudgesAStepEvenAtTheEndOfAPhase: "fewer files left than
+// connections" stops the controller opening more, but it must not stop it
+// noticing that the last step it took was a mistake, or a pool that grew on the
+// second-to-last window would never be corrected.
+func TestControllerJudgesAStepEvenAtTheEndOfAPhase(t *testing.T) {
+	c := autotune.NewController(start, house, autotune.Fixed{})
+	if _, ok := c.Observe(autotune.Progress{
+		Elapsed: time.Second, Uploaded: 10, Remaining: 990,
+		RemainingBytes: 990 * MiB, UploadedBytes: 10 * MiB,
+	}); !ok {
+		t.Fatal("the pool must widen first for there to be anything to judge")
+	}
+	back, ok := c.Observe(autotune.Progress{
+		Elapsed: 2 * time.Second, Uploaded: 999, Remaining: 1,
+		RemainingBytes: MiB, UploadedBytes: 20 * MiB,
+	})
+	if !ok || !back.Shrinks() {
+		t.Errorf("a phase running out of files must still take back a step that did not pay: %+v (changed: %v)", back, ok)
 	}
 }

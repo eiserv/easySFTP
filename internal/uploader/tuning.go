@@ -49,6 +49,16 @@ type tuning struct {
 	haveInitial bool
 	effective   autotune.Settings
 	changes     int
+
+	// spreadUp and spreadDown count the runtime changes by direction, and
+	// finalSpread is the number of connections the last deployment ended up
+	// handing files to. effective stays a high-water mark (it answers "what did
+	// this run cost the server"); these answer "where did the policy settle",
+	// which is a different question once a step can be taken back
+	// (issue #215).
+	spreadUp    int
+	spreadDown  int
+	finalSpread int
 }
 
 // newTuning reads which settings the configuration pinned. Everything it does
@@ -157,6 +167,7 @@ func (t *tuning) planFor(w autotune.Workload) autotune.Settings {
 		// stored benchmark result explains the choice as well as recording it.
 		t.initial, t.seen, t.haveInitial = s, w, true
 	}
+	t.finalSpread = s.Connections
 	t.record(s)
 	return s
 }
@@ -168,11 +179,19 @@ func (t *tuning) record(s autotune.Settings) {
 	t.effective.RequestConcurrency = max(t.effective.RequestConcurrency, s.RequestConcurrency)
 }
 
-// grew notes one accepted runtime change.
-func (t *tuning) grew(s autotune.Settings) {
+// applied notes one accepted runtime change, in the direction it went. A step
+// back does not un-count the handshakes the step before it paid for, so
+// effective keeps its high-water mark either way.
+func (t *tuning) applied(s autotune.Settings, shrink bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.changes++
+	if shrink {
+		t.spreadDown++
+	} else {
+		t.spreadUp++
+	}
+	t.finalSpread = s.Connections
 	t.record(s)
 }
 
@@ -220,41 +239,66 @@ func (t *tuning) report() {
 	metrics.Set("auto_initial_concurrency", int64(t.initial.Concurrency))
 	metrics.Set("auto_initial_request_concurrency", int64(t.initial.RequestConcurrency))
 	metrics.Set("auto_changes", int64(t.changes))
+	// Direction and destination of those changes: a run that grew and then
+	// took the step back is not a run that never moved, and the difference is
+	// invisible in a single counter (issue #215, stages 5 and 6).
+	metrics.Set("auto_spread_increases", int64(t.spreadUp))
+	metrics.Set("auto_spread_decreases", int64(t.spreadDown))
+	metrics.Set("auto_final_connections", int64(max(t.finalSpread, 1)))
 	metrics.Set("workload_files", int64(t.seen.Uploads))
 	metrics.Set("workload_bytes", t.seen.UploadBytes)
 	metrics.Set("workload_largest_bytes", t.seen.LargestUpload)
+	metrics.Set("workload_p50_bytes", t.seen.P50Upload)
+	metrics.Set("workload_p90_bytes", t.seen.P90Upload)
+	metrics.Set("workload_small_files", int64(t.seen.SmallUploads))
 	metrics.Set("workload_probes", int64(t.seen.Probes))
 	metrics.Set("link_rtt_us", t.link.RTT.Microseconds())
 	metrics.Set("link_handshake_us", t.link.Handshake.Microseconds())
+	// The throughput the pipelining was sized against and the bandwidth-delay
+	// product that follows from it. A zero throughput is the normal case and
+	// says so explicitly: nothing observes one before the first byte moves, so
+	// the run used the built-in prior and link_bdp_bytes is what that prior
+	// works out to over the measured RTT.
+	metrics.Set("link_stream_bytes_per_second", int64(t.link.StreamBytesPerSecond))
+	metrics.Set("link_bdp_bytes", t.link.BDPBytes())
 }
 
 // planWorkload turns a set of planned files into the features the policy
-// reads. probes counts the remote round-trips that are not uploads (the one
-// stat per file advanced.skip_unchanged costs), and unknown marks a set whose
-// members may turn out not to be uploaded at all.
+// reads: the totals, the size distribution stage 1 works on, and the remote
+// round-trips that are not uploads (the one stat per file advanced.
+// skip_unchanged costs). unknown marks a set whose members may turn out not to
+// be uploaded at all.
 func planWorkload(files []fileItem, probes int, unknown bool) autotune.Workload {
-	w := autotune.Workload{Probes: probes, Unknown: unknown}
-	for _, f := range files {
-		w.Uploads++
-		w.UploadBytes += f.size
-		w.LargestUpload = max(w.LargestUpload, f.size)
-	}
+	w := autotune.SummarizeUploads(uploadSizes(files))
+	w.Probes, w.Unknown = probes, unknown
 	return w
+}
+
+// uploadSizes is the one slice the summary needs. It lives exactly as long as
+// the call: what the policy keeps afterwards is the handful of numbers
+// autotune.SummarizeUploads reduces it to.
+func uploadSizes(files []fileItem) []int64 {
+	sizes := make([]int64, 0, len(files))
+	for _, f := range files {
+		sizes = append(sizes, f.size)
+	}
+	return sizes
 }
 
 // runWorkload is every deployment's plan added together: the ceiling the run
 // is sized against before it knows what sync will narrow down. Deployments run
 // one after another, so their handshakes are shared and adding them up is what
 // the pool actually faces.
+//
+// The distribution is taken over the union rather than per deployment, for the
+// same reason: the connections and the pipelining depth are run-wide, so what
+// they have to serve is every file the run may send.
 func runWorkload(plans []plan) autotune.Workload {
-	var total autotune.Workload
+	var sizes []int64
 	for _, p := range plans {
-		w := planWorkload(p.files, 0, false)
-		total.Uploads += w.Uploads
-		total.UploadBytes += w.UploadBytes
-		total.LargestUpload = max(total.LargestUpload, w.LargestUpload)
+		sizes = append(sizes, uploadSizes(p.files)...)
 	}
-	return total
+	return autotune.SummarizeUploads(sizes)
 }
 
 // uploadWorkload is the workload of one deployment's transfer phase.
@@ -267,11 +311,19 @@ func runWorkload(plans []plan) autotune.Workload {
 // once the run has seen the real ratio.
 func uploadWorkload(files []fileItem, skipUnchanged bool) autotune.Workload {
 	if skipUnchanged {
-		w := autotune.Workload{Probes: len(files), Unknown: true}
-		for _, f := range files {
-			w.LargestUpload = max(w.LargestUpload, f.size)
+		// The sizes are the sizes of files that may or may not be sent, so
+		// they describe the shape of the work without claiming any of it will
+		// happen: the counts stay on the probe side and the byte total stays
+		// at zero.
+		shape := autotune.SummarizeUploads(uploadSizes(files))
+		return autotune.Workload{
+			Probes:        len(files),
+			Unknown:       true,
+			LargestUpload: shape.LargestUpload,
+			P50Upload:     shape.P50Upload,
+			P90Upload:     shape.P90Upload,
+			SmallUploads:  shape.SmallUploads,
 		}
-		return w
 	}
 	return planWorkload(files, 0, false)
 }
@@ -467,9 +519,12 @@ func startTuningController(ctx context.Context, sess *session, start autotune.Se
 			}
 			change, ok := ctrl.Observe(prog.snapshot(time.Since(began), sess.refusedConnection()))
 			if ok {
-				applied := sess.setSpread(change.To.Connections)
-				change.To.Connections = applied
-				sess.tune.grew(change.To)
+				// setSpread only ever points the *next* files somewhere else.
+				// Nothing in flight moves, and a narrowing spread leaves every
+				// connection it stops using open (issue #215, stage 5).
+				shrink := change.Shrinks()
+				change.To.Connections = sess.setSpread(change.To.Connections)
+				sess.tune.applied(change.To, shrink)
 				log.Infof("auto tuning: %s", change)
 			}
 			if stopped, why := ctrl.Stopped(); stopped {

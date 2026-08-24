@@ -36,19 +36,45 @@ overriding.
 
 After the local scan, and again for each deployment right before its transfer,
 easySFTP knows the files it is about to send: how many, how large in total, the
-size of the biggest one, and how many pure metadata round-trips come with them
-(the one stat per file that `advanced.skip_unchanged` costs, the removals of a
-delete sweep).
+size of the biggest one, how those sizes are *distributed* (the median, the
+ninetieth percentile, and how many files fit in a single 32 KiB write packet),
+and how many pure metadata round-trips come with them (the one stat per file
+that `advanced.skip_unchanged` costs, the removals of a delete sweep).
 
-`concurrency` follows directly from that: as many workers as there are
-independent items, capped at 64. A worker with nothing to do never starts, so
-there is nothing to trade off.
+The distribution is there because totals do not describe a deploy. A hundred
+files carrying twelve megabytes can be a hundred medium files or ninety tiny
+ones with a handful of archives among them, and the two want different
+pipelining. A summary that only knows the total and the largest file cannot
+tell them apart.
 
-`request_concurrency` follows from the largest file. The setting counts 32 KiB
-write packets in flight for a single file, so a 4 KiB file cannot use a second
-one however high the number is; a 16 MiB file can use many. It stays at the
-long-standing 16 for a tree of small files and rises to at most 64 for large
-ones, which is where one SSH channel's 2 MiB window is full anyway.
+`concurrency` follows directly from the item count: as many workers as there
+are independent items, capped at 64. A worker with nothing to do never starts,
+so there is nothing to trade off.
+
+`request_concurrency` follows from the largest file and from what the whole set
+costs to keep in flight. The setting counts 32 KiB write packets in flight for
+a single file, so a 4 KiB file cannot use a second one however high the number
+is; a 16 MiB file can use many. It stays at the long-standing 16 for a tree of
+small files and rises to at most 64 for large ones, which is where one SSH
+channel's 2 MiB window is full anyway.
+
+The buffers those packets hold are capped run-wide (32 MiB), and that ceiling
+used to be shared as if every file in flight were as large as the largest one.
+It is now shared against the distribution: at most a tenth of the files can be
+above the ninetieth percentile, so a deploy of small files with a few archives
+in it keeps the deep pipelining its archives need instead of paying for
+buffers no file will use.
+
+One number this would like it cannot have yet: how many bytes the path can hold
+in flight, which is throughput times round-trip time (the bandwidth-delay
+product). The round-trip time is measured a moment later; the throughput is
+not, and a pipeline depth computed from a guessed throughput would be a guess
+wearing an argument's clothes. So while the throughput is still the built-in
+assumption, `request_concurrency` stays on the rule above. Once a throughput
+has really been observed, the bandwidth-delay product is what sizes it: a long
+fat path is given every packet the channel window has, and a path that carries
+five kilobytes per round-trip is not asked to hold two megabytes of one file
+open for no reason.
 
 ### 2. What the connection costs
 
@@ -74,15 +100,27 @@ One thing cannot be known before any bytes move: how fast the link actually is.
 easySFTP starts from a deliberately conservative assumption and then measures.
 While a transfer runs, it watches the throughput it is really achieving and
 widens the connection pool if the work that is left still justifies another
-handshake. It grows at most one doubling at a time, and it stops for good the
-first time a step does not make things measurably faster.
+handshake. It grows at most one doubling at a time.
+
+A window only counts as a measurement when it is long enough (three quarters of
+a second), saw enough files finish (four) and carried enough bytes (half a
+megabyte). Until it is, the window keeps widening rather than being reset, so a
+short deploy of tiny files is never resized on the strength of a few kilobytes.
+
+If a step does not make things measurably faster, it is **taken back**: the
+files that are left go over the number of connections that was carrying them
+before. Nothing is closed and nothing in flight moves; what changes is only
+where the next file is sent. Then the policy settles. One correction is a
+correction, a second one would be an oscillation, and a deploy tool that
+oscillates its connection count is worse than one that settles on a slightly
+wrong number.
 
 It also stops immediately if the server refuses a connection or if any upload
 has to be retried. A server that is already pushing back is not one to put more
 load on.
 
-The pool never shrinks (a handshake already paid is spent, and closing a
-connection would abort the files on it), and `concurrency` and
+Connections are never *closed* mid-run (a handshake already paid is spent, and
+closing a connection would abort the files on it), and `concurrency` and
 `request_concurrency` never move at runtime: the first is already at the
 largest value that can be busy, and the second is fixed when an SFTP client is
 created.
@@ -138,10 +176,16 @@ and a runtime change says what moved and on the strength of what measurement:
 auto tuning: 1.1 MiB/s over the connections in use; raising connections 2 -> 4 for the rest of this deployment
 ```
 
+as does one that turns out not to have been worth it:
+
+```text
+auto tuning: 1.1 MiB/s is no better than the 1.1 MiB/s before the spread grew to 8; assigning the remaining files across 4 connection(s) instead, without closing any
+```
+
 With `log-level: debug` every decision is printed in full, inputs first:
 
 ```text
-auto tuning: files=2000 bytes=7.8 MiB largest=4.0 KiB probes=0 rtt=13ms handshake=384ms throughput=assumed 1.0 MiB/s -> connections=8 concurrency=64 request_concurrency=16
+auto tuning: files=2000 bytes=7.8 MiB p50=4.0 KiB p90=4.0 KiB small=2000 largest=4.0 KiB probes=0 rtt=13ms handshake=384ms throughput=assumed 1.0 MiB/s bdp=13.3 KiB -> connections=8 concurrency=64 request_concurrency=16
 ```
 
 If the server will not open as many connections as easySFTP asked for, you get
@@ -168,7 +212,12 @@ knowing:
 - On a link that is much faster than the one it was fitted on, easySFTP may
   open a connection or two more than it needed to before its own measurement
   corrects the assumption. The cost of that is bounded by the handshakes
-  themselves, which on a fast link are cheap.
+  themselves, which on a fast link are cheap, and a step that did not help is
+  taken back within a window.
+- The bandwidth-delay product only sizes the pipelining once a throughput has
+  been observed, and nothing observes one before the first byte moves. Today
+  that means the conservative rule is what a normal run uses; the measured path
+  exists for the run that starts with a throughput it inherited.
 
 If your deploy is slower than you expect, `log-level: debug` prints the whole
 decision, and [troubleshooting](troubleshooting.md) covers the failure modes

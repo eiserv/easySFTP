@@ -103,7 +103,7 @@ Markdown:
 | `results[].process` | CPU time, peak RSS, Go allocations, GC count and pause, peak goroutines, disk and network bytes |
 | `results[].phases[]` | wall clock per phase (connect, local_scan, remote_scan, hash, create_dirs, sweep_stale_temps, upload, delete_sweep, manifest_read, manifest_write, prune_dirs, cleanup) |
 | `results[].operations[]` | per round-trip: count, cumulative total, average, p50/p90/p99, max, errors |
-| `results[].counters` | connections opened/used/refused, reconnects, retries, stalls, errors, the settings the run used (`config_*`), what the policy first picked (`auto_initial_*`, `auto_changes`), the features it read (`workload_*`) and the link it measured (`link_rtt_us`, `link_handshake_us`) |
+| `results[].counters` | connections opened/used/refused, reconnects, retries, stalls, errors, the settings the run used (`config_*`), what the policy first picked (`auto_initial_*`), how it moved afterwards (`auto_changes`, `auto_spread_increases`, `auto_spread_decreases`, `auto_final_connections`), the features it read (`workload_*`, including `workload_p50_bytes`, `workload_p90_bytes` and `workload_small_files`) and the link it measured (`link_rtt_us`, `link_handshake_us`, `link_stream_bytes_per_second`, `link_bdp_bytes`) |
 | `comparison[]` | each build against the reference build: `delta_ms`, `delta_percent`, and `within_noise` (is the delta smaller than the reference's MAD?) |
 | `deletes[]` | the delete sweeps, one row per (build, scenario, link profile); see "The delete sweeps" below |
 | `runs[]` | every individual repeat, verbatim, including its own metrics document |
@@ -190,8 +190,9 @@ candidate build, and scores it against the grid:
 | Field | What it is |
 |---|---|
 | `chosen` | the `connections`, `concurrency` and `request_concurrency` the run ended up using, read from its own counters rather than assumed |
-| `chosen.initial_*`, `chosen.changes` | what the policy picked before the transfer taught it anything, and how many times it widened the pool while the transfer ran; equal to `chosen` on a run the runtime stage left alone |
-| `workload` | the features the policy was looking at: `files`, `bytes`, `largest_bytes`, `probes`, and the `rtt_ms` / `handshake_ms` the run measured itself |
+| `chosen.initial_*`, `chosen.changes` | what the policy picked before the transfer taught it anything, and how many times it moved the connection spread while the transfer ran; equal to `chosen` on a run the runtime stage left alone |
+| `chosen.spread_increases`, `chosen.spread_decreases`, `chosen.final_connections` | which way those changes went and where the run settled. A growth step that does not pay for itself is taken back without closing anything (issue #215), so the plain `connections` above is a high-water mark and this is the number the last deployment ran on |
+| `workload` | the features the policy was looking at: `files`, `bytes`, `largest_bytes`, `probes`, the shape of the set (`p50_bytes`, `p90_bytes`, `small_files`, the files that fit in one 32 KiB write packet), and the link it measured itself (`rtt_ms`, `handshake_ms`, and `stream_bytes_per_second` / `bdp_bytes` where a throughput was known) |
 | `median_ms`, `min_ms`, `max_ms`, `mad_ms`, `durations_ms`, `mib_per_s`, `files_per_s` | the same statistics a cell carries |
 | `best` | the fastest candidate cell of that scenario and profile |
 | `regret_ms`, `regret_percent` | the gap: how much slower the policy is than the settings a sweep would have picked |
@@ -223,7 +224,7 @@ Four things about it:
   react to. What `chosen.changes` records is that the controller acted; whether
   it acted well shows up in `median_ms` and nowhere else.
 
-The policy itself lives in `internal/autotune` (issue #209), and its own test
+The policy itself lives in `internal/autotune` (issues #209 and #215), and its own test
 replays it against every sweep committed here and fails when the regret goes
 over the target. That test is the fast feedback loop; the sweep is the
 measurement it is fitted to.
