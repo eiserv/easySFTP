@@ -107,6 +107,17 @@ a second), saw enough files finish (four) and carried enough bytes (half a
 megabyte). Until it is, the window keeps widening rather than being reset, so a
 short deploy of tiny files is never resized on the strength of a few kilobytes.
 
+And a byte rate only counts as a measurement of the *link* when the files could
+fill one. A deployment of files that each fit in a single 32 KiB write is
+limited by four round-trips per file, not by bandwidth; its megabytes per second
+are its files per second in other units, and reading them as a bandwidth makes
+the link look dead and buys connections that cannot help. For those deployments
+the round-trip model that sized the run up front already had everything it was
+going to get (the round-trip time was measured before the first file), so the
+runtime stage only re-plans the work that is left. Where the bytes really do
+come from files large enough to stream, the measurement means what it says and
+the pool follows it.
+
 If a step does not make things measurably faster, it is **taken back**: the
 files that are left go over the number of connections that was carrying them
 before. Nothing is closed and nothing in flight moves; what changes is only
@@ -128,8 +139,9 @@ created.
 This runtime stage is what makes an overlay redeploy safe to start small. With
 `advanced.skip_unchanged` easySFTP cannot know in advance how many files really
 changed, so it sizes the run for the checks it is certain of. If it then turns
-out that most files *are* changing, the ratio it observes in the first second
-tells it, and the pool widens.
+out that most files *are* changing, the ratio it observes in its first window
+tells it, and the pool widens: that correction is about how much work there
+turned out to be, so it applies whatever the files look like.
 
 ## Overriding it
 

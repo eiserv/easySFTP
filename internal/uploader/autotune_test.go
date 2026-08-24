@@ -302,10 +302,11 @@ func TestRuntimeControllerWidensThePoolWhileTheTransferRuns(t *testing.T) {
 	tune.setLink(autotune.Link{RTT: 13 * time.Millisecond, Handshake: 360 * time.Millisecond})
 
 	prog := &uploadProgress{totalFiles: 1000, totalBytes: 1000 << 20}
+	poolWork := autotune.Workload{Uploads: 1000, UploadBytes: 1000 << 20, LargestUpload: 1 << 20, P90Upload: 1 << 20}
 	start := autotune.Settings{Connections: 1, Concurrency: 64, RequestConcurrency: 16}
 	sess.setSpread(start.Connections)
 
-	stop := startTuningController(context.Background(), sess, start, prog, log)
+	stop := startTuningController(context.Background(), sess, poolWork, start, prog, log)
 	// Ten 1 MiB files through in the first window: one stream is carrying a
 	// fraction of what the remaining 990 MiB would need.
 	for range 10 {
@@ -364,12 +365,13 @@ func TestRuntimeControllerNarrowsTheSpreadWithoutClosingConnections(t *testing.T
 	tune.setLink(autotune.Link{RTT: 13 * time.Millisecond, Handshake: 360 * time.Millisecond})
 
 	prog := &uploadProgress{totalFiles: 1000, totalBytes: 1000 << 20}
+	poolWork := autotune.Workload{Uploads: 1000, UploadBytes: 1000 << 20, LargestUpload: 1 << 20, P90Upload: 1 << 20}
 	start := autotune.Settings{Connections: 1, Concurrency: 64, RequestConcurrency: 16}
 	sess.setSpread(start.Connections)
 
 	// stop must run before the assertions read the log: it waits for the
 	// controller's goroutine, which is the only other writer.
-	stop := sync.OnceFunc(startTuningController(context.Background(), sess, start, prog, log))
+	stop := sync.OnceFunc(startTuningController(context.Background(), sess, poolWork, start, prog, log))
 	defer stop()
 
 	// A first window worth growing on.

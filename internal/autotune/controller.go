@@ -27,6 +27,10 @@ import (
 //     could only widen a pool it had widened too far, and the stored 'small'
 //     sweep is what that costs: 4 connections widened to 8 on one thin
 //     window, on a workload whose measured optimum was 2.
+//   - What counts as evidence is narrower than "a number arrived". A window has
+//     to be long enough, see enough files and carry enough bytes, and a byte
+//     rate is only read as a bandwidth when the files were large enough to
+//     produce one (issue #215, stage 6, and see bandwidthBound).
 //   - Concurrency never moves. Plan already sizes it to the number of
 //     independent items, which is the largest value that can ever be busy;
 //     there is nothing for a hill climb to find.
@@ -109,6 +113,12 @@ type Controller struct {
 	link    Link
 	current Settings
 
+	// workload is the shape of the transfer being watched. Only its
+	// distribution is read: what the observed byte rate is evidence *of*
+	// depends on whether the files are big enough for a byte rate to mean
+	// anything. See bandwidthBound.
+	workload Workload
+
 	// stopped latches once there is nothing left to try.
 	stopped bool
 	reason  string
@@ -129,10 +139,11 @@ type Controller struct {
 }
 
 // NewController returns the controller for a deployment that Plan resolved to
-// start. It reports nothing to change while every setting it could move is
-// pinned by the user or already at its ceiling.
-func NewController(start Settings, l Link, f Fixed) *Controller {
-	c := &Controller{fixed: f, link: l, current: start}
+// start, watching the workload it was resolved for. It reports nothing to
+// change while every setting it could move is pinned by the user or already at
+// its ceiling.
+func NewController(w Workload, start Settings, l Link, f Fixed) *Controller {
+	c := &Controller{fixed: f, link: l, current: start, workload: w}
 	switch {
 	case f.Connections > 0:
 		c.stop("connections come from the configuration")
@@ -224,6 +235,15 @@ func (c *Controller) Observe(p Progress) (Change, bool) {
 			return c.reject(rate), true
 		}
 		c.pendingRate, c.pendingFrom = 0, 0
+		if c.current.Connections >= MaxConnections {
+			// The step that reached the ceiling paid for itself, so there is
+			// nothing left to grow into and nothing left to take back. This is
+			// checked *here* rather than when the step was taken: a controller
+			// that latched at the maximum could never judge the step that got
+			// it there, which is exactly the step most worth judging.
+			c.stop("the pool reached the policy maximum")
+			return none, false
+		}
 	}
 
 	if p.Remaining <= c.current.Connections {
@@ -242,9 +262,6 @@ func (c *Controller) Observe(p Progress) (Change, bool) {
 	c.pendingRate, c.pendingFrom = rate, c.current.Connections
 	c.current.Connections = grown
 	change.To = c.current
-	if c.current.Connections >= MaxConnections {
-		c.stop("the pool reached the policy maximum")
-	}
 	return change, true
 }
 
@@ -307,12 +324,50 @@ func (c *Controller) throughput(p Progress) float64 {
 // really carrying. The aggregate is divided by the streams that were actually
 // serving files, not by the pool size: a pool whose tail no worker reached
 // would make every connection look slower than it is.
+//
+// For a workload that cannot fill a stream the prior stays, because the
+// measurement is not one. See bandwidthBound.
 func (c *Controller) measuredLink(p Progress, rate float64) Link {
-	streams := min(c.current.Connections, c.current.Concurrency, p.Uploaded+p.Remaining)
 	l := c.link
+	if !c.bandwidthBound() {
+		return l
+	}
+	streams := min(c.current.Connections, c.current.Concurrency, p.Uploaded+p.Remaining)
 	l.StreamBytesPerSecond = rate / float64(max(streams, 1))
 	l.ThroughputSource = SourceRuntime // the transfer being tuned, which outranks everything else
 	return l
+}
+
+// bandwidthBound reports whether this transfer's byte rate says anything about
+// the link's bandwidth.
+//
+// A deployment of files that each fit in a single 32 KiB write packet never
+// fills a stream: what limits it is four round-trips per file, not bytes per
+// second, and its megabytes-per-second reading is a restatement of its
+// files-per-second reading. Feeding that number back in as a bandwidth makes
+// the link look catastrophically slow, which makes the remaining work look
+// enormous, which buys connections that cannot help. That is the stored 'small'
+// miss: 300 files of 4 KiB, widened from four connections to eight, measured
+// fastest at two.
+//
+// The round-trip half of the model does not need a runtime correction, because
+// nothing about it was guessed: the RTT was measured before the first file and
+// the file count is known. So for these workloads the pre-transfer plan already
+// had every input it was going to get, and the controller's job is only to
+// re-plan the work that is *left* (which is what an unsettled skip_unchanged
+// set still needs).
+//
+// The ninetieth percentile is the test rather than the mean or the largest
+// file, so a tree of small files with a few archives in it, where the bytes
+// really do come from files that can fill a stream, still gets a runtime
+// correction.
+func (c *Controller) bandwidthBound() bool {
+	size := c.workload.P90Upload
+	if size == 0 {
+		// A workload with no distribution: the largest file is all there is.
+		size = c.workload.LargestUpload
+	}
+	return size > packetBytes
 }
 
 // remaining is the workload the run still has in front of it. For a settled
@@ -336,7 +391,17 @@ func (c *Controller) remaining(p Progress) Workload {
 	if uploads > 0 {
 		largest = bytes / int64(uploads)
 	}
-	return Workload{Uploads: uploads, UploadBytes: bytes, LargestUpload: largest, Probes: probes}
+	// The shape carries over from the plan: which files are left is not known,
+	// but nothing observed so far suggests they are shaped differently from
+	// the ones that were planned.
+	return Workload{
+		Uploads:       uploads,
+		UploadBytes:   bytes,
+		LargestUpload: largest,
+		P50Upload:     c.workload.P50Upload,
+		P90Upload:     c.workload.P90Upload,
+		Probes:        probes,
+	}
 }
 
 func rateString(bytesPerSecond float64) string {

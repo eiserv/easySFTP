@@ -497,8 +497,8 @@ func (p *uploadProgress) snapshot(elapsed time.Duration, refused bool) autotune.
 // session.setSpread, which hands the next files to more slots without dialing
 // anything itself, so a decision that turns out to be unnecessary (the phase
 // ends first) costs nothing at all.
-func startTuningController(ctx context.Context, sess *session, start autotune.Settings, prog *uploadProgress, log Logger) func() {
-	ctrl := autotune.NewController(start, sess.tune.currentLink(), sess.tune.fixed)
+func startTuningController(ctx context.Context, sess *session, w autotune.Workload, start autotune.Settings, prog *uploadProgress, log Logger) func() {
+	ctrl := autotune.NewController(w, start, sess.tune.currentLink(), sess.tune.fixed)
 	if stopped, _ := ctrl.Stopped(); stopped {
 		return func() {}
 	}

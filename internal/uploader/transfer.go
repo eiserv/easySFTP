@@ -99,7 +99,8 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 	// the transfer that is about to start (for sync, the changed set the
 	// manifest just produced), and the link is what the first connection
 	// measured. Everything the configuration pinned comes back unchanged.
-	settings := sess.tune.planFor(uploadWorkload(files, skipUnchanged))
+	work := uploadWorkload(files, skipUnchanged)
+	settings := sess.tune.planFor(work)
 	sess.setSpread(settings.Connections)
 	logTuning(cfg, sess, files, skipUnchanged, settings, log)
 
@@ -111,7 +112,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 		// Stage 3. A dry run moves no bytes, so there is nothing to measure
 		// and nothing a wider pool could carry.
 		env.progress = newUploadProgress(files)
-		defer startTuningController(ctx, sess, settings, env.progress, log)()
+		defer startTuningController(ctx, sess, work, settings, env.progress, log)()
 	}
 	// modeWarned is only armed when file-mode is an explicit override: a
 	// mirrored local mode (the default) stays silent on failure, as before.
