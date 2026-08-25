@@ -146,17 +146,45 @@ func poolCeiling(tune *tuning, log Logger) int {
 // until a worker lands on a fresh slot, and lowering it simply stops handing
 // files to connections that are already open.
 //
-// The spread never exceeds the allocated slots, and never grows again once the
-// server has refused one.
+// The spread never exceeds the allocated slots, never exceeds a ceiling an
+// earlier run against this server left behind (issue #212), and never grows
+// again once the server has refused one.
+//
+// The ceiling is applied here rather than only in the plan because this is the
+// one place every change goes through, the runtime controller's growth
+// included: the pool is allocated to the policy's own maximum before the cache
+// has been validated (slots are lazy, so that costs nothing), so the bound has
+// to live where the spread moves.
 func (s *session) setSpread(n int) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n = min(max(n, 1), len(s.conns))
+	if s.tune != nil {
+		n = s.tune.clampConnections(n)
+	}
 	if s.refused && n > s.spread {
 		return s.spread
 	}
 	s.spread = n
 	return s.spread
+}
+
+// currentSpread is how many connections the current deployment is handing
+// files to, which is how many streams a throughput measurement has to be
+// divided by.
+func (s *session) currentSpread() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return max(s.spread, 1)
+}
+
+// granted reports how many connections the server actually gave this run, and
+// whether it ever said no. Together they are the evidence a connection ceiling
+// is written from; see tuning.cacheObservation.
+func (s *session) granted() (int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.openSlots(), s.refused
 }
 
 // workers is how many of items one phase may have in flight. With

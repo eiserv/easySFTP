@@ -9,6 +9,7 @@ import (
 
 	"github.com/pkg/sftp"
 
+	"github.com/eiserv/easySFTP/internal/autocache"
 	"github.com/eiserv/easySFTP/internal/autotune"
 	"github.com/eiserv/easySFTP/internal/config"
 	"github.com/eiserv/easySFTP/internal/metrics"
@@ -59,6 +60,30 @@ type tuning struct {
 	spreadUp    int
 	spreadDown  int
 	finalSpread int
+
+	// ceiling is an upper bound on the pool that came from an earlier run
+	// against this server: it refused a connection, or a growth step
+	// measurably did not pay. Zero is the normal case and means the policy is
+	// free up to its own maximum. capped latches when the bound actually held
+	// something back, which is what tells the write-back that this run did
+	// not put the limit to the test (issue #212, and see
+	// autocache.MaxCeilingCarry).
+	ceiling int
+	capped  bool
+
+	// observed is what this run's own transfers measured about the link, per
+	// connection, and observedBytes the size of the transfer that produced it.
+	// The largest transfer wins: both are measurements, and the one with more
+	// bytes behind it is the better one.
+	//
+	// It is deliberately not folded back into link. Within a deployment the
+	// runtime controller already acts on its own measurement, and re-planning
+	// the *next* deployment of the same run against a number the first one
+	// produced would change what a multi-deployment run does today for
+	// reasons that belong to issue #209, not here. What this is for is the
+	// next run.
+	observed      float64
+	observedBytes int64
 }
 
 // newTuning reads which settings the configuration pinned. Everything it does
@@ -152,6 +177,105 @@ func (t *tuning) currentLink() autotune.Link {
 	return t.link
 }
 
+// applyCache hands the policy what an earlier run against this server
+// measured, once the link probe has confirmed the record still describes this
+// path (see autoCache.confirm).
+//
+// Only two things come out of a record, and neither is a setting. The
+// throughput fills the one input the policy cannot compute for itself, tagged
+// as cached so that a runtime measurement of this transfer still outranks it.
+// The ceiling bounds the pool at whatever the server was last seen to allow or
+// to benefit from, which the cost model cannot derive because it assumes
+// perfect scaling. Everything else is planned from scratch, on this run's
+// files, which is what keeps a growing dataset from inheriting an old
+// deployment's answer (issue #212).
+func (t *tuning) applyCache(d autocache.Decision) {
+	if !d.Restores() {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if d.StreamBytesPerSecond > 0 {
+		t.link.StreamBytesPerSecond = d.StreamBytesPerSecond
+		t.link.ThroughputSource = autotune.SourceCached
+	}
+	t.ceiling = d.ConnectionCeiling
+}
+
+// clampConnections applies the inherited ceiling to a connection count, and
+// notes when it actually held one back. Every path that decides how many
+// connections files go over runs through here: the per-deployment plan and,
+// via session.setSpread, the runtime controller.
+func (t *tuning) clampConnections(n int) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.clampLocked(n)
+}
+
+// clampLocked is clampConnections with the lock already held.
+//
+// A number the user wrote is never clamped. The cache exists to fill in what
+// easySFTP would otherwise have to guess, and advanced.connections is not a
+// guess: explicit configuration wins over anything remembered, which is the
+// first thing issue #212 asks for.
+func (t *tuning) clampLocked(n int) int {
+	if t.fixed.Connections > 0 || t.ceiling <= 0 || n <= t.ceiling {
+		return n
+	}
+	t.capped = true
+	return t.ceiling
+}
+
+// observe folds one finished transfer into what this run knows about the link.
+// A transfer that is not a measurement (too short, too few bytes, or files too
+// small for a byte rate to be a bandwidth) is not one, and autotune.Measure is
+// the single place that judgement is made.
+func (t *tuning) observe(w autotune.Workload, bytes int64, window time.Duration, streams int) {
+	rate, ok := autotune.Measure(w, bytes, window, streams)
+	if !ok {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if bytes <= t.observedBytes {
+		return
+	}
+	t.observed, t.observedBytes = rate, bytes
+}
+
+// cacheObservation is what this run has to tell the next one: the shape it
+// deployed, what it measured about the path, what it ran with, and any bound
+// the server put on the pool.
+//
+// The ceiling is worked out here because this is the only place that can see
+// all three of its causes at once. A refusal is the server saying no outright,
+// and the number it granted is the answer. A step the runtime controller took
+// back is the server saying no in slower words: the growth was measured and it
+// did not pay. A run that was simply held at a ceiling it inherited learned
+// neither, and says so, so that the bound is carried forward as untested
+// rather than as fresh evidence.
+func (t *tuning) cacheObservation(runWork autotune.Workload, granted int, refused bool) autocache.Observation {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	link := t.link
+	link.StreamBytesPerSecond = t.observed
+	obs := autocache.Observation{
+		Workload: autocache.WorkloadOf(runWork),
+		Link:     autocache.LinkOf(link),
+		Settings: autocache.SettingsOf(t.effective),
+		Measured: t.observed > 0,
+	}
+	switch {
+	case refused:
+		obs.ConnectionCeiling = max(granted, 1)
+	case t.spreadDown > 0:
+		obs.ConnectionCeiling = max(t.finalSpread, 1)
+	case t.capped:
+		obs.CeilingUntested = true
+	}
+	return obs
+}
+
 // planFor resolves one deployment's transfer against the work it really has.
 // For sync that is the changed set the manifest just produced, not the tree
 // that was scanned.
@@ -160,6 +284,7 @@ func (t *tuning) planFor(w autotune.Workload) autotune.Settings {
 	defer t.mu.Unlock()
 	s := autotune.Plan(w, t.link, t.fixed)
 	s.RequestConcurrency = t.requests // fixed with the connection; see resolveRunWide
+	s.Connections = t.clampLocked(s.Connections)
 	if !t.haveInitial {
 		// The first transfer's choice is the one worth reporting as "what the
 		// policy picked": it is the decision taken purely from the plan and
@@ -261,6 +386,12 @@ func (t *tuning) report() {
 	// works out to over the measured RTT.
 	metrics.Set("link_stream_bytes_per_second", int64(t.link.StreamBytesPerSecond))
 	metrics.Set("link_bdp_bytes", t.link.BDPBytes())
+	// What this run's own transfers turned out to carry, per connection. It is
+	// a different number from the one above: that is what the pipelining was
+	// sized against (a prior, or something remembered), this is what actually
+	// happened, and it is zero for a deployment no byte rate could be read
+	// from (see autotune.Measure).
+	metrics.Set("link_observed_stream_bytes_per_second", int64(t.observed))
 }
 
 // planWorkload turns a set of planned files into the features the policy

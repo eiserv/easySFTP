@@ -82,6 +82,12 @@ advanced:
   # a number if yours does.
   connections: auto
   skip_unchanged: false # overlay only: skip same-size remote files
+  # Remember what easySFTP measured about this server (round-trip time,
+  # throughput, any connection limit it ran into) so the next run plans from a
+  # measurement instead of an assumption. Off unless a path is given, and on
+  # an ephemeral CI runner the file has to be kept between runs, e.g. with
+  # actions/cache. See docs/tuning.md.
+  # auto_cache: .easysftp-cache/auto.json
 
 # Remote permission and timestamp handling (all best-effort).
 permissions:

@@ -166,6 +166,7 @@ advanced:
   request_concurrency: auto
   connections: auto            # SSH connections uploads spread over
   skip_unchanged: false
+  # auto_cache: .easysftp-cache/auto.json   # off unless set; see below
 
 permissions:
   files: "0644"
@@ -224,6 +225,7 @@ sync:
 | `request_concurrency` | `auto` | Max in-flight SFTP requests per file (pipelining within one transfer). `auto` sizes it to the largest file and to what the whole set costs to hold in flight (see [transfer tuning](tuning.md)). |
 | `connections` | `auto` | SSH connections the parallel uploads spread over. Never more than `concurrency`. `auto` opens another one only while it would save more time than its handshake costs. See below. |
 | `skip_unchanged` | `false` | For `overlay`, skip a file whose remote counterpart has the same size (coarse; `sync` compares content hashes). |
+| `auto_cache` | unset (off) | Path to a file where easySFTP remembers what it measured about this server, so a later run can plan from a measurement instead of an assumption. Only affects settings left at `auto`. See below and [transfer tuning](tuning.md#remembering-what-it-measured). |
 
 ##### `connections`: more than one TCP flow
 
@@ -260,6 +262,39 @@ is not free:
 Pin a number when your host has a connection limit you already know, or when
 you measured something better than what `auto` picks. easySFTP's own numbers
 live in [`benchmarks/`](../benchmarks/README.md).
+
+##### `auto_cache`: keep what was measured
+
+`auto` has to guess one thing it cannot know before any bytes move: how fast
+the link actually is. `auto_cache` names a file where easySFTP writes what it
+measured instead, so the next run starts from the measurement.
+
+```yaml
+advanced:
+  auto_cache: .easysftp-cache/auto.json
+```
+
+On a GitHub-hosted runner the file has to be kept between runs, which
+`actions/cache` does:
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: .easysftp-cache
+    key: easysftp-auto-${{ github.repository }}
+- uses: eiserv/easySFTP@v3
+  with:
+    config: .github/easysftp.yml
+    password: ${{ secrets.SFTP_PASSWORD }}
+```
+
+The file holds no credentials and does not name the server (the target is
+stored as a fingerprint). It only ever affects settings left at `auto`; a
+number you wrote always wins. A missing, unreadable or outdated file costs at
+most a warning, never the deploy. [Transfer
+tuning](tuning.md#remembering-what-it-measured) explains what is stored, what
+is restored (a measurement, never a decision) and when a record stops being
+used.
 
 #### `permissions`
 

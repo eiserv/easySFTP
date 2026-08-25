@@ -187,6 +187,17 @@ type Config struct {
 	// issue #209.
 	Auto AutoSettings
 
+	// AutoCachePath, when set, is a local file where easySFTP remembers what
+	// it measured about this server, so the next run can plan from a
+	// measurement instead of its built-in assumption. Empty (the default)
+	// switches the cache off entirely: nothing is read and nothing is
+	// written.
+	//
+	// It only ever feeds settings left at "auto", and it only ever supplies
+	// inputs; the policy still decides. See internal/autocache, docs/tuning.md
+	// and issue #212.
+	AutoCachePath string
+
 	Retries      int
 	Timeout      time.Duration
 	SyncFastPath bool

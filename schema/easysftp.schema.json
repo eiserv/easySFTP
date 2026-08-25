@@ -167,6 +167,11 @@
         "skip_unchanged": {
           "description": "For overlay deployments, skip uploading a file when the remote file already exists with the same size (coarse; use mode sync for exact content comparison).",
           "type": "boolean"
+        },
+        "auto_cache": {
+          "description": "Path to a local file where easySFTP remembers what it measured about this server (round-trip time, per-connection throughput, any connection limit the server showed), so a later run can plan from a measurement instead of its built-in assumption. Unset (the default) switches the cache off. It only affects settings left at \"auto\", it never restores stored settings, and a stale or unreadable file costs a warning rather than the deploy. On ephemeral CI runners the file has to be persisted between runs, e.g. with actions/cache.",
+          "type": "string",
+          "minLength": 1
         }
       }
     },

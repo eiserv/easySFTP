@@ -18,6 +18,7 @@ import (
 
 	ignore "github.com/sabhiram/go-gitignore"
 
+	"github.com/eiserv/easySFTP/internal/autocache"
 	"github.com/eiserv/easySFTP/internal/config"
 	"github.com/eiserv/easySFTP/internal/metrics"
 )
@@ -69,6 +70,13 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	tune := newTuning(cfg)
 	defer tune.report()
 
+	// What an earlier run measured against this server, if the configuration
+	// named a file to keep it in. Read before anything else so a broken cache
+	// file is reported next to the run's other setup problems, and applied
+	// only much later, once the link probe has confirmed it still describes
+	// this path (issue #212).
+	cache := openAutoCache(cfg, log)
+
 	// Build the full local plan first so config/path errors surface before
 	// we touch the network.
 	endScan := metrics.Phase("local_scan")
@@ -106,7 +114,13 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	// both are sized here, against every deployment's plan, before the first
 	// handshake. Stage 2 (the link) happens inside newSession, stage 3 during
 	// each transfer.
-	tune.resolveRunWide(runWorkload(plans))
+	runWork := runWorkload(plans)
+	tune.resolveRunWide(runWork)
+
+	// The gates a cached record can face before the network is touched. The
+	// run-wide plan is both what a lookup is judged against and what a
+	// write-back stores as the anchor, so the two are the same kind of number.
+	cache.lookup(autocache.WorkloadOf(runWork))
 
 	endConnect := metrics.Phase("connect")
 	sess, err := newSession(ctx, cfg, tune, log)
@@ -117,6 +131,18 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	defer func() {
 		defer metrics.Phase("cleanup")()
 		sess.close()
+	}()
+
+	// Stage 2 has just measured this link, so the record can now be checked
+	// against it and, if it survives, handed to the policy before any
+	// deployment is planned. Everything this run learns goes back at the end,
+	// including from a run that fails: a refused connection is evidence about
+	// the server whether or not the deploy finished.
+	tune.applyCache(cache.confirm(tune.currentLink().RTT, log, cfg.Debug()))
+	defer func() {
+		granted, refused := sess.granted()
+		cache.report()
+		cache.save(tune.cacheObservation(runWork, granted, refused), log, cfg.Debug())
 	}()
 
 	keepaliveCtx, stopKeepalives := context.WithCancel(ctx)

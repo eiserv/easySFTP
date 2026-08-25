@@ -104,6 +104,7 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 	sess.setSpread(settings.Connections)
 	logTuning(cfg, sess, files, skipUnchanged, settings, log)
 
+	uploadStart := time.Now()
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(settings.Concurrency)
 	results := make([]int64, len(files))
@@ -173,6 +174,8 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 		})
 	}
 	runErr := g.Wait()
+	var sent int64
+	var sentFiles int
 	for i, n := range results {
 		switch {
 		case skipped[i]:
@@ -180,7 +183,18 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 		case completed[i]:
 			stats.FilesUploaded++
 			stats.BytesUploaded += n
+			sent += n
+			sentFiles++
 		}
+	}
+	if !cfg.DryRun {
+		// What this phase turned out to achieve, which is the one input the
+		// policy could not have before it started. It is kept for the *next*
+		// run (internal/autocache); within this one the controller has already
+		// acted on its own windows. A dry run moved no bytes and is skipped
+		// above: its results hold planned sizes, not transferred ones.
+		streams := min(sess.currentSpread(), settings.Concurrency, sentFiles)
+		sess.tune.observe(work, sent, time.Since(uploadStart), streams)
 	}
 	return completed, runErr
 }

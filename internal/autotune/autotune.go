@@ -74,6 +74,18 @@ import (
 	"time"
 )
 
+// PolicyVersion is the generation of this policy. Bump it whenever a change
+// here makes an observation taken by an older easySFTP no longer comparable:
+// a different definition of what counts as a measurement, a different meaning
+// for one of the Workload features, a different cost model.
+//
+// It exists for internal/autocache, which stores measurements taken under this
+// policy and must refuse the ones taken under another (issue #212). Adding a
+// constant, refitting one against a new sweep or changing a clamp does not
+// need a bump: those change what the policy decides, not what a stored
+// measurement means.
+const PolicyVersion = 1
+
 // Hard bounds on what the policy may choose. A user who writes a number gets
 // that number; these only ever bound "auto".
 const (

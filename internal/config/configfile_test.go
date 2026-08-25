@@ -204,3 +204,39 @@ func TestEditDistance(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigFileAutoCache: advanced.auto_cache is a path and nothing else, and
+// leaving it out keeps the cache off, which is what every run did before it
+// existed (issue #212).
+func TestConfigFileAutoCache(t *testing.T) {
+	const base = `version: 3
+connection:
+  host: h
+  username: u
+  allow_any_host_key: true
+deployments:
+  web:
+    source: a
+    target: /b
+`
+	cfg, err := loadFile(t, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AutoCachePath != "" {
+		t.Errorf("a file that does not mention the cache enabled it at %q", cfg.AutoCachePath)
+	}
+
+	cfg, err = loadFile(t, base+"advanced:\n  auto_cache: \"  .easysftp/auto.json  \"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AutoCachePath != ".easysftp/auto.json" {
+		t.Errorf("auto_cache = %q, want the trimmed path", cfg.AutoCachePath)
+	}
+
+	if _, err := loadFile(t, base+"advanced:\n  auto_cach: x\n"); err == nil ||
+		!strings.Contains(err.Error(), `did you mean "auto_cache"?`) {
+		t.Errorf("a typo next to auto_cache was not suggested against: %v", err)
+	}
+}

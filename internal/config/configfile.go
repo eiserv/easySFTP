@@ -70,6 +70,7 @@ type yamlAdvanced struct {
 	RequestConcurrency autoInt `yaml:"request_concurrency"`
 	Connections        autoInt `yaml:"connections"`
 	SkipUnchanged      bool    `yaml:"skip_unchanged"`
+	AutoCache          string  `yaml:"auto_cache"`
 }
 
 type yamlPermissions struct {
@@ -127,7 +128,7 @@ var allowedKeys = map[string][]string{
 	"defaults":         {"mode", "exclude"},
 	"deployments.*":    {"source", "target", "mode", "exclude"},
 	"safety":           {"max_deletes"},
-	"advanced":         {"retries", "timeout", "stall_timeout", "concurrency", "request_concurrency", "connections", "skip_unchanged"},
+	"advanced":         {"retries", "timeout", "stall_timeout", "concurrency", "request_concurrency", "connections", "skip_unchanged", "auto_cache"},
 	"permissions":      {"files", "directories", "preserve_times"},
 	"sync":             {"fast_path", "manifest"},
 }
@@ -365,6 +366,7 @@ func applyYAML(cfg *Config, yc *yamlConfig) error {
 		RequestConcurrency: yc.Advanced.RequestConcurrency.auto(),
 	}
 	cfg.SkipUnchanged = yc.Advanced.SkipUnchanged
+	cfg.AutoCachePath = strings.TrimSpace(yc.Advanced.AutoCache)
 
 	var err error
 	if cfg.FileMode, err = parseMode(yc.Permissions.Files, "permissions.files"); err != nil {

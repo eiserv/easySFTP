@@ -3,7 +3,7 @@
 | Document | What's in it |
 |---|---|
 | [Configuration reference](configuration.md) | Every input, output, exclude patterns and the YAML config file. |
-| [Transfer tuning](tuning.md) | What `auto` does for `connections`, `concurrency` and `request_concurrency`, and when to override it. |
+| [Transfer tuning](tuning.md) | What `auto` does for `connections`, `concurrency` and `request_concurrency`, when to override it, and how `advanced.auto_cache` carries a measurement to the next run. |
 | [Strategies](strategies.md) | `overlay` vs. `sync` vs. `clean`, the sync manifest, delete guards, dry runs. |
 | [Examples & use cases](examples.md) | Copy-paste recipes: static sites, mirroring, multi-target deploys, PR previews, outputs. |
 | [Security guide](security.md) | Host key pinning, credential handling, least privilege, supply-chain safety. |

@@ -74,7 +74,8 @@ assumption, `request_concurrency` stays on the rule above. Once a throughput
 has really been observed, the bandwidth-delay product is what sizes it: a long
 fat path is given every packet the channel window has, and a path that carries
 five kilobytes per round-trip is not asked to hold two megabytes of one file
-open for no reason.
+open for no reason. Which throughputs can reach that decision at all is
+bounded by when it has to be taken; see [Limits](#limits).
 
 ### 2. What the connection costs
 
@@ -167,6 +168,118 @@ needs files still waiting to be sent. The full decision is printed under
 `log-level: debug` (see "What you will see in the log"), and if the pool it
 chose is wrong for your server, `advanced.connections` overrides it.
 
+## Remembering what it measured
+
+Stage 3 exists because of one gap: nothing can observe a throughput before
+bytes move. Every run therefore starts from the conservative assumption, and
+every run that is large enough to correct it pays a window doing so. A run that
+is *not* large enough never corrects it at all.
+
+`advanced.auto_cache` closes that gap by keeping what a run measured:
+
+```yaml
+advanced:
+  auto_cache: .easysftp-cache/auto.json
+```
+
+It is off unless you name a path, and on an ephemeral CI runner the file has to
+be persisted between runs; the [configuration
+page](configuration.md#auto_cache-keep-what-was-measured) has the
+`actions/cache` snippet.
+
+### What is stored, and what is restored
+
+Those are two different lists, and the difference is the whole design.
+
+**Stored**, per server, in a small JSON file you can open:
+
+- the shape of the deploy the measurement was taken on (file count, bytes,
+  median and ninetieth-percentile file size, how many files are tiny),
+- the link: round-trip time, handshake, and the per-connection throughput,
+- the settings that run ended up using, and any connection limit it ran into,
+- the version of the tuning policy that measured it.
+
+**Restored**, on a hit:
+
+- the throughput, and
+- a connection ceiling, when an earlier run found one (the server refused an
+  extra connection, or a step that widened the pool measurably did not pay).
+
+**Never restored: the settings.** Choosing them is arithmetic over the plan and
+the link, it costs microseconds, and it is the part that has to describe
+*today's* deploy. So a hit hands the policy a better input and the policy
+decides again, from scratch, on the files in front of it. A deployment that has
+grown from 1,000 files to 5,000 gets a 5,000-file plan whatever the file says,
+because the file was never asked about the answer.
+
+The stored settings are there for you to read when a run picked a surprising
+number, not for easySFTP to replay.
+
+### When a record stops being used
+
+Before the first connection: the file is unreadable or from a newer easySFTP,
+the server is not in it, the policy version has changed, the measurement is
+older than 30 days, it has been reused 32 times without being taken again, or
+the deploy no longer looks like the one that was measured.
+
+After the first connection, and this is the strongest check of the lot: the
+round-trip time this run has *just measured* is compared with the one stored
+with the throughput. A path whose latency has moved by more than a factor of
+two is not the path that throughput came from, whatever the files look like. It
+costs nothing, because the probe runs anyway.
+
+Similarity is deliberately loose on size (a 980-file deploy reuses a
+1,000-file measurement, which is the point of a similarity rule) and strict on
+kind: a deploy of files too small to fill a stream and one of files that can
+are never comparable, because a byte rate measured on the first is a file rate
+in other units.
+
+### Why a slowly growing deploy does not keep hitting forever
+
+This is the failure mode a cache like this really has, and it does not need
+anything to go wrong to appear. A repository whose deploy grows a few per cent
+per run is, at every single step, almost identical to the run before it. A
+cache that asks "does this look like last time?" answers yes forever, and a
+hundred runs later it is still standing on something measured on a deploy a
+fraction of the current size. From inside, nothing ever looks wrong: every
+comparison it makes passes comfortably.
+
+Two things prevent it here.
+
+The first is that settings are never restored, so even a hit that should not
+have happened cannot preserve an old deploy's connection count.
+
+The second is what the comparison is made *against*. Each record is anchored to
+the deploy its measurement was taken on, and a run that merely uses a record
+does not move that anchor: only a run that measures the link for itself does,
+because only that run has something new to say. So the drift is measured from
+the measurement, it accumulates, and it eventually leaves the band, which is
+exactly what should happen. The same rule protects the round-trip time the
+record is validated against, so the link cannot creep either.
+
+A repository that really is growing keeps its cache working, because its larger
+runs measure the link again and re-anchor the record on what they measured.
+
+Nothing here is permanent. The connection ceiling is the one part that could
+quietly become configuration, since a run that inherits it never asks for more
+and so never finds out whether the limit is still there; it is carried at most
+16 runs before easySFTP asks again.
+
+### What you will see in the log
+
+A hit says what it is standing on and what it checked that against:
+
+```text
+auto tuning: reusing what an earlier run measured against this server (1.4 MiB/s per connection, reused 3 time(s) so far), checked against the link this run measured (13.4 ms now against 13.0 ms recorded)
+```
+
+A miss is a debug-level line naming the reason, because "the cache never seems
+to help" is a question with several different answers:
+
+```text
+auto tuning: not reusing the cached settings (this deploy no longer looks like the one that was measured (file count moved from 1e+03 to 4.2e+03))
+```
+
 ## Overriding it
 
 Every setting is resolved on its own, so you can pin one and leave the rest
@@ -254,11 +367,17 @@ knowing:
   workers, i.e. more than 64 files (see "What this stage cannot reach"). A
   smaller deployment on a link the assumption fits badly keeps the pool its
   plan chose for the whole transfer. It is bounded the same way, by a handful
-  of handshakes either way, but it is not corrected.
-- The bandwidth-delay product only sizes the pipelining once a throughput has
-  been observed, and nothing observes one before the first byte moves. Today
-  that means the conservative rule is what a normal run uses; the measured path
-  exists for the run that starts with a throughput it inherited.
+  of handshakes either way, but it is not corrected. `advanced.auto_cache` is
+  the way out of both limits: a remembered measurement is there before the
+  first file, so it reaches the deployments the runtime stage cannot.
+- **`request_concurrency` is outside the cache's reach.** It is baked into an
+  SFTP client when the client is created, so it has to be resolved before
+  there is a connection, and therefore before a remembered measurement can be
+  checked against the link this run is actually on. Restoring it there would
+  mean sizing the pipelining from evidence nothing had validated yet, so
+  easySFTP does not: it stays on the conservative rule above, and the
+  bandwidth-delay product still only sizes it from a throughput observed
+  during the transfer itself.
 
 If your deploy is slower than you expect, `log-level: debug` prints the whole
 decision, and [troubleshooting](troubleshooting.md) covers the failure modes

@@ -461,3 +461,80 @@ func TestGrowthNeedsFilesThatHaveNotStarted(t *testing.T) {
 		t.Error("with files queued behind the workers the pool must still be allowed to grow")
 	}
 }
+
+// TestMeasureJudgesAWholePhaseTheWayAWindowIsJudged. internal/autocache stores
+// what a run measured, and what counts as a measurement has to be the policy's
+// rule rather than the storage layer's, or the two would drift apart. This is
+// that rule, asked of a whole upload phase (issue #212).
+func TestMeasureJudgesAWholePhaseTheWayAWindowIsJudged(t *testing.T) {
+	tiny := autotune.Workload{
+		Uploads: 2000, UploadBytes: 8 * MiB,
+		LargestUpload: 4096, P50Upload: 4096, P90Upload: 4096, SmallUploads: 2000,
+	}
+
+	for _, tc := range []struct {
+		name    string
+		w       autotune.Workload
+		bytes   int64
+		window  time.Duration
+		streams int
+		want    float64
+	}{
+		{
+			name: "a real transfer over four connections",
+			w:    byteHeavy, bytes: 40 * MiB, window: 10 * time.Second, streams: 4,
+			// The aggregate is 4 MiB/s; what a *connection* carried, which is
+			// what the model is expressed in, is a quarter of that.
+			want: MiB,
+		},
+		{
+			name: "files too small for a byte rate to be a bandwidth",
+			w:    tiny, bytes: 8 * MiB, window: 10 * time.Second, streams: 4,
+		},
+		{
+			name: "over in a moment",
+			w:    byteHeavy, bytes: 40 * MiB, window: 100 * time.Millisecond, streams: 4,
+		},
+		{
+			name: "barely any bytes",
+			w:    byteHeavy, bytes: 64 * 1024, window: 10 * time.Second, streams: 4,
+		},
+		{
+			name: "nothing was carrying it",
+			w:    byteHeavy, bytes: 40 * MiB, window: 10 * time.Second, streams: 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := autotune.Measure(tc.w, tc.bytes, tc.window, tc.streams)
+			if ok != (tc.want > 0) {
+				t.Fatalf("Measure reported ok = %v, want %v", ok, tc.want > 0)
+			}
+			if got != tc.want {
+				t.Errorf("Measure = %.0f B/s, want %.0f", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBandwidthBoundReadsTheDistribution: the ninetieth percentile decides,
+// falling back to the largest file when a workload carries no distribution at
+// all. autocache asks the same question of a stored shape, so it is exported.
+func TestBandwidthBoundReadsTheDistribution(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		w    autotune.Workload
+		want bool
+	}{
+		{"a megabyte each", byteHeavy, true},
+		{"4 KiB each", autotune.Workload{Uploads: 100, P90Upload: 4096, LargestUpload: 4096}, false},
+		{"small files with a few archives", autotune.Workload{Uploads: 100, P90Upload: 2 * MiB, LargestUpload: 8 * MiB}, true},
+		{"no distribution, one big file", autotune.Workload{Uploads: 1, LargestUpload: 8 * MiB}, true},
+		{"nothing at all", autotune.Workload{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := autotune.BandwidthBound(tc.w); got != tc.want {
+				t.Errorf("BandwidthBound = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

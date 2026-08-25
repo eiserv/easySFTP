@@ -136,6 +136,44 @@ discriminating. **Changing a constant in `internal/autotune` means running that
 test**, and a new stored sweep that fails it means the policy needs refitting,
 not that the test needs relaxing.
 
+## Remembering a measurement between runs (`internal/autocache`)
+
+`advanced.auto_cache` names a local file where a run records what it measured
+about its server, so the next run plans from a measurement instead of from the
+prior. It is off unless the config file names a path, and it is the one place
+where a decision made in an earlier run can reach this one. Four rules keep
+that from turning into stale configuration (issue #212):
+
+1. **Settings are stored but never restored.** `autotune.Plan` is pure and
+   costs microseconds, so memoizing its output would save nothing and would
+   preserve an answer for a deploy that no longer exists. What a hit supplies
+   is an *input*: the per-connection throughput (as `autotune.SourceCached`,
+   which a runtime measurement of the transfer still outranks) and a
+   connection ceiling the cost model cannot derive, because it assumes perfect
+   scaling.
+2. **Records are anchored.** A record describes the workload its measurement
+   was taken on, and a run that only *uses* a record rewrites neither that
+   anchor nor the stored link; only a run that measures the link itself does
+   (`Store.Update`). Comparing each run against the one before it would hit
+   forever for a dataset that grows a per cent at a time, which is the failure
+   mode this whole package is shaped around.
+   `internal/autocache/drift_test.go` replays both readings over the same
+   sequence of deploys and is the acceptance test for it.
+3. **The RTT measured now is the validation.** `Candidate.Validate` compares
+   the probe's answer against the record's. It costs nothing (the probe runs
+   anyway) and it is the only gate backed by a measurement taken today.
+4. **A ceiling is let go.** A pool capped at a remembered limit never asks for
+   more and so never finds out whether the limit is still there, so an
+   untested ceiling is carried at most `MaxCeilingCarry` runs.
+
+Two more things to know before changing anything here. `request_concurrency`
+is deliberately outside the cache's reach: it is baked into an SFTP client at
+creation, so it must be resolved before there is a connection and therefore
+before a record can be checked against the link. And `autotune.PolicyVersion`
+is bumped when a change makes an older stored *measurement* mean something
+different (a different definition of what counts as one, a different meaning
+for a workload feature), not merely when it changes what the policy decides.
+
 ## Testing quirks
 
 - `internal/uploader/testserver_test.go` runs an in-process SSH/SFTP server

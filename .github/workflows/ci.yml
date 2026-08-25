@@ -308,6 +308,8 @@ jobs:
             echo '    source: ./selftest-docs/'
             echo '    target: /upload/cfg-docs/'
             echo '    mode: clean'
+            echo 'advanced:'
+            echo '  auto_cache: selftest-cache/auto.json'
           } > selftest-config.yml
           cat selftest-config.yml
 
@@ -328,6 +330,37 @@ jobs:
             exit 1
           fi
           [ "${{ steps.cfgfile.outputs.files-uploaded }}" = "3" ]
+
+      # The auto-tuning cache (issue #212) end to end. Unit tests cover the
+      # record's rules against an in-process server that is a socket away and
+      # can therefore never produce a throughput; what only a real run can show
+      # is that the file is written at all, in a directory that did not exist,
+      # and that it carries the link the probe measured. A second deploy must
+      # update that one record rather than file another.
+      - name: Verify the auto-tuning cache was written
+        run: |
+          cat selftest-cache/auto.json
+          jq -e '.version == 1
+                 and (.records | length) == 1
+                 and .records[0].policy_version >= 1
+                 and .records[0].workload.files == 3
+                 and .records[0].link.rtt_ms > 0
+                 and .records[0].link.handshake_ms > 0
+                 and .records[0].settings.connections >= 1' selftest-cache/auto.json
+          # An atomic write leaves no debris next to the file; the whole
+          # directory is what a CI cache would carry between runs.
+          [ "$(ls selftest-cache | wc -l)" = "1" ]
+
+      - name: Deploy via config file again
+        uses: ./
+        with:
+          password: demopass
+          config: selftest-config.yml
+
+      - name: Verify the second run reused the same record
+        run: |
+          cat selftest-cache/auto.json
+          jq -e '(.records | length) == 1 and .records[0].workload.files == 3' selftest-cache/auto.json
 
       # sync round-trip against a real OpenSSH server: manifest written,
       # read back on the next run, deletions tracked, unchanged files skipped.

@@ -399,13 +399,44 @@ func (c *Controller) measuredLink(p Progress, rate float64) Link {
 // file, so a tree of small files with a few archives in it, where the bytes
 // really do come from files that can fill a stream, still gets a runtime
 // correction.
-func (c *Controller) bandwidthBound() bool {
-	size := c.workload.P90Upload
+func (c *Controller) bandwidthBound() bool { return BandwidthBound(c.workload) }
+
+// BandwidthBound reports whether a transfer of this workload produces a byte
+// rate that says something about the link's bandwidth. See the comment on
+// Controller.bandwidthBound for why the answer is not simply "it moved bytes",
+// and internal/autocache, which asks the same question of a stored shape
+// before reusing what was measured on it.
+func BandwidthBound(w Workload) bool {
+	size := w.P90Upload
 	if size == 0 {
 		// A workload with no distribution: the largest file is all there is.
-		size = c.workload.LargestUpload
+		size = w.LargestUpload
 	}
 	return size > packetBytes
+}
+
+// Measure turns one finished transfer into a per-connection throughput, or
+// reports that the transfer was not a measurement of the link at all.
+//
+// It is the same judgement Controller makes on one of its windows, asked of a
+// whole phase instead: enough time, enough bytes, and files large enough for a
+// byte rate to be a bandwidth. The aggregate is divided by the streams that
+// were really carrying files, not by the pool size, for the reason
+// Controller.measuredLink gives.
+//
+// A phase includes what a window deliberately excludes (the ramp-up, the tail
+// where most workers have finished), so this is the more conservative of the
+// two numbers. That is the right direction for something that will be stored
+// and reused: a throughput remembered slightly low costs a handshake, one
+// remembered high costs a pool that is too small for the work.
+func Measure(w Workload, bytes int64, window time.Duration, streams int) (float64, bool) {
+	switch {
+	case !BandwidthBound(w):
+		return 0, false
+	case bytes < minWindowBytes || window < minObservation || streams < 1:
+		return 0, false
+	}
+	return float64(bytes) / window.Seconds() / float64(streams), true
 }
 
 // remaining is the workload the run still has in front of it. For a settled
