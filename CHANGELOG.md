@@ -5,6 +5,20 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0](https://github.com/eiserv/easySFTP/compare/v3.6.0...v3.7.0) (2026-08-25)
+
+
+### Features
+
+* **tuning:** remember a measurement between runs, never a decision ([#221](https://github.com/eiserv/easySFTP/issues/221)) ([3369935](https://github.com/eiserv/easySFTP/commit/3369935eeba91c05905e73a1e2bea72c4a074c62)), closes [#212](https://github.com/eiserv/easySFTP/issues/212)
+* **uploader:** model workload shape and let auto take a step back ([#216](https://github.com/eiserv/easySFTP/issues/216)) ([77e6a22](https://github.com/eiserv/easySFTP/commit/77e6a22945b4f0d42d4e86d5be2f0af05a9858b5))
+
+
+### Bug Fixes
+
+* **uploader:** do not read a coarse SFTP status as a refusal ([#219](https://github.com/eiserv/easySFTP/issues/219)) ([6492b98](https://github.com/eiserv/easySFTP/commit/6492b98c47647656e3e6c3f5dbc1127a03b3eda7)), closes [#152](https://github.com/eiserv/easySFTP/issues/152)
+* **uploader:** stop counting on a runtime step no transfer can use ([#220](https://github.com/eiserv/easySFTP/issues/220)) ([e778124](https://github.com/eiserv/easySFTP/commit/e778124503b6fcafb5ccdfc34f9091135b431733)), closes [#217](https://github.com/eiserv/easySFTP/issues/217)
+
 ## [3.6.0](https://github.com/eiserv/easySFTP/compare/v3.5.0...v3.6.0) (2026-08-21)
 
 
