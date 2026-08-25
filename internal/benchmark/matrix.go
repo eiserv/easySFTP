@@ -350,9 +350,19 @@ func matrixAuto(runs []RunRecord, cells []schema.Cell) []schema.Auto {
 			MaxMS:       stats.Or(stats.Max(stats.Nums(durations)), 0),
 			MadMS:       stats.Mad(durations),
 			Chosen:      chosen,
-			Workload:    workload,
-			MiBPerS:     stats.MiBPerS(bytes, median),
-			FilesPerS:   stats.Ratio(files, median),
+
+			// What the pool turned out to be. Chosen.Connections is the
+			// spread the policy stood behind; these are the slots a file was
+			// handed to and the handshakes paid for them, which is not the
+			// same number when the spread moved after the last file had
+			// started (issue #217).
+			ConnectionsOpened:  stats.Median(counterValues(ms, "connections_opened")),
+			ConnectionsUsed:    stats.Median(counterValues(ms, "connections_used")),
+			ConnectionsRefused: stats.Median(counterValues(ms, "connections_refused")),
+
+			Workload:  workload,
+			MiBPerS:   stats.MiBPerS(bytes, median),
+			FilesPerS: stats.Ratio(files, median),
 		}
 
 		// Scored against the candidate build only: a regret against a baseline

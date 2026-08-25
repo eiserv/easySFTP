@@ -379,3 +379,85 @@ func TestAByteRateIsOnlyEvidenceWhenTheFilesCanFillAStream(t *testing.T) {
 		t.Error("600 MiB left over a link measured this slow is worth another connection")
 	}
 }
+
+// TestTheControllerStandsDownWhereItCannotBeCashed is issue #217. A spread
+// change re-points the files that have not been handed to a connection yet, so
+// a deployment with as many workers as files has nothing for it to re-point:
+// every file takes its connection when its worker starts, which is before the
+// first window can close.
+//
+// The stored 'mixed' sweep is the case. 56 files, 56 workers, six connections
+// chosen up front and a runtime step to eight that no transfer ever read: the
+// run reported connections=8 and took what six connections take.
+func TestTheControllerStandsDownWhereItCannotBeCashed(t *testing.T) {
+	mixed := autotune.Workload{
+		Uploads: 56, UploadBytes: 12 * MiB,
+		LargestUpload: 2 * MiB, P50Upload: 64 * KiB, P90Upload: MiB,
+	}
+
+	t.Run("as many workers as files", func(t *testing.T) {
+		c := autotune.NewController(mixed,
+			autotune.Settings{Connections: 6, Concurrency: 56, RequestConcurrency: 16},
+			house, autotune.Fixed{})
+		stopped, why := c.Stopped()
+		if !stopped {
+			t.Fatal("a deployment that starts every file at once has no queue for a wider pool to serve")
+		}
+		if !strings.Contains(why, "as many workers as files") {
+			t.Errorf("reason = %q, want it to name the worker count", why)
+		}
+		if _, ok := c.Observe(autotune.Progress{
+			Elapsed: 2 * time.Second, Uploaded: 20, Remaining: 36,
+			RemainingBytes: 8 * MiB, UploadedBytes: 4 * MiB,
+		}); ok {
+			t.Error("a stopped controller reported a change the transfer could not use")
+		}
+	})
+
+	// The same payload behind fewer workers does have a queue, and the runtime
+	// stage is worth running: this is what keeps the stop above from being a
+	// blanket switch-off.
+	t.Run("a queue behind the workers", func(t *testing.T) {
+		c := autotune.NewController(mixed,
+			autotune.Settings{Connections: 1, Concurrency: 8, RequestConcurrency: 16},
+			house, autotune.Fixed{})
+		if stopped, why := c.Stopped(); stopped {
+			t.Fatalf("48 files queued behind 8 workers is work a wider pool can take: %s", why)
+		}
+		if _, ok := c.Observe(autotune.Progress{
+			Elapsed: 2 * time.Second, Uploaded: 8, Remaining: 48,
+			RemainingBytes: 10 * MiB, UploadedBytes: 2 * MiB,
+		}); !ok {
+			t.Error("a stream this slow with 40 files still queued must widen the pool")
+		}
+	})
+}
+
+// TestGrowthNeedsFilesThatHaveNotStarted is the same rule inside a running
+// phase. A pool may not grow into the tail of a deployment whose remaining
+// files are all already in flight, however many of them there are: they are
+// bound to the connections they started on and cannot be moved.
+func TestGrowthNeedsFilesThatHaveNotStarted(t *testing.T) {
+	c := autotune.NewController(byteHeavy, start, house, autotune.Fixed{})
+
+	// 64 workers and 64 files left: the queue is empty even though the phase
+	// still has a tenth of its bytes to move.
+	if change, ok := c.Observe(autotune.Progress{
+		Elapsed: 2 * time.Second, Uploaded: 936, Remaining: 64,
+		RemainingBytes: 64 * MiB, UploadedBytes: 100 * MiB,
+	}); ok {
+		t.Errorf("the pool grew into files that are all already on a connection: %+v", change)
+	}
+	if c.Settings().Connections != start.Connections {
+		t.Errorf("connections = %d, want the pre-transfer choice left alone", c.Settings().Connections)
+	}
+
+	// One more file than there are workers, and the same window is worth
+	// acting on again.
+	if _, ok := c.Observe(autotune.Progress{
+		Elapsed: 4 * time.Second, Uploaded: 940, Remaining: 500,
+		RemainingBytes: 500 * MiB, UploadedBytes: 200 * MiB,
+	}); !ok {
+		t.Error("with files queued behind the workers the pool must still be allowed to grow")
+	}
+}

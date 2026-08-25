@@ -180,6 +180,21 @@ type Auto struct {
 	// did rather than what the script believes it does.
 	Chosen Chosen `json:"chosen"`
 
+	// What the pool actually was, next to what Chosen says it was set to. A
+	// cell has carried these since #190; an auto row did not, and that is what
+	// let the stored 'mixed' sweep report eight connections for a transfer six
+	// of them carried (issue #217).
+	//
+	// ConnectionsUsed counts the pool slots a file was really handed to and
+	// ConnectionsOpened the handshakes behind them. Below Chosen.Connections
+	// they mean the spread moved after the last file had already taken its
+	// connection, or, with ConnectionsRefused above zero, that the server would
+	// not give the run what it asked for. Null for every result stored before
+	// this block read them.
+	ConnectionsOpened  *float64 `json:"connections_opened,omitzero"`
+	ConnectionsUsed    *float64 `json:"connections_used,omitzero"`
+	ConnectionsRefused *float64 `json:"connections_refused,omitzero"`
+
 	// Workload is what the policy was looking at when it chose (issue #209).
 	// Null for the sweeps stored before the policy existed, where "auto" was a
 	// fixed 1/4/16 and there was nothing to record.

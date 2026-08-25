@@ -30,6 +30,14 @@
 //     not pay for itself is taken back: the connections stay open, the files
 //     that are left simply stop being handed to them. See controller.go.
 //
+// Stage 3 only reaches work that has not started. A worker takes its connection
+// when it picks up its file and keeps it until that file is done, so a wider
+// pool is offered to the queue behind the workers and never to a transfer
+// already running. The worker count is the item count (capped), which means a
+// deployment of at most MaxConcurrency files starts every one of them at once
+// and has no queue at all: stage 1 is the whole decision there, and Controller
+// stands down instead of moving a number nothing reads (issue #217).
+//
 // # Why connections are the interesting knob
 //
 // Concurrency is free: a worker with no file to upload never starts, so the

@@ -192,6 +192,7 @@ candidate build, and scores it against the grid:
 | `chosen` | the `connections`, `concurrency` and `request_concurrency` the run ended up using, read from its own counters rather than assumed |
 | `chosen.initial_*`, `chosen.changes` | what the policy picked before the transfer taught it anything, and how many times it moved the connection spread while the transfer ran; equal to `chosen` on a run the runtime stage left alone |
 | `chosen.spread_increases`, `chosen.spread_decreases`, `chosen.final_connections` | which way those changes went and where the run settled. A growth step that does not pay for itself is taken back without closing anything (issue #215), so the plain `connections` above is a high-water mark and this is the number the last deployment ran on |
+| `connections_opened`, `connections_used`, `connections_refused` | what the pool actually was: the handshakes the run paid, the slots a file was really handed to, and whether the server turned one down. A cell has carried these since #190; an auto row did not, which is how a spread nothing read could pass for a configuration that was measured (issue #217) |
 | `workload` | the features the policy was looking at: `files`, `bytes`, `largest_bytes`, `probes`, the shape of the set (`p50_bytes`, `p90_bytes`, `small_files`, the files that fit in one 32 KiB write packet), and the link it measured itself (`rtt_ms`, `handshake_ms`, and `stream_bytes_per_second` / `bdp_bytes` where a throughput was known) |
 | `median_ms`, `min_ms`, `max_ms`, `mad_ms`, `durations_ms`, `mib_per_s`, `files_per_s` | the same statistics a cell carries |
 | `best` | the fastest candidate cell of that scenario and profile |
@@ -205,7 +206,7 @@ a different measurement from `link.probes[]`, which comes from `cmd/linkprobe`
 and never goes through the uploader. Both are kept, because the interesting case
 is the one where they disagree.
 
-Four things about it:
+Five things about it:
 
 - **It is not a cell.** `auto` does not sit at a coordinate, it chooses one, so
   it stays out of `cells[]`, `scaling[]`, `comparison[]` and the CSV. A build
@@ -223,6 +224,15 @@ Four things about it:
   measured from its first byte, so there is nothing in it for the controller to
   react to. What `chosen.changes` records is that the controller acted; whether
   it acted well shows up in `median_ms` and nowhere else.
+- **`chosen.connections` is a setting, `connections_used` is an outcome.** A
+  file takes its connection when its worker picks it up and keeps it for the
+  whole transfer, so a spread raised after the last file started is a number no
+  transfer read. Where `connections_used` is below `chosen.connections` the
+  control cell is not the same configuration as the `auto` run and the regret
+  next to it is not measuring the policy: that is what the `mixed` row of
+  `matrix-20260821T123508Z-v3.6.0` turned out to be (issue #217). easySFTP no
+  longer takes such a step, so the two should now agree unless the server
+  refused a connection.
 
 The policy itself lives in `internal/autotune` (issues #209 and #215), and its own test
 replays it against every sweep committed here and fails when the regret goes

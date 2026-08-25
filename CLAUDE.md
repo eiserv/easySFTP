@@ -120,6 +120,17 @@ The three stages and where they run:
 | 2, link | `newSession` via `probeLink` | the handshake it just paid, and an RTT from three `SSH_FXP_REALPATH` round-trips |
 | 3, runtime | `startTuningController` inside `uploadFiles` | the throughput the transfer is actually achieving |
 
+Stage 3 only reaches work that has not started (issue #217). A worker takes its
+connection in `session.acquire` when it picks up its file and keeps it for that
+file's whole transfer, so a spread change re-points the queue behind the workers
+and nothing else. Since `concurrency` is the item count capped at 64, a
+deployment of at most 64 files has no queue at all: `autotune.NewController`
+stops before a goroutine is started, `startTuningController` logs why at debug
+level, and stage 1 is the whole decision. That is also why `config_connections`
+(the spread the policy stood behind) and `connections_used` (the slots a file
+was really handed to) are different questions, and the benchmark's `auto[]`
+block records both.
+
 An overlay deployment with `advanced.skip_unchanged` is the case stage 1 cannot
 settle: the upload set is decided file by file while the run goes. It is
 planned as metadata only (`Workload.Unknown`), which is what keeps a redeploy

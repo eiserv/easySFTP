@@ -280,6 +280,29 @@ func changeSummary(c schema.Chosen) string {
 	return fmt.Sprintf("%s (+%s/-%s)", total, raw(c.SpreadIncreases), raw(c.SpreadDecreases))
 }
 
+// carriedSummary renders what the pool actually was: the slots a file was
+// handed to over the handshakes paid for them, flagged when that is short of
+// what the run reported picking.
+//
+// The two numbers are not decoration. An auto row whose Carried is below its
+// Picked did not run at its own coordinates, which makes the control cell next
+// to it a comparison between two different configurations; that is exactly how
+// the stored 'mixed' sweep came to read 30% slower than "the same" cell
+// (issue #217).
+func carriedSummary(a schema.Auto) string {
+	if a.ConnectionsUsed == nil && a.ConnectionsOpened == nil {
+		return "-"
+	}
+	out := raw(a.ConnectionsUsed) + "/" + raw(a.ConnectionsOpened)
+	if a.ConnectionsUsed != nil && a.Chosen.Connections != nil && *a.ConnectionsUsed < *a.Chosen.Connections {
+		out += " (short)"
+	}
+	if a.ConnectionsRefused != nil && *a.ConnectionsRefused > 0 {
+		out += " refused " + raw(a.ConnectionsRefused)
+	}
+	return out
+}
+
 func (m Matrix) autoCost(b *buf) {
 	b.line("")
 	b.line("### What `auto` costs (policy regret)")
@@ -288,8 +311,8 @@ func (m Matrix) autoCost(b *buf) {
 	// a bare string here as a format.
 	b.line("%s", "One run per scenario and profile with `connections`, `concurrency` and `request_concurrency` all set to `auto`, on the candidate build, measured next to the cells it is scored against. `Picked` is read out of the run's own counters, so it is what easySFTP did and not what this script assumes; `Best` is the fastest cell of the same scenario and profile. `Regret` is the gap between them: how much slower the policy is than the settings a sweep would have chosen. A policy within ~15% on every profile is defensible, one that only wins on the house line is not (issue #184, phase 5; the policy itself is #209).")
 	b.line("")
-	b.line("| Scenario | Profile | Picked (conn/conc/req) | Started at | Changes | auto | Best cell | Best | Regret | Same cell in grid |")
-	b.line("|---|---|---|---|---|---|---|---|---|---|")
+	b.line("| Scenario | Profile | Picked (conn/conc/req) | Started at | Changes | Carried | auto | Best cell | Best | Regret | Same cell in grid |")
+	b.line("|---|---|---|---|---|---|---|---|---|---|---|")
 	for _, a := range m.Result.Auto {
 		best := "-"
 		bestMS := "-"
@@ -302,15 +325,15 @@ func (m Matrix) autoCost(b *buf) {
 		if a.ChosenInGrid {
 			inGrid = raw(a.ChosenCellMedianMS) + " ms"
 		}
-		b.line("| %s | %s | %s/%s/%s | %s/%s/%s | %s | %s ms | %s | %s | %s | %s |",
+		b.line("| %s | %s | %s/%s/%s | %s/%s/%s | %s | %s | %s ms | %s | %s | %s | %s |",
 			a.Scenario, a.LinkProfile,
 			raw(a.Chosen.Connections), raw(a.Chosen.Concurrency), raw(a.Chosen.RequestConcurrency),
 			raw(a.Chosen.InitialConnections), raw(a.Chosen.InitialConcurrency), raw(a.Chosen.InitialRequestConcurrency),
-			changeSummary(a.Chosen),
+			changeSummary(a.Chosen), carriedSummary(a),
 			num(a.MedianMS), best, bestMS, percent(a.RegretPercent), inGrid)
 	}
 	b.line("")
-	b.line("`Started at` is what the policy chose before the transfer taught it anything, and `Changes` how many times it moved the connection spread while the transfer ran, as `total (+up/-down)`: a step back leaves the connections open and hands the remaining files to fewer of them (issue #215). When the two coordinate columns agree, the run was decided entirely up front. The last column is the same coordinates measured as an ordinary cell. It is a control, not a result: a large gap between it and the `auto` column means the two runs saw different conditions, and then the regret next to it is drift rather than policy. Where it says \"not swept\", the settings easySFTP picked are not on this grid at all.")
+	b.line("`Started at` is what the policy chose before the transfer taught it anything, and `Changes` how many times it moved the connection spread while the transfer ran, as `total (+up/-down)`: a step back leaves the connections open and hands the remaining files to fewer of them (issue #215). When the two coordinate columns agree, the run was decided entirely up front. `Carried` is how many pool slots a file was actually handed to, and the handshakes behind them, marked `(short)` where that is fewer than `Picked`: a file takes its connection when its worker picks it up, so a spread raised after the last file had started is a number no transfer read (issue #217). The last column is the same coordinates measured as an ordinary cell. It is a control, not a result: a large gap between it and the `auto` column means the two runs saw different conditions, or, where `Carried` is short of `Picked`, that the two are not the same configuration after all. Where it says \"not swept\", the settings easySFTP picked are not on this grid at all.")
 	m.autoWorkload(b)
 }
 

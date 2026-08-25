@@ -494,6 +494,11 @@ func (p *uploadProgress) snapshot(elapsed time.Duration, refused bool) autotune.
 // help. The returned function stops the watcher and must be called before the
 // phase ends.
 //
+// For many deployments there is nothing to watch, and the controller says so
+// before a goroutine is started: the settings are pinned, the pool is already
+// at its ceiling, or the deployment hands every file to a connection the
+// moment it starts (issue #217, and see autotune.NewController).
+//
 // Only the pool moves; see the comment on autotune.Controller for why the
 // other two settings are already where they belong. Both directions go through
 // session.setSpread, which points the next files at a different number of
@@ -506,7 +511,15 @@ func (p *uploadProgress) snapshot(elapsed time.Duration, refused bool) autotune.
 // them (autotune.Controller.bandwidthBound).
 func startTuningController(ctx context.Context, sess *session, w autotune.Workload, start autotune.Settings, prog *uploadProgress, log Logger) func() {
 	ctrl := autotune.NewController(w, start, sess.tune.currentLink(), sess.tune.fixed)
-	if stopped, _ := ctrl.Stopped(); stopped {
+	if stopped, why := ctrl.Stopped(); stopped {
+		// A stage that never runs and a stage that ran and changed nothing
+		// leave the same counters behind, so the difference has to be said out
+		// loud somewhere. Debug level, because the answer is "the plan was the
+		// whole decision" and that is what the plan line above already says
+		// (issue #217).
+		if why != "" && sess.cfg.Debug() {
+			log.Infof("auto tuning: no runtime changes this deployment (%s)", why)
+		}
 		return func() {}
 	}
 	done := make(chan struct{})

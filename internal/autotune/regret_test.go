@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -41,6 +42,12 @@ import (
 // configuration measured from its first byte, so there is nothing in it for
 // the runtime controller to react to; what the controller adds is on top of
 // the numbers below, not in them.
+//
+// It also cannot score a coordinate the grid does not contain. nearest snaps to
+// the closest measured neighbour, ties going up, so a choice between two swept
+// values is credited with one of them; snapNote prints the bracket, and where
+// that bracket is wide the percentage next to it is not a measurement of the
+// policy (issue #217).
 //
 // When this fails after a policy change, read the per-scenario table it
 // prints: it names the cell the policy chose, the cell that won, and the two
@@ -88,10 +95,10 @@ func TestPolicyRegretAgainstStoredSweeps(t *testing.T) {
 				gap := time.Duration(at.MedianMS-best.MedianMS) * time.Millisecond
 				regret := at.MedianMS/best.MedianMS - 1
 
-				t.Logf("%-16s chose %d/%d/%s -> %s, best %d/%d/%s -> %s, regret %+.1f%%",
+				t.Logf("%-16s chose %d/%d/%s -> %s, best %d/%d/%s -> %s, regret %+.1f%%%s",
 					group.scenario, chosen.Connections, chosen.Concurrency, request(chosen.RequestConcurrency),
 					ms(at.MedianMS), best.Connections, best.Concurrency, requestOf(best.RequestConcurrency),
-					ms(best.MedianMS), regret*100)
+					ms(best.MedianMS), regret*100, group.snapNote(chosen, at))
 
 				if regret > regretTarget && gap > trivialGap {
 					t.Errorf("%s: the policy is %.1f%% (%s) behind the fastest cell, over the %.0f%% target",
@@ -292,6 +299,36 @@ func (g cellGroup) best() schema.Cell {
 // closest this replay can get to what the run would have done.
 func (g cellGroup) nearest(s autotune.Settings) (schema.Cell, bool) {
 	conns := axis(g.cells, func(c schema.Cell) int { return c.Connections })
+	return g.cellAt(snap(conns, s.Connections), s)
+}
+
+// snapNote says what a scored row is hiding when the policy's connection count
+// is not on the grid: which cell it was actually scored at, and what the cell
+// below the choice measured.
+//
+// It is a log line rather than a rule because the replay has no better answer
+// available, but a reader has to know it is reading one. The stored 'mixed'
+// sweep is why: 6 connections on a grid of 1/2/4/8 snapped up to the 8 column
+// and came out 1.3% behind the best cell, while the run really measured at
+// those settings was 30% behind it (issue #217). The bracket makes that gap
+// visible without inventing a number for a coordinate nobody swept.
+func (g cellGroup) snapNote(s autotune.Settings, at schema.Cell) string {
+	conns := axis(g.cells, func(c schema.Cell) int { return c.Connections })
+	if slices.Contains(conns, s.Connections) {
+		return ""
+	}
+	note := fmt.Sprintf("  [%d connections were not swept; scored at %d", s.Connections, at.Connections)
+	if lower, ok := largestBelow(conns, s.Connections); ok {
+		if cell, found := g.cellAt(lower, s); found {
+			note += fmt.Sprintf(", %d took %s", lower, ms(cell.MedianMS))
+		}
+	}
+	return note + "]"
+}
+
+// cellAt is the measured cell at one connection count, with the other two axes
+// snapped to values the grid has.
+func (g cellGroup) cellAt(connections int, s autotune.Settings) (schema.Cell, bool) {
 	concs := axis(g.cells, func(c schema.Cell) int { return c.Concurrency })
 	var requests []int
 	for _, c := range g.cells {
@@ -301,7 +338,7 @@ func (g cellGroup) nearest(s autotune.Settings) (schema.Cell, bool) {
 	}
 	requests = dedup(requests)
 
-	wantConn, wantConc := snap(conns, s.Connections), snap(concs, s.Concurrency)
+	wantConn, wantConc := connections, snap(concs, s.Concurrency)
 	var wantRequest *int
 	if len(requests) > 0 {
 		r := snap(requests, s.RequestConcurrency)
@@ -341,6 +378,18 @@ func dedup(values []int) []int {
 	}
 	sort.Ints(out)
 	return out
+}
+
+// largestBelow is the largest measured value strictly under want, which is the
+// neighbour a choice cannot claim the benefit of.
+func largestBelow(values []int, want int) (int, bool) {
+	best, found := 0, false
+	for _, v := range values {
+		if v < want && (!found || v > best) {
+			best, found = v, true
+		}
+	}
+	return best, found
 }
 
 func snap(values []int, want int) int {

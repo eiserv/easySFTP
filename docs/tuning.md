@@ -143,6 +143,30 @@ out that most files *are* changing, the ratio it observes in its first window
 tells it, and the pool widens: that correction is about how much work there
 turned out to be, so it applies whatever the files look like.
 
+#### What this stage cannot reach
+
+A file takes its connection when a worker picks it up and keeps it until that
+file is done. So what a change to the pool re-points is the *queue* behind the
+workers: the files that have not started yet. Nothing already transferring
+moves, in either direction.
+
+That decides when this stage matters at all. `concurrency` is the number of
+files being sent, capped at 64, so **a deployment of 64 files or fewer starts
+every one of them at once** and has no queue. Its pool is settled before the
+first byte moves and stays where the plan put it: there is nothing a new
+connection could be handed, and easySFTP stands the stage down rather than
+moving a number no transfer reads. With `log-level: debug` the run says so:
+
+```text
+auto tuning: no runtime changes this deployment (there are as many workers as files, so every file takes its connection at the start and the pool cannot grow into this deployment)
+```
+
+For those deployments stages 1 and 2 are the whole decision, and that includes
+a small `advanced.skip_unchanged` redeploy: the correction described just above
+needs files still waiting to be sent. The full decision is printed under
+`log-level: debug` (see "What you will see in the log"), and if the pool it
+chose is wrong for your server, `advanced.connections` overrides it.
+
 ## Overriding it
 
 Every setting is resolved on its own, so you can pin one and leave the rest
@@ -226,6 +250,11 @@ knowing:
   corrects the assumption. The cost of that is bounded by the handshakes
   themselves, which on a fast link are cheap, and a step that did not help is
   taken back within a window.
+- That correction is only available to deployments with more files than
+  workers, i.e. more than 64 files (see "What this stage cannot reach"). A
+  smaller deployment on a link the assumption fits badly keeps the pool its
+  plan chose for the whole transfer. It is bounded the same way, by a handful
+  of handshakes either way, but it is not corrected.
 - The bandwidth-delay product only sizes the pipelining once a throughput has
   been observed, and nothing observes one before the first byte moves. Today
   that means the conservative rule is what a normal run uses; the measured path

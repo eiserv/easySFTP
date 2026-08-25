@@ -31,6 +31,13 @@ import (
 //     to be long enough, see enough files and carry enough bytes, and a byte
 //     rate is only read as a bandwidth when the files were large enough to
 //     produce one (issue #215, stage 6, and see bandwidthBound).
+//   - Neither direction reaches a file that is already on a connection. A
+//     worker takes its connection when it picks up its file and keeps it until
+//     that file is done, so what a spread change re-points is the *queue*
+//     behind the workers. A deployment whose worker count covers every file
+//     has no queue: it is decided before the first window closes, and this
+//     controller says so rather than reporting a step nobody could cash
+//     (issue #217, and see queued).
 //   - Concurrency never moves. Plan already sizes it to the number of
 //     independent items, which is the largest value that can ever be busy;
 //     there is nothing for a hill climb to find.
@@ -88,6 +95,11 @@ type Progress struct {
 	// have not. RemainingBytes is the planned size of those, which for an
 	// unsettled workload (skip_unchanged) is an upper bound rather than a
 	// promise.
+	//
+	// Remaining is the work that is left, not the work a wider pool could be
+	// given: most of it is already in flight on the connections it started on.
+	// What is still assignable is Remaining minus the workers, which is what
+	// Controller.queued computes (issue #217).
 	Uploaded       int
 	Skipped        int
 	Remaining      int
@@ -151,6 +163,11 @@ func NewController(w Workload, start Settings, l Link, f Fixed) *Controller {
 		c.stop("the pool is already at the policy maximum")
 	case start.Concurrency <= 1:
 		c.stop("only one file is in flight, so a second connection has nobody to serve")
+	case start.Concurrency >= w.Items():
+		// Every item starts at once, so every one of them is bound to a
+		// connection before this controller has seen anything. Growing the
+		// spread would move a number that no transfer reads (issue #217).
+		c.stop("there are as many workers as files, so every file takes its connection at the start and the pool cannot grow into this deployment")
 	}
 	return c
 }
@@ -246,15 +263,17 @@ func (c *Controller) Observe(p Progress) (Change, bool) {
 		}
 	}
 
-	if p.Remaining <= c.current.Connections {
-		// Fewer files left than connections in use: a new one would finish its
-		// handshake with nothing to carry. Checked after the validation above,
-		// so a step that has already been taken is still judged.
+	queued := c.queued(p)
+	if queued <= c.current.Connections {
+		// Nothing waiting behind the workers: every file that is left is
+		// already on the connection it started on, so a new one would finish
+		// its handshake with nothing to carry. Checked after the validation
+		// above, so a step that has already been taken is still judged.
 		return none, false
 	}
 
 	want := Plan(c.remaining(p), c.measuredLink(p, rate), c.fixed)
-	grown := min(want.Connections, c.current.Connections*growthFactor, MaxConnections, c.current.Concurrency, p.Remaining)
+	grown := min(want.Connections, c.current.Connections*growthFactor, MaxConnections, c.current.Concurrency, queued)
 	if grown <= c.current.Connections {
 		return none, false
 	}
@@ -263,6 +282,25 @@ func (c *Controller) Observe(p Progress) (Change, bool) {
 	c.current.Connections = grown
 	change.To = c.current
 	return change, true
+}
+
+// queued is how much of the work that is left a wider pool could still be
+// given: the files that have not been handed to a connection yet.
+//
+// A worker takes its connection when it picks up its file and keeps it for that
+// file's whole transfer, so a growth step re-points the queue and never a
+// transfer in flight. The upload loop keeps its workers full while anything is
+// left, which puts min(remaining, workers) files in flight and leaves the
+// difference queued behind them.
+//
+// Before issue #217 this read Remaining, the files that have not *finished*,
+// and so counted transfers that could not be moved as work a new connection
+// might take. That is how the stored 'mixed' sweep came to report a growth step
+// it never cashed: 56 files and 56 workers, every one of them bound to one of
+// six connections before the first window closed, and a spread raised to eight
+// that nothing ever read.
+func (c *Controller) queued(p Progress) int {
+	return max(p.Remaining-c.current.Concurrency, 0)
 }
 
 // eligible reports whether this report closes a window worth deciding on: long

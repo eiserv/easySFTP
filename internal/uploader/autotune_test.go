@@ -515,3 +515,92 @@ func TestTheLinkProbeMeasuresAServerFasterThanTheClock(t *testing.T) {
 		t.Errorf("RTT %v is longer than the whole handshake %v, which cannot be right", link.RTT, link.Handshake)
 	}
 }
+
+// TestAWiderPoolOnlyReachesFilesThatHaveNotStarted is the mechanism behind
+// issue #217, in the one place it lives: a file takes its connection in
+// session.acquire, once, when its worker picks it up, and keeps it for the
+// whole transfer. Raising the spread therefore points the *next* acquire
+// somewhere else and cannot move a byte of what is already running.
+//
+// The stored 'mixed' sweep is what that costs when it goes unnoticed. Its 56
+// files run under 56 workers, so all 56 are bound before the controller's first
+// window closes; the step from six connections to eight was recorded as a
+// change, dialed nothing, and the run took what six connections take while
+// reporting eight.
+func TestAWiderPoolOnlyReachesFilesThatHaveNotStarted(t *testing.T) {
+	srv := startTestServer(t)
+	cfg := autoConfig(srv)
+	tune := newTuning(cfg)
+	tune.resolveRunWide(autotune.Workload{Uploads: 56, UploadBytes: 12 << 20, LargestUpload: 2 << 20})
+
+	sess, err := newSession(context.Background(), cfg, tune, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.close()
+
+	// Six files handed out over the two connections the deployment started on.
+	sess.setSpread(2)
+	for i := range 6 {
+		if client, _, _ := sess.acquire(i); client == nil {
+			t.Fatalf("acquire(%d) returned no client", i)
+		}
+	}
+	bound := atomic.LoadInt32(&srv.accepted)
+	if bound != 2 {
+		t.Fatalf("the server saw %d connection(s) for a spread of 2, want 2", bound)
+	}
+
+	// The growth step the runtime stage would take. Nothing is dialed, because
+	// there is no file left to dial it for.
+	if got := sess.setSpread(4); got != 4 {
+		t.Fatalf("setSpread(4) = %d, want the pool to widen", got)
+	}
+	if got := atomic.LoadInt32(&srv.accepted); got != bound {
+		t.Errorf("widening the spread dialed %d connection(s) with every file already bound, want none", got-bound)
+	}
+
+	// And the same step lands the moment there is a file that has not started.
+	for i := 6; i < 8; i++ {
+		if client, _, _ := sess.acquire(i); client == nil {
+			t.Fatalf("acquire(%d) returned no client", i)
+		}
+	}
+	if got := atomic.LoadInt32(&srv.accepted); got != bound+2 {
+		t.Errorf("the server saw %d connection(s) after two more files, want %d: growth reaches the queue and only the queue",
+			got, bound+2)
+	}
+}
+
+// TestTheRuntimeStageDoesNotStartWhereItCannotHelp is the answer to that from
+// the policy's side: a deployment with as many workers as files is decided by
+// the plan alone, and a run that says so under debug is a run whose counters
+// can be believed (issue #217).
+func TestTheRuntimeStageDoesNotStartWhereItCannotHelp(t *testing.T) {
+	srv := startTestServer(t)
+	local := t.TempDir()
+	poolTree(t, local, 6)
+
+	cfg := autoConfig(srv)
+	cfg.LogLevel = config.LogDebug
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	stats, err := Run(context.Background(), cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FilesUploaded != 6 {
+		t.Fatalf("uploaded %d file(s), want 6", stats.FilesUploaded)
+	}
+	line, ok := findLine(log.infos, "no runtime changes this deployment")
+	if !ok {
+		t.Fatalf("a deployment the runtime stage cannot move must say so at debug level: %v", log.infos)
+	}
+	if !strings.Contains(line, "as many workers as files") {
+		t.Errorf("the reason does not name the cause: %s", line)
+	}
+	if _, ok := findLine(log.infos, "raising connections"); ok {
+		t.Errorf("a deployment with no queue reported a growth step: %v", log.infos)
+	}
+}

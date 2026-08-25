@@ -195,6 +195,59 @@ func TestAutoIsNotACell(t *testing.T) {
 	}
 }
 
+// TestAutoRecordsWhatCarriedTheTransfer is issue #217. The spread the policy
+// stood behind and the connections a file was really handed to are two
+// different numbers, and only the second one describes the transfer that was
+// measured. A cell has carried connections_opened/connections_used since #190;
+// without them on the auto row, a growth step no transfer could use reads
+// exactly like one that worked, and the control cell next to it silently
+// compares two different configurations.
+func TestAutoRecordsWhatCarriedTheTransfer(t *testing.T) {
+	// The stored 'mixed' shape: six connections chosen, a runtime step to eight
+	// taken after all 56 files had already taken their connection, six
+	// connections carrying the whole transfer.
+	autoRun := run("mixed", "candidate", 1, 15842, metrics(nil, map[string]float64{
+		"config_connections": 8, "config_concurrency": 56, "config_request_concurrency": 16,
+		"auto_initial_connections": 6, "auto_changes": 1, "auto_final_connections": 8,
+		"connections_opened": 6, "connections_used": 6, "connections_refused": 0,
+	}))
+	cell := func(conns int, duration float64) RunRecord {
+		conc := 56
+		r := run("mixed", "candidate", 1, duration, metrics(nil, map[string]float64{
+			"config_connections": float64(conns), "config_concurrency": float64(conc),
+			"config_request_concurrency": 16,
+		}))
+		r.Connections, r.Concurrency = &conns, &conc
+		return r
+	}
+
+	in := &Inputs{Runs: []RunRecord{cell(4, 15400), cell(8, 12478)}, Auto: []RunRecord{autoRun}}
+	result := BuildMatrix(&Manifest{Kind: schema.BenchmarkMatrix, ReferenceLabel: "candidate", Grid: &ManifestGrid{}}, in)
+
+	if len(result.Auto) != 1 {
+		t.Fatalf("got %d auto rows, want 1", len(result.Auto))
+	}
+	a := result.Auto[0]
+	if got := stats.Or(a.ConnectionsUsed, 0); got != 6 {
+		t.Errorf("connections_used = %v, want the 6 slots the run handed a file to", got)
+	}
+	if got := stats.Or(a.ConnectionsOpened, 0); got != 6 {
+		t.Errorf("connections_opened = %v, want the 6 handshakes the run paid", got)
+	}
+	if got := stats.Or(a.ConnectionsRefused, 0); got != 0 {
+		t.Errorf("connections_refused = %v, want 0: the server refused nothing here", got)
+	}
+	// And the gap is readable: the run reported eight and eight is on this grid,
+	// so the control fires against a cell the transfer never ran at.
+	if stats.Or(a.Chosen.Connections, 0) != 8 || !a.ChosenInGrid {
+		t.Fatalf("chosen = %v (in grid: %v), want the reported 8 found on the grid",
+			stats.Or(a.Chosen.Connections, 0), a.ChosenInGrid)
+	}
+	if stats.Or(a.ConnectionsUsed, 0) >= stats.Or(a.Chosen.Connections, 0) {
+		t.Error("the two numbers agree, so this row would not show the mismatch it exists to show")
+	}
+}
+
 // TestBestOnTheLargestSweptValueIsReported is the honesty check the auto-config
 // work rests on: an optimum sitting on the edge of an axis was cut off, not
 // measured. An axis with a single swept value has no edge and is not reported.
