@@ -158,12 +158,44 @@ const (
 	tailShare = 0.1
 
 	// assumedStreamBytesPerSecond is the per-connection throughput Plan
-	// assumes while nothing has been measured yet. It is deliberately low.
+	// assumes while nothing has been measured yet.
+	//
+	// Fitted, like every other constant here, rather than guessed: it was set
+	// to 1 MiB/s and called conservative, while the only link the project has
+	// ever measured reports a single-stream control of 0.36 to 0.39 MiB/s,
+	// stable across four releases (issue #230). W is divided by this number,
+	// so a prior 2.8x too high understates the work, understates
+	// k = sqrt(W/H), and opens fewer connections than the link would reward.
+	//
+	// Replaying the policy over every stored sweep, varying only this value:
+	//
+	//	assumed        mean regret   worst regret
+	//	1 MiB/s              3.91%         24.40%
+	//	0.75 MiB/s           3.62%         14.44%
+	//	0.5 MiB/s            3.38%         14.44%
+	//	0.375 MiB/s          3.36%         14.44%
+	//	0.35 MiB/s           3.36%         14.44%
+	//	0.25 MiB/s           3.42%         14.44%
+	//	0.1875 MiB/s         4.61%         22.12%
+	//	0.125 MiB/s          5.77%         32.08%
+	//
+	// The whole 0.25 to 0.75 MiB/s range holds the worst case inside the 15%
+	// budget, so the choice is not balanced on one number; the flat optimum is
+	// 0.35 to 0.45. This sits just under the lowest measured control, which is
+	// the conservative side to be on: under-estimating throughput errs toward
+	// one more connection, and the scaling data says that is the cheaper
+	// direction to be wrong in.
+	//
+	// Caveat worth carrying with the number: one host, one 13 ms path, and
+	// shaping.available is false in all 15 stored results. A prior fitted to a
+	// single measured link beats one fitted to nothing and is not a general
+	// answer.
+	//
 	// The number is only used to ask "is this run long enough to be worth
 	// another handshake", the answer is checked against the throughput the
 	// run really achieves as soon as it has one (see Controller), and the
 	// damage a wrong guess can do is bounded by MaxConnections handshakes.
-	assumedStreamBytesPerSecond = 1 << 20 // 1 MiB/s
+	assumedStreamBytesPerSecond = 360 << 10 // 0.35 MiB/s
 
 	// fallbackRTT and fallbackHandshake stand in when the probe could not
 	// measure the link at all (a server that refuses SSH_FXP_REALPATH, say).

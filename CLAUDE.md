@@ -142,6 +142,17 @@ planned as metadata only (`Workload.Unknown`), which is what keeps a redeploy
 that changed three files from paying for a pool, and stage 3 widens it if the
 observed ratio says most files really are being sent.
 
+`assumedStreamBytesPerSecond` is the one input the model cannot measure before
+it decides, and since issue #230 it is fitted like everything else here: 0.35
+MiB/s, just under the 0.36 to 0.39 MiB/s single-stream control the stored
+results record, replacing a 1 MiB/s guess that was 2.8x above it. `W` is divided
+by it, so a prior that is too high understates the work, understates
+`k = sqrt(W/H)` and opens too few connections. Replaying every stored sweep,
+worst-case regret falls from 24.4% to 14.4% and the whole 0.25 to 0.75 MiB/s
+range stays inside the 15% budget, so the number is not balanced on a knife
+edge. Carry the caveat with it: one host, one 13 ms path, `shaping.available`
+false in every stored result.
+
 `internal/autotune/regret_test.go` is the acceptance test issue #209 asks for:
 it replays the policy over every sweep committed under `benchmarks/matrix/`
 with at least three repeats and fails when the regret against the best measured
@@ -189,6 +200,20 @@ that from turning into stale configuration (issue #212):
 4. **A ceiling is let go.** A pool capped at a remembered limit never asks for
    more and so never finds out whether the limit is still there, so an
    untested ceiling is carried at most `MaxCeilingCarry` runs.
+
+What the cache is worth, measured. Replaying every stored sweep with a *perfect*
+cache (the sweep's own single-stream control handed to `Plan` as
+`SourceCached`) against no cache at all: on the old 1 MiB/s prior it moved mean
+regret 3.91% to 3.38% and worst 24.4% to 14.4%; on the refitted prior it moves
+mean 3.36% to 3.38% and worst 14.4% to 14.4%. In other words the throughput
+half of this package was earning its keep by compensating for a badly chosen
+default, and on the data this repository has it now adds nothing. That is not
+an argument to delete it: the measured corpus is one host on one unshaped
+13 ms path, a real server-specific measurement still beats any fixed prior on a
+link that differs from it, and the connection ceiling a record carries is
+information the cost model cannot derive at all (it assumes perfect scaling).
+It is an argument not to reach for the cache to fix a number the prior should
+be fixing. See issue #230.
 
 Two more things to know before changing anything here. `request_concurrency`
 is deliberately outside the cache's reach: it is baked into an SFTP client at

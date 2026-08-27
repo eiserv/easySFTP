@@ -46,8 +46,11 @@ func TestPlanChoosesPerWorkload(t *testing.T) {
 		{
 			name: "many small files",
 			w:    autotune.Workload{Uploads: 300, UploadBytes: 300 * 4 * KiB, LargestUpload: 4 * KiB},
-			want: autotune.Settings{Connections: 4, Concurrency: 64, RequestConcurrency: 16},
-			why:  "the stored 'small' sweep is fastest at 4 connections and flat past 32 workers",
+			want: autotune.Settings{Connections: 5, Concurrency: 64, RequestConcurrency: 16},
+			why: "the stored 'small' sweep is fastest at 4 connections and flat past 32 workers; " +
+				"5 is between two swept columns (4 and 8) and the replay scores it at 4, " +
+				"the same 5.0/4.5/4.9 second medians, so refitting the throughput prior " +
+				"in #230 moved this by one connection into a gap the grid cannot separate",
 		},
 		{
 			name: "very many small files",
@@ -196,10 +199,19 @@ func TestAnUnmeasuredLinkFallsBackInsteadOfDividingByZero(t *testing.T) {
 // connections than the same files over the conservative prior are, and a link
 // measured as fast is worth fewer.
 func TestMeasuredThroughputMovesTheDecision(t *testing.T) {
-	w := autotune.Workload{Uploads: 60, UploadBytes: 12 * MiB, LargestUpload: 2 * MiB}
+	// Both fixtures moved when #230 refitted the throughput prior from 1 MiB/s
+	// to the measured 0.35 MiB/s, and both moved because the refit did what it
+	// was meant to do.
+	//
+	// The workload is smaller because 12 MiB now puts the *prior* at
+	// MaxConnections, where a slower measurement has nowhere left to go; this
+	// one leaves the prior at 6, off the ceiling, so the ordering can be read.
+	// And "slow" has to be genuinely below the prior: 300 KiB/s is no longer
+	// slower than what Plan already assumes.
+	w := autotune.Workload{Uploads: 60, UploadBytes: 4 * MiB, LargestUpload: 2 * MiB}
 
 	slow := house
-	slow.StreamBytesPerSecond = 300 * KiB
+	slow.StreamBytesPerSecond = 100 * KiB
 	fast := house
 	fast.StreamBytesPerSecond = 50 * MiB
 
