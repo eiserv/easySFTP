@@ -504,6 +504,13 @@ If results are ever moved by hand, `KIND=reindex go run ./cmd/easysftp-bench sto
 rebuilds `index.json`, `trend.csv` and `latest.*` from whatever is on disk
 without storing anything new.
 
+This directory is `export-ignore`d in [`.gitattributes`](../.gitattributes), so
+it is absent from the tarball `git archive` produces and therefore from the
+download every `uses: eiserv/easySFTP@v3` job pays for. It is fully present in
+every clone and every `actions/checkout`, which is what the benchmark and
+analysis workflows use, so nothing that reads the corpus is affected. Keep the
+rule in mind when adding a path that the action itself needs at run time.
+
 ## Running a benchmark
 
 The **`SFTP benchmark`** workflow

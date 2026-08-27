@@ -10,3 +10,10 @@ LICENSE text eol=lf
 # Bash reads these verbatim; CRLF would break the version parser on Windows runners.
 *.sh text eol=lf
 .easysftp-version text eol=lf
+
+# The stored benchmark corpus is repository history, not part of the action.
+# Every consumer of `uses: eiserv/easySFTP@v3` downloads the tarball GitHub
+# builds with `git archive`, and export-ignore keeps 2.0 MB of measurements
+# out of it. CI checks the repository out rather than exporting it, so the
+# corpus stays fully available to the benchmark and analysis workflows.
+benchmarks/ export-ignore
