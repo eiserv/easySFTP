@@ -28,6 +28,24 @@ jobs:
         if: runner.os == 'Linux'
         run: shellcheck scripts/*.sh
 
+      # AGENTS.md and CLAUDE.md were two copies of the same working notes and
+      # drifted by 179 lines before anyone noticed (issue #231). AGENTS.md is a
+      # pointer now, and this keeps it one: a file that grows back into a
+      # duplicate is a file that will silently go stale again.
+      - name: AGENTS.md is a pointer, not a copy
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          lines=$(wc -l < AGENTS.md)
+          if [ "$lines" -gt 40 ]; then
+            echo "::error file=AGENTS.md::AGENTS.md is $lines lines. It must stay a pointer to CLAUDE.md, not a second copy of the working notes (issue #231)."
+            exit 1
+          fi
+          if ! grep -q 'CLAUDE.md' AGENTS.md; then
+            echo "::error file=AGENTS.md::AGENTS.md must point at CLAUDE.md."
+            exit 1
+          fi
+
       - name: Test action launcher modes and validation
         shell: bash
         run: bash scripts/test-action.sh

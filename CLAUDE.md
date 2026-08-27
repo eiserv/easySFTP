@@ -8,6 +8,11 @@ Style note: avoid em-dashes in anything written here (code comments, error
 messages, docs, PR and issue text). Use a comma, semicolon, colon, or
 parentheses instead. The generated `CHANGELOG.md` is exempt. See issue #79.
 
+`AGENTS.md` is a pointer to this file, not a second copy: it used to be one and
+drifted 179 lines behind, still documenting a benchmark harness deleted in #190
+(issue #231). Everything an automated session needs goes here. `ci.yml` fails
+if `AGENTS.md` grows back into a duplicate.
+
 ## What this project is (and isn't)
 
 easySFTP is a GitHub Action for SFTP deploys: connect, plan, upload, optional
