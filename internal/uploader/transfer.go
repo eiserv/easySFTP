@@ -25,6 +25,13 @@ import (
 // rename stays on one filesystem and is atomic.
 const tmpSuffix = ".easysftp-tmp"
 
+// bakSuffix names the short-lived copy of the live file that the non-atomic
+// publish path parks the target under while it renames the upload into place.
+// It sits inside the tmpSuffix family on purpose, so isTempFileName recognises
+// it and the stale-temp sweep collects one that an interrupted run left
+// behind. See renameReplaceViaBackup.
+const bakSuffix = tmpSuffix + ".bak"
+
 // transferEnv carries the invariants that every level of the upload call chain
 // re-threads to the next (the session, the stall watchdog, the logger and the
 // two warn-once flags). It is built once in uploadFiles and passed down, so
@@ -294,7 +301,7 @@ const posixRenameExt = "posix-rename@openssh.com"
 
 // renameReplace atomically moves tmp onto final. It prefers the
 // posix-rename@openssh.com extension (a true atomic overwrite) and falls back
-// to a plain remove+rename for servers that do not support it.
+// to renameReplaceViaBackup for servers that do not support it.
 func renameReplace(client *sftp.Client, tmp, final string) error {
 	err := client.PosixRename(tmp, final)
 	if err == nil {
@@ -304,10 +311,71 @@ func renameReplace(client *sftp.Client, tmp, final string) error {
 	if !posixRenameUnsupported(err, announced) {
 		return err
 	}
-	// note: non-atomic fallback, a brief window where final is missing.
-	// Only reached on servers lacking posix-rename; unavoidable there.
-	_ = client.Remove(final)
-	return client.Rename(tmp, final)
+	return renameReplaceViaBackup(client, tmp, final)
+}
+
+// renameReplaceViaBackup publishes tmp over final on a server that does not
+// implement posix-rename, without ever being in a state where the live file is
+// gone and nothing has replaced it.
+//
+// The obvious spelling, remove(final) then rename(tmp, final), has a window
+// that is not the one the comment here used to claim was unavoidable. A window
+// where final is briefly *missing* is unavoidable without the extension. A
+// window where final is *lost* is not: if the remove succeeds and the rename
+// then fails, the live file is gone, the replacement is not there, and the
+// error returned is the rename's. The causes of that second failure are
+// ordinary rather than exotic (the filesystem filled up between the two calls,
+// a quota was hit, the directory's permissions changed, the connection
+// dropped, another process took the name), and they are most likely on exactly
+// the appliance, embedded and managed-hosting servers this path exists for.
+//
+// So: park the live file under a backup name, move the upload into place, drop
+// the backup. The window where final is missing shrinks to a single rename,
+// and a failure at any step leaves the original content reachable. See
+// issue #242.
+func renameReplaceViaBackup(client *sftp.Client, tmp, final string) error {
+	backup := final + bakSuffix
+
+	// A backup an interrupted run left behind would make the park below fail
+	// on a server whose rename refuses an existing target, which is the same
+	// class of server that brought us here. Removing it is best effort: if it
+	// is still there afterwards the park fails and nothing has been touched.
+	_ = client.Remove(backup)
+
+	parked := false
+	switch err := client.Rename(final, backup); {
+	case err == nil:
+		parked = true
+	case errors.Is(err, os.ErrNotExist):
+		// Nothing live to protect: this is the first upload of this path.
+	default:
+		// A server answering "not there" with a generic status code looks the
+		// same as one refusing the rename, so ask it directly (issue #152).
+		// Anything that is not absence is a refusal, and a refusal must not
+		// cost the live file.
+		absent, aerr := remoteAbsent(client, final, nil)
+		if aerr != nil {
+			return aerr
+		}
+		if !absent {
+			return fmt.Errorf("could not move the existing file aside: %w", err)
+		}
+	}
+
+	if err := client.Rename(tmp, final); err != nil {
+		if !parked {
+			return err
+		}
+		if rerr := client.Rename(backup, final); rerr != nil {
+			return fmt.Errorf("%w; restoring the previous file from %s also failed: %v", err, backup, rerr)
+		}
+		return err
+	}
+
+	// Best effort. A leftover backup is swept by sweepStaleTemps once it is
+	// old enough, which is why bakSuffix lives in the tmpSuffix family.
+	_ = client.Remove(backup)
+	return nil
 }
 
 // posixRenameUnsupported reports whether a failed posix-rename@openssh.com
@@ -363,16 +431,18 @@ var staleTempMaxAge = time.Hour
 
 // isTempFileName reports whether name looks like a temporary upload file this
 // action writes: "<name>.easysftp-tmp.<n>" for a file upload (n being the
-// plan index, see uploadFile) or "<name>.easysftp-tmp" for a manifest write
-// (see writeManifest). The suffix is always appended to an existing name, so
-// a file named exactly ".easysftp-tmp" (i == 0) is not one of ours.
+// plan index, see uploadFile), "<name>.easysftp-tmp" for a manifest write
+// (see writeManifest), or "<name>.easysftp-tmp.bak" for the copy the
+// non-atomic publish path parks a live file under (see
+// renameReplaceViaBackup). The suffix is always appended to an existing name,
+// so a file named exactly ".easysftp-tmp" (i == 0) is not one of ours.
 func isTempFileName(name string) bool {
 	i := strings.LastIndex(name, tmpSuffix)
 	if i <= 0 {
 		return false
 	}
 	rest := name[i+len(tmpSuffix):]
-	if rest == "" {
+	if rest == "" || rest == ".bak" {
 		return true
 	}
 	if rest[0] != '.' || len(rest) < 2 {

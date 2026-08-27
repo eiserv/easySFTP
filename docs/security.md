@@ -125,8 +125,11 @@ behind; delete the old file manually.
 ## Temporary upload files in web roots
 
 Uploads stream into a temporary sibling file (`<name>.easysftp-tmp.<n>`) that
-is renamed over the target on success. A run killed hard (cancelled workflow,
-job timeout, reclaimed runner) can leave such files behind, and until the
+is renamed over the target on success. On a server without
+`posix-rename@openssh.com` the live file is briefly parked under
+`<name>.easysftp-tmp.bak` while that rename happens, so it can be put back if
+the rename fails. A run killed hard (cancelled workflow, job timeout,
+reclaimed runner) can leave either kind of file behind, and until the
 next deploy sweeps them (see
 [troubleshooting.md](troubleshooting.md#replacing-path--or-leftover-easysftp-tmp-files))
 a partially written copy of the file sits in the target, served over HTTP
@@ -135,13 +138,13 @@ MIME handling. Deny the pattern in the web server, next to the manifest rule
 above. nginx:
 
 ```nginx
-location ~ \.easysftp-tmp(\.\d+)?$ { deny all; }
+location ~ \.easysftp-tmp(\.\d+|\.bak)?$ { deny all; }
 ```
 
 Apache (vhost or `.htaccess`):
 
 ```apache
-<FilesMatch "\.easysftp-tmp(\.[0-9]+)?$">
+<FilesMatch "\.easysftp-tmp(\.[0-9]+|\.bak)?$">
     Require all denied
 </FilesMatch>
 ```

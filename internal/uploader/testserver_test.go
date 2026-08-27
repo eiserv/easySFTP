@@ -434,6 +434,40 @@ func (f *faultyRename) PosixRename(r *sftp.Request) error {
 	return errors.New("injected rename failure")
 }
 
+// faultyPublishRename fails the rename that publishes an upload over target,
+// while letting the rename that puts a backup back succeed. That is what makes
+// the non-atomic publish path testable: it parks the live file under
+// "<final>.easysftp-tmp.bak", renames the upload onto the final name, and
+// rolls the backup back if that fails, so a test has to fail the middle step
+// only (issue #242).
+//
+// Every attempt is failed rather than just the first, so a retry cannot
+// quietly turn the test green.
+type faultyPublishRename struct {
+	inner  sftp.FileCmder
+	target string
+}
+
+// withFailPublishRename makes every plain rename onto target fail, except one
+// coming from the backup name. Give it after withFailPosixRename so the server
+// reaches the fallback in the first place.
+func withFailPublishRename(target string) serverOption {
+	return func(s *testServer) {
+		s.handlers.FileCmd = &faultyPublishRename{inner: s.handlers.FileCmd, target: target}
+	}
+}
+
+func (f *faultyPublishRename) Filecmd(r *sftp.Request) error {
+	if r.Method == "Rename" && r.Target == f.target && !strings.HasSuffix(r.Filepath, bakSuffix) {
+		return errors.New("injected publish rename failure")
+	}
+	return f.inner.Filecmd(r)
+}
+
+func (f *faultyPublishRename) PosixRename(r *sftp.Request) error {
+	return posixRenamePassthrough(f.inner, r)
+}
+
 // faultyPosixRename wraps a FileCmder and answers every posix-rename request
 // with one fixed error while leaving plain "Rename" working, simulating a
 // server that does not implement posix-rename@openssh.com. The request server

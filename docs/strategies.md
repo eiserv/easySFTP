@@ -31,7 +31,10 @@ Uploads are **atomic per file**: content is streamed to a temporary sibling
 file (`<name>.easysftp-tmp.<n>`, `<n>` being the file's position in the plan so
 two planned transfers never share a temp name) and renamed over the target
 only once the transfer fully succeeded. A broken connection never leaves a
-half-written file where the live one was.
+half-written file where the live one was. Servers without
+`posix-rename@openssh.com` cannot do that swap in one step, so easySFTP parks
+the live file under `<name>.easysftp-tmp.bak` first and puts it back if the
+rename fails: the target is briefly missing there, but never lost.
 
 ### `advanced.skip_unchanged`: skip same-size files
 

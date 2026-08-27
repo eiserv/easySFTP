@@ -174,16 +174,19 @@ appears to work.
 ### `replacing "<path>": ...` or leftover `.easysftp-tmp` files
 
 easySFTP uploads to a temporary sibling file (named `<path>.easysftp-tmp.<n>`)
-and renames it over the target (atomic on servers supporting the
-`posix-rename@openssh.com` extension, with a remove+rename fallback
-otherwise). A hard kill mid-upload (a cancelled workflow past its grace
-period, a job timeout, a reclaimed runner) can leave such a file behind; it
-is safe to delete manually.
+and renames it over the target. On a server supporting the
+`posix-rename@openssh.com` extension that rename is atomic. Without it, the
+live file is first moved aside to `<path>.easysftp-tmp.bak`, the upload is
+renamed into place, and the backup is removed; if the rename fails, the backup
+is put back, so a failed publish never costs you the file it was replacing.
+A hard kill mid-upload (a cancelled workflow past its grace period, a job
+timeout, a reclaimed runner) can leave either file behind; both are safe to
+delete manually.
 
 If **every** overwrite fails this way while new files upload fine, the server
 is refusing the rename rather than lacking the extension: easySFTP only falls
-back to remove+rename on a server that does not offer atomic rename, and never
-removes a live file to retry a rename the server has already declined. Check
+back to the move-aside path on a server that does not offer atomic rename, and
+never removes a live file to retry a rename the server has already declined. Check
 write permissions on the existing target files and any policy on the server
 that forbids replacing them. See
 [what easySFTP needs from a server](providers.md#what-easysftp-needs-from-a-server).
@@ -196,8 +199,8 @@ is ever listed or touched. The age margin keeps the sweep from deleting a
 concurrently running deploy's in-progress upload. The sweep intentionally
 runs in every mode, `overlay` included, and is on by default: even though
 overlay never deletes your files, the sweep only ever removes the action's
-own `*.easysftp-tmp` / `*.easysftp-tmp.<n>` debris, never a file it did not
-name itself. A real file of yours that happens to carry such a name is part
+own `*.easysftp-tmp` / `*.easysftp-tmp.<n>` / `*.easysftp-tmp.bak` debris,
+never a file it did not name itself. A real file of yours that happens to carry such a name is part
 of the deployment and is therefore never swept, in `sync` too, where it is
 protected even on runs that leave it unchanged. An orphan in a directory
 that no later deploy uploads into

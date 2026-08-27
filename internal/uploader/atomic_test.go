@@ -331,3 +331,86 @@ func TestIsRetryable(t *testing.T) {
 		}
 	}
 }
+
+// TestNonAtomicPublishKeepsTheLiveFileWhenTheRenameFails is the guarantee the
+// atomic-upload feature exists for, arriving through the fallback that servers
+// without posix-rename@openssh.com take.
+//
+// The old spelling was remove(final) then rename(tmp, final). If the remove
+// succeeded and the rename then failed, the live file was gone and nothing had
+// replaced it, which is precisely the outcome the feature promises cannot
+// happen. The causes are ordinary on the appliance and managed-hosting servers
+// this path exists for: a full filesystem, a quota, a permission change, a
+// dropped connection, another process taking the name (issue #242).
+func TestNonAtomicPublishKeepsTheLiveFileWhenTheRenameFails(t *testing.T) {
+	srv := startTestServer(t,
+		withFailPosixRename(sftp.ErrSSHFxOpUnsupported),
+		withFailPublishRename("/www/index.html"))
+	seedRemoteFile(t, srv, "/www", "index.html", "original")
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"index.html": "replacement"})
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err == nil {
+		t.Fatal("expected the failed publish to fail the run")
+	}
+	if got := readRemote(t, srv, "/www/index.html"); got != "original" {
+		t.Errorf("the live file reads %q; a failed publish must not cost the file it was replacing", got)
+	}
+	if remoteHasTmpFile(t, srv, "/www", "index.html") {
+		t.Error("a temporary or backup file was left behind after the rollback")
+	}
+}
+
+// TestNonAtomicPublishOfANewFile covers the branch where there is nothing to
+// park, on both kinds of server: one that reports a missing file specifically,
+// and one that answers every absence with a generic status, where the tie-break
+// from issue #152 is the only thing that can tell "nothing there" from "the
+// server refused to move it".
+func TestNonAtomicPublishOfANewFile(t *testing.T) {
+	cases := []struct {
+		name string
+		opts []serverOption
+	}{
+		{"server reports a missing file", []serverOption{withFailPosixRename(sftp.ErrSSHFxOpUnsupported)}},
+		{"server answers absence generically", []serverOption{withCoarseStatus(sftp.ErrSSHFxFailure), withFailPosixRename(sftp.ErrSSHFxOpUnsupported)}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := startTestServer(t, tc.opts...)
+			local := t.TempDir()
+			writeTree(t, local, map[string]string{"index.html": "fresh"})
+
+			cfg := baseConfig(srv)
+			cfg.Uploads = []config.UploadPair{{Local: local, Remote: "/www"}}
+
+			if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+				t.Fatalf("first upload without posix-rename failed: %v", err)
+			}
+			if got := readRemote(t, srv, "/www/index.html"); got != "fresh" {
+				t.Errorf("unexpected content: %q", got)
+			}
+			if remoteHasTmpFile(t, srv, "/www", "index.html") {
+				t.Error("a temporary or backup file was left behind")
+			}
+		})
+	}
+}
+
+// The backup has to be swept if a run is killed between parking the live file
+// and putting it back, which is why it lives inside the tmpSuffix family
+// rather than under a name of its own.
+func TestBackupNameIsSweptAsATempFile(t *testing.T) {
+	if !isTempFileName("index.html" + bakSuffix) {
+		t.Errorf("%q is not recognised as a temp file, so an interrupted publish would leave it behind forever", "index.html"+bakSuffix)
+	}
+	for _, name := range []string{".easysftp-tmp.bak", "index.html.bak", "index.html.easysftp-tmp.baked"} {
+		if isTempFileName(name) {
+			t.Errorf("%q is swept but is not a file this action writes", name)
+		}
+	}
+}
