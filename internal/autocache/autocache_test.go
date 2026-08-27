@@ -274,11 +274,15 @@ func TestUpdateReanchorsOnlyOnAMeasurement(t *testing.T) {
 	}
 }
 
-// TestUpdateWritesARecordWithNoMeasurementToProtect: a record that never held
-// a throughput has no anchor worth freezing, so a later run may replace it
-// outright. This is what keeps a first run's round-trip time from ageing out
-// while the deploys keep coming.
-func TestUpdateWritesARecordWithNoMeasurementToProtect(t *testing.T) {
+// TestUpdateAnchorsARecordThatNeverHeldAThroughput: a record written by a run
+// with nothing to measure is still a record. It carries the round-trip time
+// the next run is validated against and the connection ceiling, and it is
+// anchored like any other: a later run that measured nothing may not move the
+// workload it describes, its stored link, or when it was taken.
+//
+// This used to be the one exemption in the rule, and it defeated the rule for
+// exactly the deploys the cache is most often pointed at (issue #225).
+func TestUpdateAnchorsARecordThatNeverHeldAThroughput(t *testing.T) {
 	s := stored(mediumTree(), Link{RTTMillis: 13, HandshakeMillis: 380})
 	later := now.Add(48 * time.Hour)
 
@@ -293,8 +297,80 @@ func TestUpdateWritesARecordWithNoMeasurementToProtect(t *testing.T) {
 	}, later)
 
 	rec, _ := s.find(target)
-	if rec.Workload != grown || !rec.MeasuredAt.Equal(later) {
-		t.Errorf("a record with nothing measured in it was preserved anyway: %+v", rec)
+	switch {
+	case rec.Workload != mediumTree():
+		t.Errorf("a run that measured nothing moved the anchor to %+v", rec.Workload)
+	case rec.Link.RTTMillis != 13:
+		t.Errorf("the stored round-trip time moved to %.1f ms without a measurement", rec.Link.RTTMillis)
+	case !rec.MeasuredAt.Equal(now):
+		t.Errorf("measured_at is %v, want the time the record was taken", rec.MeasuredAt)
+	case rec.Reused != 1:
+		t.Errorf("reuse count is %d, want the run that leaned on the record counted", rec.Reused)
+	}
+}
+
+// TestUpdateReplacesASpentRecord: the other half of the same rule. An anchor is
+// worth protecting only while it is one a run could still be given. Past
+// MaxAge, Lookup refuses the record, and since only a measuring run may rewrite
+// an anchor, a deploy too small to ever measure a throughput would otherwise
+// keep a dead entry for the life of the cache file.
+func TestUpdateReplacesASpentRecord(t *testing.T) {
+	s := stored(mediumTree(), Link{RTTMillis: 13, HandshakeMillis: 380})
+	stale := now.Add(MaxAge + time.Hour)
+
+	if _, dec := s.Lookup(target, mediumTree(), stale); dec.Reason == "" {
+		t.Fatal("the record was still accepted at this age, so this test proves nothing")
+	}
+
+	grown := mediumTree()
+	grown.Files = 1400
+	s.Update(Observation{
+		Target:   target,
+		Workload: grown,
+		Link:     Link{RTTMillis: 14, HandshakeMillis: 400},
+	}, stale)
+
+	rec, _ := s.find(target)
+	switch {
+	case rec.Workload != grown:
+		t.Errorf("a spent record kept its anchor at %+v", rec.Workload)
+	case !rec.MeasuredAt.Equal(stale):
+		t.Errorf("measured_at is %v, want the spent record replaced by this run", rec.MeasuredAt)
+	}
+}
+
+// stillTrusted decides whether Update protects an anchor, and it must not
+// drift from the gates Lookup applies for the same reasons. Anything Lookup
+// refuses on age, reuse or policy generation is spent; anything it accepts is
+// not.
+func TestStillTrustedAgreesWithLookup(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Record)
+		at     time.Time
+		want   bool
+	}{
+		{"fresh", func(*Record) {}, now, true},
+		{"one day short of the age limit", func(*Record) {}, now.Add(MaxAge - 24*time.Hour), true},
+		{"past the age limit", func(*Record) {}, now.Add(MaxAge + time.Hour), false},
+		{"one reuse short of the limit", func(r *Record) { r.Reused = MaxReuse - 1 }, now, true},
+		{"at the reuse limit", func(r *Record) { r.Reused = MaxReuse }, now, false},
+		{"another policy generation", func(r *Record) { r.PolicyVersion = autotune.PolicyVersion + 1 }, now, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := stored(mediumTree(), measuredLink(), tc.mutate)
+			rec, _ := s.find(target)
+
+			if got := rec.stillTrusted(tc.at); got != tc.want {
+				t.Errorf("stillTrusted = %v, want %v", got, tc.want)
+			}
+			_, dec := s.Lookup(target, mediumTree(), tc.at)
+			if accepted := dec.Reason == ""; accepted != tc.want {
+				t.Errorf("Lookup accepted = %v (%s), want %v; stillTrusted has drifted from it", accepted, dec.Reason, tc.want)
+			}
+		})
 	}
 }
 

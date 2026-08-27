@@ -431,15 +431,35 @@ type Observation struct {
 // The rule is one sentence: a stored measurement is replaced only by a new
 // measurement, and never merely by a newer run.
 //
-//   - This run measured the link, or there was no measurement stored to
-//     protect: the record is written from this run, anchor and all. New
+//   - This run measured the link, or there is no record Lookup would still
+//     consider: the record is written from this run, anchor and all. New
 //     evidence, new anchor, reuse count back to zero.
-//   - This run did not measure, and a stored measurement is still standing:
-//     the anchor, the whole stored link and MeasuredAt are left exactly as
-//     they were. Only the provenance, the recorded settings and the ceiling
-//     move. This is the case that would otherwise let a dataset (or a
+//   - This run did not measure, and a record Lookup would still consider is
+//     standing: the anchor, the whole stored link and MeasuredAt are left
+//     exactly as they were. Only the provenance, the recorded settings and the
+//     ceiling move. This is the case that would otherwise let a dataset (or a
 //     round-trip time) drift a per cent at a time until the record described
 //     nothing that was ever measured.
+//
+// The second bullet used to require the stored record to carry a throughput,
+// which quietly exempted every record written by a run that had nothing to
+// measure (issue #225). Those records are legitimate: they still carry the
+// round-trip time the next run is validated against and the connection
+// ceiling, which is why Record documents them. Exempting them meant they
+// re-anchored on every run, compared each run against the one before it, and
+// so hit forever on a dataset that grows a per cent at a time, which is the
+// one failure mode this package is shaped around. Reused was carried in the
+// same skipped branch, so MaxReuse could never evict them either, and
+// MeasuredAt kept moving, so MaxAge never could. A record has one life,
+// whichever of its fields happen to be populated.
+//
+// What the throughput test was reaching for is in stillTrusted instead, and
+// stated as the thing it actually is: an anchor is worth protecting only while
+// it is one a run could still be given. A spent record (too old, reused too
+// often, written by another policy generation) restores nothing, and only a
+// measuring run rewrites an anchor, so freezing a spent one would leave a
+// deploy that is too small to ever measure anything with a permanently dead
+// cache entry.
 //
 // The link is kept whole rather than field by field on purpose. The stored
 // round-trip time is what the next run validates against, so letting today's
@@ -461,7 +481,7 @@ func (s *Store) Update(obs Observation, at time.Time) bool {
 		Link:          obs.Link,
 		Settings:      obs.Settings,
 	}
-	if existed && !obs.Measured && old.Link.StreamBytesPerSecond > 0 {
+	if existed && !obs.Measured && old.stillTrusted(at) {
 		rec.MeasuredAt = old.MeasuredAt
 		rec.Workload = old.Workload
 		rec.Link = old.Link
@@ -488,6 +508,18 @@ func (s *Store) Update(obs Observation, at time.Time) bool {
 	}
 	s.put(rec)
 	return true
+}
+
+// stillTrusted reports whether Lookup would still consider this record at time
+// at, on the gates that do not depend on the run being planned. It is
+// deliberately the same three constants Lookup checks (MaxAge, MaxReuse and
+// the policy generation); the workload band is not one of them, because a
+// deploy that walked out of the band is exactly the case where the stored
+// anchor still has to be protected.
+func (r Record) stillTrusted(at time.Time) bool {
+	return r.PolicyVersion == autotune.PolicyVersion &&
+		at.Sub(r.MeasuredAt) <= MaxAge &&
+		r.Reused < MaxReuse
 }
 
 // equal reports whether two records say the same thing. LastUsed is ignored:

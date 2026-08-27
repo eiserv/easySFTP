@@ -3,6 +3,8 @@ package autocache
 import (
 	"testing"
 	"time"
+
+	"github.com/eiserv/easySFTP/internal/autotune"
 )
 
 // The failure mode this file exists for.
@@ -189,5 +191,117 @@ func TestAMeasuringRunIsAllowedToMoveTheAnchor(t *testing.T) {
 	}
 	if rec, _ := s.find(target); rec.Workload.Files != files {
 		t.Errorf("the anchor is %d files, want the %d the last measurement was taken on", rec.Workload.Files, files)
+	}
+}
+
+// TestDriftWithNoStoredThroughput is the same trap through the one door that
+// used to be left open (issue #225).
+//
+// A record whose measurement produced no per-connection throughput is written
+// by any deploy that never fills a stream, which is most small deploys, and is
+// exactly what the cache is most often pointed at. Update used to require a
+// stored throughput before it would protect an anchor, so those records fell
+// through to being rebuilt from the current run: they compared each run against
+// the one before it, hit forever, and dragged the anchor along. Reused was
+// carried in the same skipped branch, so the reuse budget never bit either.
+//
+// The record still has to work: it carries the round-trip time and the
+// connection ceiling, so it must keep hitting for a deploy that has not really
+// changed. What it must not do is keep hitting for one that has.
+func TestDriftWithNoStoredThroughput(t *testing.T) {
+	const (
+		runs       = 120
+		growth     = 1.03
+		firstFiles = 400
+	)
+
+	growingTree := func(n int) Workload {
+		files := firstFiles
+		for i := 0; i < n; i++ {
+			files = int(float64(files) * growth)
+		}
+		return Workload{
+			Files:   files,
+			Bytes:   int64(files) * 256 * 1024,
+			P50:     256 * 1024,
+			P90:     256 * 1024,
+			Largest: 4 << 20,
+		}
+	}
+
+	// No throughput, but a ceiling: this is a record worth keeping, which is
+	// why the answer to #225 could not simply be to throw such records away.
+	// How long the ceiling itself survives is a separate rule with its own
+	// lifetime (MaxCeilingCarry); what is under test here is the anchor.
+	noThroughput := Link{RTTMillis: 13, HandshakeMillis: 380}
+	anchored := stored(growingTree(0), noThroughput, func(r *Record) { r.ConnectionCeiling = 4 })
+
+	lastHit, reuses := -1, 0
+	for n := 1; n < runs; n++ {
+		at := now.Add(time.Duration(n) * time.Hour)
+		w := growingTree(n)
+
+		cand, dec := anchored.Lookup(target, w, at)
+		if dec.Reason == "" {
+			dec = cand.Validate(13 * time.Millisecond)
+		}
+		if dec.Hit {
+			lastHit = n
+			reuses++
+		}
+		anchored.Update(Observation{
+			Target:   target,
+			Workload: w,
+			Link:     noThroughput,
+			Reused:   dec.Hit,
+		}, at)
+
+		rec, _ := anchored.find(target)
+		if rec.Workload != growingTree(0) {
+			t.Fatalf("run %d moved the anchor to %+v without measuring anything", n, rec.Workload)
+		}
+		if !rec.MeasuredAt.Equal(now) {
+			t.Fatalf("run %d moved measured_at to %v without measuring anything", n, rec.MeasuredAt)
+		}
+		if rec.Reused != reuses {
+			t.Fatalf("run %d left the reuse count at %d after %d reuses, so MaxReuse can never bite", n, rec.Reused, reuses)
+		}
+	}
+
+	switch {
+	case lastHit < 0:
+		t.Fatal("the cache never hit at all, so this test proves nothing about drift")
+	case lastHit >= runs-1:
+		t.Fatalf("the cache still hit on the last run, with the deploy %.1fx its original size",
+			float64(growingTree(runs-1).Files)/firstFiles)
+	}
+	grown := float64(growingTree(lastHit).Files) / firstFiles
+	if grown > 2.1 {
+		t.Errorf("the cache kept hitting until the deploy was %.1fx its original size", grown)
+	}
+	t.Logf("a throughput-less record stopped hitting at run %d, with the deploy %.2fx its original size", lastHit+1, grown)
+
+	// The pre-#225 reading, reproduced: with no stored throughput the guarded
+	// branch was skipped, so the record was rebuilt from the current run every
+	// time. It never stops hitting, however far the deploy has travelled.
+	naive := stored(growingTree(0), noThroughput, func(r *Record) { r.ConnectionCeiling = 4 })
+	for n := 1; n < runs; n++ {
+		at := now.Add(time.Duration(n) * time.Hour)
+		w := growingTree(n)
+		if _, dec := naive.Lookup(target, w, at); dec.Reason != "" {
+			t.Fatalf("the pre-fix reading missed at run %d (%s), which it did not do", n, dec.Reason)
+		}
+		naive.put(Record{
+			Target:            target,
+			PolicyVersion:     autotune.PolicyVersion,
+			MeasuredAt:        at,
+			LastUsed:          at,
+			Workload:          w,
+			Link:              noThroughput,
+			ConnectionCeiling: 4,
+		})
+	}
+	if float64(growingTree(runs-1).Files)/firstFiles < 10 {
+		t.Fatal("the deploy did not grow far enough for the contrast to mean anything")
 	}
 }

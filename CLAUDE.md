@@ -174,7 +174,15 @@ that from turning into stale configuration (issue #212):
    forever for a dataset that grows a per cent at a time, which is the failure
    mode this whole package is shaped around.
    `internal/autocache/drift_test.go` replays both readings over the same
-   sequence of deploys and is the acceptance test for it.
+   sequence of deploys and is the acceptance test for it. The rule holds for
+   every record, including one whose measurement produced no throughput; that
+   used to be an exemption and it defeated the rule for exactly the small
+   deploys the cache is most often pointed at (issue #225). The one thing an
+   anchor is not protected from is being spent: past `MaxAge`, `MaxReuse` or a
+   policy generation, `Lookup` refuses the record anyway, so `Store.Update`
+   lets the next run replace it (`Record.stillTrusted`). Freezing a record no
+   run can be given would leave a deploy too small to ever measure anything
+   with a permanently dead entry.
 3. **The RTT measured now is the validation.** `Candidate.Validate` compares
    the probe's answer against the record's. It costs nothing (the probe runs
    anyway) and it is the only gate backed by a measurement taken today.
