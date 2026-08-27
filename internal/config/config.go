@@ -274,6 +274,29 @@ const (
 	defaultTimeoutSec         = 30
 )
 
+// Defaults returns the configuration a run starts from before a single input
+// or config-file field is read.
+//
+// It exists so that anything needing to describe "the easySFTP defaults" reads
+// them instead of restating them. The benchmark harness names them in every
+// stored result, and because it restated them, two permanent documents claim a
+// run at "concurrency 4, request_concurrency 16" that in fact resolved all
+// three through the auto policy (issue #229).
+func Defaults() *Config {
+	return &Config{
+		Concurrency:            defaultConcurrency,
+		SftpRequestConcurrency: defaultRequestConcurrency,
+		Connections:            defaultConnections,
+		// Adaptive unless the config file pins a number. Inline mode has no
+		// input for any of the three (every non-secret setting has exactly
+		// one home in v3), so an inline run is always fully adaptive.
+		Auto:         AutoSettings{Connections: true, Concurrency: true, RequestConcurrency: true},
+		Retries:      defaultRetries,
+		Timeout:      defaultTimeoutSec * time.Second,
+		ManifestName: DefaultManifestName,
+	}
+}
+
 // removedInput maps a v2 input's environment variable to its migration hint.
 // The inputs stay declared in action.yml (without defaults) so a workflow
 // still passing them fails loudly here instead of being silently ignored by
@@ -345,21 +368,10 @@ func Load() (*Config, error) {
 		return strings.TrimSpace(os.Getenv(envPrefix + name))
 	}
 
-	cfg := &Config{
-		Password:               os.Getenv(envPrefix + "PASSWORD"),
-		PrivateKey:             os.Getenv(envPrefix + "PRIVATE_KEY"),
-		Passphrase:             os.Getenv(envPrefix + "PASSPHRASE"),
-		Concurrency:            defaultConcurrency,
-		SftpRequestConcurrency: defaultRequestConcurrency,
-		Connections:            defaultConnections,
-		// Adaptive unless the config file pins a number. Inline mode has no
-		// input for any of the three (every non-secret setting has exactly
-		// one home in v3), so an inline run is always fully adaptive.
-		Auto:         AutoSettings{Connections: true, Concurrency: true, RequestConcurrency: true},
-		Retries:      defaultRetries,
-		Timeout:      defaultTimeoutSec * time.Second,
-		ManifestName: DefaultManifestName,
-	}
+	cfg := Defaults()
+	cfg.Password = os.Getenv(envPrefix + "PASSWORD")
+	cfg.PrivateKey = os.Getenv(envPrefix + "PRIVATE_KEY")
+	cfg.Passphrase = os.Getenv(envPrefix + "PASSPHRASE")
 
 	var err error
 	if cfg.DryRun, err = parseBool(get("DRY_RUN"), false); err != nil {

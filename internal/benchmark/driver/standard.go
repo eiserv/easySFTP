@@ -3,6 +3,7 @@ package driver
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 
 	"github.com/eiserv/easySFTP/internal/benchmark"
 	"github.com/eiserv/easySFTP/internal/benchmark/link"
@@ -10,6 +11,7 @@ import (
 	"github.com/eiserv/easySFTP/internal/benchmark/scenario"
 	"github.com/eiserv/easySFTP/internal/benchmark/schema"
 	"github.com/eiserv/easySFTP/internal/benchmark/stats"
+	"github.com/eiserv/easySFTP/internal/config"
 )
 
 // StandardScenarios is the standard benchmark's scenario set, and it is fixed:
@@ -174,13 +176,50 @@ func (r *run) measure(build int, name string, repeat int) error {
 	return nil
 }
 
+// defaultsSentence describes what a run at the defaults is actually configured
+// with, read from internal/config rather than restated.
+//
+// It used to be a literal, and it went stale the day #211 made auto the real
+// default: two permanent documents (v3.6.0 and v3.7.0) say "concurrency 4,
+// request_concurrency 16" for runs that in fact resolved all three transport
+// settings through the auto policy, per scenario (issue #229). The three store
+// invariants mean those documents stay as they are; benchmarks/README.md
+// carries the correction.
+//
+// The resolved numbers deliberately stay out of this sentence. They are not
+// run-wide any more, so the honest run-wide statement is that the run left them
+// to easySFTP; what the policy then chose is per scenario and already lives in
+// the auto[] block, read back from the run's own config_* counters.
+//
+// One caveat worth naming: this reads the defaults of the tree the harness was
+// built from, which for a release sweep is the tree of the build being
+// measured. A comparison run against an older baseline ref describes the
+// candidate's defaults, which is the run the sentence is about.
+func defaultsSentence() string {
+	cfg := config.Defaults()
+	autoOr := func(isAuto bool, n int) string {
+		if isAuto {
+			return "auto"
+		}
+		return strconv.Itoa(n)
+	}
+	return fmt.Sprintf(
+		"easySFTP defaults (no advanced.* overrides): connections %s, concurrency %s, request_concurrency %s, retries %d, timeout %s, mode overlay",
+		autoOr(cfg.Auto.Connections, cfg.Connections),
+		autoOr(cfg.Auto.Concurrency, cfg.Concurrency),
+		autoOr(cfg.Auto.RequestConcurrency, cfg.SftpRequestConcurrency),
+		cfg.Retries,
+		cfg.Timeout,
+	)
+}
+
 // aggregateStandard hands the run over to the aggregation half.
 //
 // The display strings travel verbatim rather than being rebuilt on the other
 // side. This half already has them, and a summary table that reformats itself
 // during a rewrite is a change to a stored document made by accident.
 func (r *run) aggregateStandard() error {
-	settings := "easySFTP defaults (no advanced.* overrides): concurrency 4, request_concurrency 16, retries 2, timeout 30s, mode overlay"
+	settings := defaultsSentence()
 	if r.opts.Connections > 0 {
 		settings += fmt.Sprintf("; the pool%d build is the same binary with advanced.connections: %d",
 			r.opts.Connections, r.opts.Connections)

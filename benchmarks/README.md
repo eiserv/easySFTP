@@ -467,6 +467,44 @@ Results up to and including v3.3.1 predate this and name only the kernel and
 CPU count (`Linux 6.17.0-1020-azure, 4 cpu`); every one of them was measured on
 a GitHub-hosted runner. From v3.3.2 on the field starts with `self-hosted`.
 
+### Correction: what the v3.6.0 and v3.7.0 `settings` field says
+
+The `settings` string used to be a literal in the harness, written when the
+transport defaults really were fixed. #211 made `auto` the real default on
+2026-08-21, and the literal was not updated, so two stored release results
+describe settings their runs did not use:
+
+| stored release | released | `settings` correct |
+|---|---|---|
+| v3.3.2, v3.4.0, v3.5.0 | before #211 | yes |
+| **v3.6.0** | 2026-08-21 | **no** |
+| **v3.7.0** | 2026-08-25 | **no** |
+
+Both of those runs left `connections`, `concurrency` and `request_concurrency`
+to the auto policy, which resolved them per scenario. What each scenario
+actually ran at is recorded in the same documents and is not affected: read
+`results[].counters.config_*` (and, in the matching matrix sweep, the `auto[]`
+block). For v3.7.0 those counters read:
+
+| scenario | `config_connections` | `config_concurrency` | `config_request_concurrency` |
+|---|---|---|---|
+| large | 2 | 2 | 64 |
+| mixed | 6 | 56 | 64 |
+| small | 4 | 64 | 16 |
+
+against a `settings` field claiming `concurrency 4, request_concurrency 16` for
+all three. A stored result is never rewritten, which is why the correction
+lives here rather than in the files.
+
+Concretely, a reader comparing v3.5.0 against v3.7.0 should not conclude the
+two ran the same configuration: v3.5.0 genuinely ran at 4/16, v3.7.0 ran at
+whatever the policy chose, so the configuration is one of the things that
+changed between them.
+
+The sentence is derived from `config.Defaults()` from this release on, and
+`internal/benchmark/driver` has a test that fails if it names a fixed number
+while the defaults are adaptive (issue #229).
+
 ## Reading a delta
 
 Every repeat's individual value is kept, alongside the median, min, max and the

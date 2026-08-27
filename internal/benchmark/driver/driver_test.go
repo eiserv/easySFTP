@@ -1,6 +1,7 @@
 package driver_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/eiserv/easySFTP/internal/benchmark/driver"
 	"github.com/eiserv/easySFTP/internal/benchmark/runner"
 	"github.com/eiserv/easySFTP/internal/benchmark/schema"
+	"github.com/eiserv/easySFTP/internal/config"
 )
 
 // These tests are the harness's own self-check, and since issue #190 step 6 the
@@ -607,4 +609,47 @@ func glob(t *testing.T, dir, pattern string) []string {
 		t.Fatalf("globbing %s: %v", pattern, err)
 	}
 	return matches
+}
+
+// TestStandardSettingsSentenceDescribesTheRun. The sentence is stored verbatim
+// in a permanent document and published as a release asset, so it has to
+// describe the run rather than a run that was true when the literal was
+// written. It stopped being true the day #211 made auto the real default, and
+// two stored releases (v3.6.0, v3.7.0) claim "concurrency 4,
+// request_concurrency 16" for runs that resolved all three transport settings
+// through the policy (issue #229).
+func TestStandardSettingsSentenceDescribesTheRun(t *testing.T) {
+	opts := options(t)
+	opts.Repeats = 1
+	if err := driver.Standard(opts); err != nil {
+		t.Fatalf("measuring: %v", err)
+	}
+	result := readJSON[schema.Standard](t, filepath.Join(opts.OutDir, "results.json"))
+
+	cfg := config.Defaults()
+	if !cfg.Auto.Connections || !cfg.Auto.Concurrency || !cfg.Auto.RequestConcurrency {
+		t.Fatal("the easySFTP defaults are no longer fully adaptive; revisit this test deliberately rather than deleting it")
+	}
+	for _, name := range []string{"connections", "concurrency", "request_concurrency"} {
+		if !strings.Contains(result.Settings, name+" auto") {
+			t.Errorf("stored settings do not say %s ran at auto: %q", name, result.Settings)
+		}
+	}
+	// The literal's numbers must not come back while the settings are
+	// adaptive: naming a fixed value the run did not use is what made the two
+	// stored documents wrong.
+	for _, stale := range []string{"concurrency 4", "request_concurrency 16"} {
+		if strings.Contains(result.Settings, stale) {
+			t.Errorf("stored settings name a fixed %q although the defaults are adaptive: %q", stale, result.Settings)
+		}
+	}
+	for _, want := range []string{
+		fmt.Sprintf("retries %d", cfg.Retries),
+		fmt.Sprintf("timeout %s", cfg.Timeout),
+		"mode overlay",
+	} {
+		if !strings.Contains(result.Settings, want) {
+			t.Errorf("stored settings are missing %q: %q", want, result.Settings)
+		}
+	}
 }
