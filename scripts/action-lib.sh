@@ -70,7 +70,17 @@ resolve_release_commit() {
       "refs/tags/$version") direct=$sha ;;
       "refs/tags/$version^{}") peeled=$sha ;;
     esac
-  done < <(git ls-remote --exit-code \
+  # Bounded on purpose (issue #236). This runs on every SHA-pinned job, and
+  # an unbounded git talking to github.com is the same hang as an unbounded
+  # curl: the step never fails, it just runs until the workflow timeout,
+  # which defaults to six hours. The low-speed pair aborts a connection that
+  # stops delivering, and GIT_TERMINAL_PROMPT stops a credential prompt from
+  # waiting on a stdin nobody is attached to. Resolution here is best
+  # effort, so an abort just falls back to a source build.
+  done < <(GIT_TERMINAL_PROMPT=0 \
+    GIT_HTTP_LOW_SPEED_LIMIT=1000 \
+    GIT_HTTP_LOW_SPEED_TIME=30 \
+    git ls-remote --exit-code \
     'https://github.com/eiserv/easySFTP.git' \
     "refs/tags/$version" \
     "refs/tags/$version^{}")
@@ -155,6 +165,17 @@ download_release_file() {
   local max_size=$4
   local url="https://github.com/eiserv/easySFTP/releases/download/${version}/${asset}"
 
+  # The three timeouts are load-bearing (issue #236). curl supplies none of
+  # them by default, so a transfer that stalls after connecting waits
+  # forever, and --retry only fires on a failure that completed. Without
+  # them the job does not fail, it hangs until the workflow timeout, which
+  # defaults to six hours on GitHub-hosted runners and is usually left
+  # there. --max-time bounds one attempt (180s is well over what a 6 MB
+  # binary needs at any plausible runner speed) and --retry-max-time
+  # bounds when a new attempt may still start, so the call as a whole is
+  # bounded rather than three full budgets deep. --max-filesize stays a
+  # sanity check rather than a bound: curl only enforces it once a
+  # Content-Length declares the size or the limit is already exceeded.
   curl \
     --proto '=https' \
     --proto-redir '=https' \
@@ -163,8 +184,11 @@ download_release_file() {
     --fail \
     --silent \
     --show-error \
+    --connect-timeout 15 \
+    --max-time 180 \
     --retry 3 \
     --retry-all-errors \
+    --retry-max-time 300 \
     --max-filesize "$max_size" \
     --output "$output" \
     "$url"

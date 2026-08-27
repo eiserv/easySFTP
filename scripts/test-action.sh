@@ -67,6 +67,9 @@ cat > "$tmp/bin/curl" <<'MOCK_CURL'
 set -euo pipefail
 output=''
 url=''
+saw_connect_timeout=0
+saw_max_time=0
+saw_retry_max_time=0
 while (( $# )); do
   case "$1" in
     --output)
@@ -74,6 +77,18 @@ while (( $# )); do
       shift 2
       ;;
     --max-redirs | --retry | --max-filesize)
+      shift 2
+      ;;
+    --connect-timeout)
+      saw_connect_timeout=1
+      shift 2
+      ;;
+    --max-time)
+      saw_max_time=1
+      shift 2
+      ;;
+    --retry-max-time)
+      saw_retry_max_time=1
       shift 2
       ;;
     --proto | --proto-redir)
@@ -88,6 +103,15 @@ while (( $# )); do
       ;;
   esac
 done
+# Issue #236: curl has no default timeouts, so a release fetch that stalls
+# after connecting hangs the step instead of failing it, and the job then
+# runs to the workflow timeout (six hours by default). A stalling stub
+# server is more machinery than the fix is worth; what can regress is
+# someone deleting a flag, and that is what this asserts.
+if (( ! saw_connect_timeout || ! saw_max_time || ! saw_retry_max_time )); then
+  printf 'mock curl: download_release_file must pass --connect-timeout, --max-time and --retry-max-time (issue #236)\n' >&2
+  exit 1
+fi
 cp "$MOCK_ASSET_DIR/${url##*/}" "$output"
 MOCK_CURL
 chmod +x "$tmp/bin/curl"
@@ -97,6 +121,14 @@ cat > "$tmp/bin/git" <<'MOCK_GIT'
 set -euo pipefail
 if [[ "${1:-}" != 'ls-remote' ]]; then
   exit 2
+fi
+# Issue #236: the same hang through git. resolve_release_commit runs on
+# every SHA-pinned job and talks to github.com with no bound of its own.
+if [[ "${GIT_TERMINAL_PROMPT:-}" != '0' ]] ||
+  [[ -z "${GIT_HTTP_LOW_SPEED_LIMIT:-}" ]] ||
+  [[ -z "${GIT_HTTP_LOW_SPEED_TIME:-}" ]]; then
+  printf 'mock git: resolve_release_commit must bound ls-remote with GIT_TERMINAL_PROMPT and the low-speed pair (issue #236)\n' >&2
+  exit 1
 fi
 printf '%s\t%s\n' \
   '1111111111111111111111111111111111111111' 'refs/tags/v1.2.3' \
