@@ -246,9 +246,16 @@ never deleted by `sync` itself.
 
 ### `refusing a destructive mode on remote root`
 
-`sync` and `clean` refuse to operate on `/` (or `.`) as the remote target,
-always. Deploy into a specific subdirectory instead. This guard cannot be
-disabled; see [delete guards](strategies.md#delete-guards).
+`sync` and `clean` refuse a remote target that resolves to `/`, `.`, `~` or
+the empty string, and one that climbs above the directory the session starts
+in (`..`, `../..`, `dist/../..`). Deploy into a specific subdirectory instead.
+
+If you did not write `..` anywhere, check how the target is built: an
+expression such as `${{ inputs.dir }}/..` lands here when `inputs.dir` is
+empty, and so does a path whose last component was stripped by a shell.
+
+This guard cannot be disabled; see
+[delete guards](strategies.md#delete-guards).
 
 ### `refusing to delete N files: exceeds safety.max_deletes`
 

@@ -165,10 +165,25 @@ func remoteAbsent(client *sftp.Client, p string, watch *stallWatchdog) (bool, er
 
 // checkRemoteRoot refuses a destructive mode whose target resolves to the
 // filesystem root or an unspecific path: the one guard that is always on.
+//
+// It also refuses a relative target that escapes upward. path.Clean("..") is
+// "..", which is not the root and used to pass, so "mode: clean" with a target
+// of ".." resolved against the SFTP session's working directory (the login
+// user's home on nearly every server) and deleted what it found there. That is
+// reachable by accident rather than only by malice: a target built from an
+// expression, a variable that resolves to the empty string, or a shell that
+// stripped the last path component all land on exactly these values, which is
+// the class of mistake this guard exists to catch (issue #222).
+//
+// A relative target that stays put ("www/public_html") is still allowed. It is
+// the documented behaviour and a great many workflows use it.
 func checkRemoteRoot(remote string) error {
-	switch normalizeRemote(remote) {
-	case "/", ".", "", "~":
+	normalized := normalizeRemote(remote)
+	switch {
+	case normalized == "/", normalized == ".", normalized == "", normalized == "~":
 		return fmt.Errorf("refusing a destructive mode on remote root %q; target a specific subdirectory instead", remote)
+	case normalized == "..", strings.HasPrefix(normalized, "../"):
+		return fmt.Errorf("refusing a destructive mode on remote root %q: it resolves to %q, above the directory the session starts in; target a specific subdirectory instead", remote, normalized)
 	}
 	return nil
 }

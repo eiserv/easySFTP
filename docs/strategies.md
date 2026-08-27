@@ -154,8 +154,13 @@ before any delete worker starts.
 
 Two safety nets apply before `sync` or `clean` delete anything:
 
-- **Remote root is always refused.** A target that resolves to `/` (or `.`)
-  is rejected outright. No mode will ever wipe a server root.
+- **Remote root is always refused.** A target that resolves to `/`, `.`, `~`
+  or the empty string is rejected outright. So is one that climbs above the
+  directory the session starts in, such as `..`, `../..` or `dist/../..`,
+  which is where a target built from a workflow expression tends to land when
+  the expression is empty or has a component too many. No mode will ever wipe
+  a server root or a login directory. A relative target that stays put, like
+  `www/public_html`, is unaffected.
 - **`max_deletes`** aborts a run that would delete more files than the limit,
   catching a misconfiguration before it does damage. `0` means unlimited. Set
   it via `safety.max_deletes` in the [config file](configuration.md#sections).
