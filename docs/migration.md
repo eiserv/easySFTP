@@ -1,10 +1,11 @@
 # Migrating from Dylan700/sftp-upload-action
 
 easySFTP is a from-scratch Go implementation inspired by
-[Dylan700/sftp-upload-action][dylan], whose last release was in 2024. If you
-are coming from it, this page is the whole switch: an input-by-input mapping,
-a before/after workflow, and the handful of behavior differences that are
-worth knowing before the first run.
+[Dylan700/sftp-upload-action][dylan]. If you are coming from it, this page is
+the whole switch: an input-by-input mapping, a before/after workflow, and the
+handful of behavior differences that are worth knowing before the first run.
+Both projects are maintained, so this is a migration between two live actions,
+not a rescue from an abandoned one.
 
 Migrating from an older **easySFTP** version instead? See
 [Migrating from v2 to v3](migration-v3.md).
