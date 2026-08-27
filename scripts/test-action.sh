@@ -49,6 +49,34 @@ expect_equal 'Windows arm64 mapping' 'easysftp_windows_arm64.exe' "$(resolve_rel
 expect_failure 'unsupported OS' resolve_release_asset FreeBSD X64
 expect_failure 'unsupported architecture' resolve_release_asset Linux RISCV64
 
+# Credential masking (issue #149). The runner masks secrets.* by itself; these
+# cover the values it does not, and the encoding that keeps a multi-line
+# credential from ending the workflow command and printing itself in clear.
+expect_equal 'masks a plain value' '::add-mask::hunter2' "$(easysftp_add_mask hunter2)"
+expect_equal 'escapes a percent sign' '::add-mask::p%25ss' "$(easysftp_add_mask 'p%ss')"
+multiline_value=$'two\nlines'
+crlf_value=$'two\r\nlines'
+expect_equal 'escapes a newline instead of ending the command' '::add-mask::two%0Alines' "$(easysftp_add_mask "$multiline_value")"
+expect_equal 'escapes a carriage return' '::add-mask::two%0D%0Alines' "$(easysftp_add_mask "$crlf_value")"
+expect_equal 'skips an empty value' '' "$(easysftp_add_mask '')"
+expect_equal 'skips a whitespace-only value' '' "$(easysftp_add_mask '  ')"
+
+masked=$(
+  EASYSFTP_PASSWORD=direct-pass \
+  EASYSFTP_PASSPHRASE=key-pass \
+  EASYSFTP_PROXY_PASSWORD=jump-pass \
+  EASYSFTP_PROXY_PASSPHRASE=jump-key-pass \
+  EASYSFTP_PRIVATE_KEY='-----BEGIN OPENSSH PRIVATE KEY-----' \
+    mask_credentials
+)
+expect_equal 'masks every password and passphrase' \
+  '::add-mask::direct-pass
+::add-mask::key-pass
+::add-mask::jump-pass
+::add-mask::jump-key-pass' "$masked"
+expect_equal 'leaves private key material unmasked' '' "$(EASYSFTP_PRIVATE_KEY=secret-key mask_credentials)"
+expect_equal 'masks nothing when no credential is set' '' "$(mask_credentials)"
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 

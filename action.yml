@@ -256,6 +256,24 @@ outputs:
 runs:
   using: composite
   steps:
+    # First, before anything else has a chance to log. The runner masks
+    # values it read from secrets.* by itself; this covers the cases it does
+    # not, such as a credential produced by an earlier step's output, a
+    # matrix entry, a plain environment variable or a vault action. Private
+    # keys are deliberately left out; see mask_credentials in
+    # scripts/action-lib.sh for why (issue #149).
+    - name: Mask credentials
+      shell: bash
+      run: |
+        action_path="${ACTION_PATH//\\//}"
+        bash "$action_path/scripts/mask-credentials.sh"
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        EASYSFTP_PASSWORD: ${{ inputs.password }}
+        EASYSFTP_PASSPHRASE: ${{ inputs.passphrase }}
+        EASYSFTP_PROXY_PASSWORD: ${{ inputs.proxy-password }}
+        EASYSFTP_PROXY_PASSPHRASE: ${{ inputs.proxy-passphrase }}
+
     - name: Prepare easySFTP
       id: prepare
       shell: bash

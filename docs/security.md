@@ -56,6 +56,19 @@ update the secret with the new keys.
   [encrypted secrets](https://docs.github.com/en/actions/security-guides/encrypted-secrets)
   and never hardcode them in a workflow file.
 - easySFTP receives credentials via environment variables and never prints them.
+- The action's first step registers the passwords and passphrases it was
+  given with the runner's log masker (`::add-mask::`), before anything else
+  in the action runs, so any later line that happened to contain one would
+  print as `***`. The runner already does this for values read from
+  `secrets.*`; this covers the cases it does not, such as a credential
+  produced by an earlier step's output, a matrix entry, a plain environment
+  variable or a vault action. It is defence in depth, not a licence to
+  inline a credential: a masked value is still sitting in the workflow file
+  and in the job's environment.
+- Private keys are deliberately not masked. `::add-mask::` works line by line,
+  so masking a PEM block would mean masking its short base64 lines, which
+  garbles unrelated log output. Key material is never printed, and the
+  passphrase protecting it is masked.
 - **Prefer key-based authentication** over passwords. Generate a dedicated
   deploy key and restrict what its account can do on the server:
 

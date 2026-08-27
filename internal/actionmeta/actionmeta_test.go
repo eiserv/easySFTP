@@ -119,6 +119,40 @@ func TestActionMetadata(t *testing.T) {
 			t.Errorf("env %s is wired but input %q is missing from wantInputs", envName, inputName)
 		}
 	}
+	// Every password and passphrase the upload step is handed must also reach
+	// the masking step, or the runner never learns to redact it (issue #149).
+	// Keyed off the input name rather than a fixed list so a future credential
+	// input cannot be wired into one step and forgotten in the other.
+	var maskStep *actionStep
+	for i, step := range action.Runs.Steps {
+		if step.Name == "Mask credentials" {
+			maskStep = &action.Runs.Steps[i]
+		}
+	}
+	if maskStep == nil {
+		t.Fatal("step \"Mask credentials\" is missing")
+	}
+	if action.Runs.Steps[0].Name != "Mask credentials" {
+		t.Errorf("first step is %q; masking has to run before anything else can log", action.Runs.Steps[0].Name)
+	}
+	for envName := range uploadStep.Env {
+		inputName := strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(envName, "EASYSFTP_")), "_", "-")
+		if !strings.HasSuffix(inputName, "password") && !strings.HasSuffix(inputName, "passphrase") {
+			continue
+		}
+		if _, ok := maskStep.Env[envName]; !ok {
+			t.Errorf("env %s is passed to the upload step but not to the masking step", envName)
+		}
+	}
+	// The private keys stay out on purpose: add-mask is line oriented and
+	// masking a PEM block's short base64 lines garbles the log. If that ever
+	// changes, change this assertion deliberately rather than by accident.
+	for _, envName := range []string{"EASYSFTP_PRIVATE_KEY", "EASYSFTP_PROXY_PRIVATE_KEY"} {
+		if _, ok := maskStep.Env[envName]; ok {
+			t.Errorf("env %s is wired into the masking step; masking key material line by line garbles the log (issue #149)", envName)
+		}
+	}
+
 	for _, name := range []string{"files-uploaded", "files-deleted", "files-skipped", "bytes-uploaded", "duration-ms"} {
 		if _, ok := action.Outputs[name]; !ok {
 			t.Errorf("output %q is missing", name)

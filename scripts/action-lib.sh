@@ -10,6 +10,48 @@ easysftp_error() {
   return 1
 }
 
+# easysftp_add_mask registers one value with the runner's log masker, so any
+# later line that happens to contain it prints as *** instead.
+#
+# The runner already does this for anything read from secrets.*, which covers
+# the documented path. It does not cover a credential produced by an earlier
+# step's output, read from a matrix entry or a plain environment variable, or
+# returned by a vault action, and it cannot cover a literal somebody inlined
+# against advice. See issue #149.
+#
+# The value is percent-encoded the way the workflow-command protocol expects,
+# which matters twice here: a newline inside a credential would otherwise end
+# the command and print the remainder as an ordinary log line, in clear text,
+# and a literal % would be read back as the start of an escape.
+#
+# An empty or whitespace-only value is skipped on purpose: asking the runner to
+# mask it would redact large parts of the log.
+easysftp_add_mask() {
+  local value=$1
+  if [[ -z "${value//[[:space:]]/}" ]]; then
+    return 0
+  fi
+  value=${value//%/%25}
+  value=${value//$'\r'/%0D}
+  value=${value//$'\n'/%0A}
+  printf '::add-mask::%s\n' "$value"
+}
+
+# mask_credentials masks every password and passphrase the action was given,
+# direct and proxy, from the environment the caller set up.
+#
+# The private keys are deliberately not masked. ::add-mask:: is line oriented,
+# so a PEM block would have to be masked line by line, and masking the short
+# base64 lines of a key garbles unrelated log output for the rest of the job.
+# Key material is never printed anywhere, and the passphrase that protects it
+# is masked, so the cost would buy nothing.
+mask_credentials() {
+  easysftp_add_mask "${EASYSFTP_PASSWORD:-}"
+  easysftp_add_mask "${EASYSFTP_PASSPHRASE:-}"
+  easysftp_add_mask "${EASYSFTP_PROXY_PASSWORD:-}"
+  easysftp_add_mask "${EASYSFTP_PROXY_PASSPHRASE:-}"
+}
+
 # detect_build_mode picks how to obtain the easySFTP binary from the action
 # ref alone (the build-mode input was removed in v3): a ref matching the
 # checkout's release version (tag or exact release commit) uses the verified
