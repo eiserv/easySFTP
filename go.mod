@@ -1,6 +1,6 @@
 module github.com/eiserv/easySFTP
 
-go 1.25.5
+go 1.25.13
 
 require (
 	github.com/pkg/sftp v1.13.11
