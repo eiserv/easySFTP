@@ -66,6 +66,7 @@ type hop struct {
 	fingerprints    []string
 	knownHosts      string
 	allowAnyHostKey bool
+	algorithms      config.SSHAlgorithms
 	names           hopNames
 }
 
@@ -82,12 +83,51 @@ func (h hop) clientConfig(timeout time.Duration, log Logger) (*ssh.ClientConfig,
 	if err != nil {
 		return nil, permanentError{err}
 	}
-	return &ssh.ClientConfig{
+	client := &ssh.ClientConfig{
 		User:            h.user,
 		Auth:            auth,
 		HostKeyCallback: cb,
 		Timeout:         timeout,
-	}, nil
+	}
+	applySSHAlgorithms(client, h.algorithms)
+	return client, nil
+}
+
+// applySSHAlgorithms keeps x/crypto/ssh's defaults for every category the
+// user did not mention. A mentioned category starts with every supported safe
+// algorithm, in library preference order, and appends the requested values.
+// The parser has already rejected unknown names and recorded insecure ones.
+func applySSHAlgorithms(client *ssh.ClientConfig, additions config.SSHAlgorithms) {
+	supported := ssh.SupportedAlgorithms()
+	if len(additions.KeyExchanges) > 0 {
+		client.KeyExchanges = appendAlgorithms(supported.KeyExchanges, additions.KeyExchanges)
+	}
+	if len(additions.Ciphers) > 0 {
+		client.Ciphers = appendAlgorithms(supported.Ciphers, additions.Ciphers)
+	}
+	if len(additions.MACs) > 0 {
+		client.MACs = appendAlgorithms(supported.MACs, additions.MACs)
+	}
+	if len(additions.HostKeyAlgorithms) > 0 {
+		client.HostKeyAlgorithms = appendAlgorithms(supported.HostKeys, additions.HostKeyAlgorithms)
+	}
+}
+
+func appendAlgorithms(base, additions []string) []string {
+	out := append([]string(nil), base...)
+	for _, addition := range additions {
+		found := false
+		for _, existing := range out {
+			if existing == addition {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, addition)
+		}
+	}
+	return out
 }
 
 // targetHop maps the primary connection settings onto a hop.
@@ -106,12 +146,13 @@ func targetHop(cfg *config.Config) hop {
 		fingerprints:    cfg.HostKeyFingerprints,
 		knownHosts:      cfg.KnownHosts,
 		allowAnyHostKey: cfg.AllowAnyHostKey,
+		algorithms:      cfg.Algorithms,
 		names:           names,
 	}
 }
 
 // jumpHop maps the connection.proxy settings onto a hop.
-func jumpHop(p *config.Proxy) hop {
+func jumpHop(p *config.Proxy, algorithms config.SSHAlgorithms) hop {
 	return hop{
 		addr:            net.JoinHostPort(p.Server, fmt.Sprintf("%d", p.Port)),
 		user:            p.Username,
@@ -121,6 +162,7 @@ func jumpHop(p *config.Proxy) hop {
 		fingerprints:    p.HostKeyFingerprints,
 		knownHosts:      p.KnownHosts,
 		allowAnyHostKey: p.AllowAnyHostKey,
+		algorithms:      algorithms,
 		names: hopNames{hostKey: "connection.proxy.host_key", knownHosts: "connection.proxy.known_hosts",
 			allowAny: "connection.proxy.allow_any_host_key", privateKey: "proxy-private-key"},
 	}
@@ -206,7 +248,7 @@ func dialSSH(addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
 // target's SSH handshake (with the target's own host key verification) over
 // that tunnel. The returned cleanup closes the jump transport.
 func dialViaJump(cfg *config.Config, targetAddr string, targetConfig *ssh.ClientConfig, log Logger) (*ssh.Client, func(), error) {
-	jump := jumpHop(cfg.Proxy)
+	jump := jumpHop(cfg.Proxy, cfg.Algorithms)
 	jumpConfig, err := jump.clientConfig(cfg.Timeout, log)
 	if err != nil {
 		return nil, nil, err

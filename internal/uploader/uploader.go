@@ -14,6 +14,7 @@ package uploader
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	ignore "github.com/sabhiram/go-gitignore"
@@ -67,6 +68,9 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	start := time.Now()
 	stats := &Stats{}
 	defer func() { stats.Duration = time.Since(start) }()
+	if len(cfg.Algorithms.Insecure) > 0 {
+		log.Warningf("connection.algorithms explicitly enables insecure SSH algorithm(s): %s; use these only when a server cannot negotiate modern algorithms", strings.Join(cfg.Algorithms.Insecure, ", "))
+	}
 
 	// One budget for the whole run: safety.max_deletes lives under a run-wide
 	// safety: section and is enforced like one (issue #237).

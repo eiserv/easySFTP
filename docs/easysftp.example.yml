@@ -24,6 +24,14 @@ connection:
   # Without host_key or known_hosts the run fails. To explicitly accept any
   # host key instead (NOT recommended, allows man-in-the-middle attacks):
   # allow_any_host_key: true
+
+  # Legacy-server escape hatch. Omit this whole block unless the server cannot
+  # negotiate modern SSH; insecure additions warn and appear in the summary.
+  # algorithms:
+  #   key_exchanges: [diffie-hellman-group1-sha1]
+  #   ciphers: [aes128-cbc]
+  #   macs: [hmac-sha1-96]
+  #   host_key_algorithms: [ssh-rsa]
   #
   # Optional jump host (bastion), like OpenSSH's ProxyJump. Credentials come
   # from the proxy-password / proxy-private-key action inputs.

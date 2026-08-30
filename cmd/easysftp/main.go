@@ -102,6 +102,16 @@ func hostKeyStatus(cfg *config.Config) string {
 	return status
 }
 
+func algorithmStatus(cfg *config.Config) string {
+	if len(cfg.Algorithms.Insecure) > 0 {
+		return "⚠️ insecure additions allowed: `" + strings.Join(cfg.Algorithms.Insecure, "`, `") + "`"
+	}
+	if cfg.Algorithms.Configured() {
+		return "explicit supported additions"
+	}
+	return "library defaults"
+}
+
 func logBuildInfo() {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -180,8 +190,8 @@ func reportStats(cfg *config.Config, stats *uploader.Stats, mode string, runErr 
 		configSource = fmt.Sprintf("`%s` (version 3)", cfg.ConfigPath)
 	}
 	summary := fmt.Sprintf(
-		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Host key | %s |\n| Configuration | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Directories removed | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %s |\n| Duration | %s |\n",
-		status, hostKeyStatus(cfg), configSource, mode, stats.FilesUploaded, stats.FilesDeleted, stats.DirsDeleted, stats.FilesSkipped, humanBytes(stats.BytesUploaded), stats.Duration.Round(time.Millisecond))
+		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Host key | %s |\n| SSH algorithms | %s |\n| Configuration | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Directories removed | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %s |\n| Duration | %s |\n",
+		status, hostKeyStatus(cfg), algorithmStatus(cfg), configSource, mode, stats.FilesUploaded, stats.FilesDeleted, stats.DirsDeleted, stats.FilesSkipped, humanBytes(stats.BytesUploaded), stats.Duration.Round(time.Millisecond))
 	summary += deploymentBreakdown(stats.Deployments)
 	gha.AppendSummary(summary)
 }

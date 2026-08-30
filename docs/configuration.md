@@ -132,6 +132,11 @@ connection:
   # known_hosts: |             # alternative to host_key
   #   sftp.example.com ssh-ed25519 AAAA...
   # allow_any_host_key: true   # explicit opt-out (not recommended)
+  # algorithms:                # legacy-server escape hatch; warns when insecure
+  #   key_exchanges: [diffie-hellman-group1-sha1]
+  #   ciphers: [aes128-cbc]
+  #   macs: [hmac-sha1-96]
+  #   host_key_algorithms: [ssh-rsa]
   # proxy:                     # optional jump host / bastion
   #   host: bastion.example.com
   #   username: jumper
@@ -201,7 +206,14 @@ sync:
 | `host_key` | ³ | - | SHA256 fingerprint(s), one per line. |
 | `known_hosts` | ³ | - | `known_hosts`-format host key(s); alternative to `host_key`. |
 | `allow_any_host_key` | ³ | `false` | Explicit opt-out of host key verification. |
+| `algorithms` | | - | Add legacy `key_exchanges`, `ciphers`, `macs`, or `host_key_algorithms` to the SSH negotiation policy for both the target and proxy hop. Unknown names fail; insecure additions warn and appear in the job summary. |
 | `proxy` | | - | Optional jump host; same fields (`host`, `port`, `username`, `host_key`, `known_hosts`, `allow_any_host_key`). |
+
+`connection.algorithms` is an escape hatch for a server that cannot negotiate
+modern SSH. It is additive: each configured category keeps all algorithms the
+current `golang.org/x/crypto/ssh` version classifies as supported and adds the
+named values. Categories you omit keep the library defaults exactly. Prefer
+upgrading the server, and enable only the one algorithm the server needs.
 
 ³ As in inline mode, exactly one of `host_key`/`known_hosts`/`allow_any_host_key` is required, per hop.
 

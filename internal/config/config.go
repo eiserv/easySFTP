@@ -110,6 +110,24 @@ type Proxy struct {
 	AllowAnyHostKey bool
 }
 
+// SSHAlgorithms contains additive SSH negotiation choices from
+// connection.algorithms. Empty slices preserve x/crypto/ssh's defaults for
+// that category. Insecure records the explicitly requested algorithms which
+// x/crypto/ssh classifies as insecure, so the uploader and job summary can
+// report the security tradeoff without classifying the same input again.
+type SSHAlgorithms struct {
+	KeyExchanges      []string
+	Ciphers           []string
+	MACs              []string
+	HostKeyAlgorithms []string
+	Insecure          []string
+}
+
+// Configured reports whether any SSH algorithm category was explicitly set.
+func (a SSHAlgorithms) Configured() bool {
+	return len(a.KeyExchanges) > 0 || len(a.Ciphers) > 0 || len(a.MACs) > 0 || len(a.HostKeyAlgorithms) > 0
+}
+
 // Safety holds the safety limits applied before any destructive operation.
 // The field and type names mirror the config file's "safety" section on
 // purpose: a name that drifts from the YAML key leaks into error messages
@@ -147,6 +165,9 @@ type Config struct {
 	// pinned keys and without this opt-in, the run fails instead of talking
 	// to an unverified server.
 	AllowAnyHostKey bool
+	// Algorithms adds explicitly requested SSH algorithms to the safe set for
+	// both the target and an optional proxy hop. It is config-file-only.
+	Algorithms SSHAlgorithms
 
 	// Proxy, if non-nil, routes the connection through a jump host.
 	Proxy *Proxy

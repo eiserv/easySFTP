@@ -31,6 +31,7 @@ type testServer struct {
 	ClientKeyPEM  string
 	handlers      sftp.Handlers
 	sshConfig     *ssh.ServerConfig
+	hostSigner    ssh.Signer
 	listener      net.Listener
 
 	// Fault injection (set via options before the accept loop starts).
@@ -396,7 +397,6 @@ func startTestServer(t *testing.T, opts ...serverOption) *testServer {
 			return nil, errors.New("access denied")
 		},
 	}
-	sshConfig.AddHostKey(hostSigner)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -411,11 +411,13 @@ func startTestServer(t *testing.T, opts ...serverOption) *testServer {
 		ClientKeyPEM:  string(pem.EncodeToMemory(clientPEM)),
 		handlers:      sftp.InMemHandler(),
 		sshConfig:     sshConfig,
+		hostSigner:    hostSigner,
 		listener:      listener,
 	}
 	for _, opt := range opts {
 		opt(srv)
 	}
+	sshConfig.AddHostKey(srv.hostSigner)
 	if srv.failRename {
 		srv.handlers.FileCmd = &faultyRename{inner: srv.handlers.FileCmd}
 	}

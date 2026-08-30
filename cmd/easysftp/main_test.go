@@ -154,6 +154,7 @@ func TestReportStatsOnFailure(t *testing.T) {
 	for _, want := range []string{
 		"| Status | ❌ Failed after 3 file(s), 2.0 KiB (2,048 bytes) |",
 		"| Host key | ✅ pinned |",
+		"| SSH algorithms | library defaults |",
 		"| Configuration | inline inputs |",
 		"| Files uploaded | 3 |",
 		"| Files deleted | 1 |",
@@ -164,6 +165,16 @@ func TestReportStatsOnFailure(t *testing.T) {
 		if !strings.Contains(string(summary), want) {
 			t.Errorf("summary does not contain %q:\n%s", want, summary)
 		}
+	}
+}
+
+func TestAlgorithmStatusReportsInsecureAdditions(t *testing.T) {
+	cfg := &config.Config{Algorithms: config.SSHAlgorithms{
+		KeyExchanges: []string{"diffie-hellman-group1-sha1"},
+		Insecure:     []string{"diffie-hellman-group1-sha1"},
+	}}
+	if got := algorithmStatus(cfg); !strings.Contains(got, "diffie-hellman-group1-sha1") || !strings.Contains(got, "insecure") {
+		t.Fatalf("algorithm status: %q", got)
 	}
 }
 

@@ -45,6 +45,17 @@
           "description": "Explicitly skip host key verification. NOT recommended: allows man-in-the-middle attacks.",
           "type": "boolean"
         },
+        "algorithms": {
+          "description": "Optional SSH algorithms to allow in addition to the library's supported secure set. Use only for a legacy server that cannot negotiate modern algorithms. Unknown names are rejected and insecure additions produce a warning.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "key_exchanges": { "$ref": "#/$defs/algorithmList" },
+            "ciphers": { "$ref": "#/$defs/algorithmList" },
+            "macs": { "$ref": "#/$defs/algorithmList" },
+            "host_key_algorithms": { "$ref": "#/$defs/algorithmList" }
+          }
+        },
         "proxy": {
           "description": "Optional jump host (bastion) through which the SFTP server is reached, like OpenSSH's ProxyJump. Credentials come from the proxy-password / proxy-private-key / proxy-passphrase action inputs.",
           "type": "object",
@@ -214,6 +225,14 @@
     }
   },
   "$defs": {
+    "algorithmList": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "mode": {
       "description": "How the remote target is reconciled: overlay (upload only), sync (manifest-tracked mirror) or clean (wipe, then upload).",
       "type": "string",

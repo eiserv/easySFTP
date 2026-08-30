@@ -36,6 +36,25 @@ release; do not bypass checksum verification.
 
 ## Connection problems
 
+### `ssh: handshake failed: no common algorithm ...`
+
+The server and easySFTP could not agree on a key exchange, cipher, MAC, or
+host-key signature algorithm. This commonly means the server offers only an
+obsolete algorithm. Upgrading the SSH server is the safest fix. When that is
+not possible, config mode has an explicit additive escape hatch:
+
+```yaml
+connection:
+  algorithms:
+    key_exchanges: [diffie-hellman-group1-sha1] # example only
+```
+
+The error normally names the missing category and the server's algorithm.
+Configure only that category and value. Unknown algorithms are rejected;
+algorithms classified as insecure by the bundled SSH library produce a
+warning and are listed in the job summary. The same additions are offered to
+an optional proxy hop, with modern algorithms retained ahead of them.
+
 ### `connecting to <host>:22: dial tcp ...: i/o timeout`
 
 The runner cannot reach the server.
