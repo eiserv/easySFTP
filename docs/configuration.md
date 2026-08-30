@@ -46,7 +46,7 @@ Everything else has a sensible default.
 | `host` | ✅ | - | Hostname or IP of the SFTP server. |
 | `port` | | `22` | SSH port. |
 | `username` | ✅ | - | Username for authentication. |
-| `password` | ¹ | - | Password. **Use a secret.** |
+| `password` | ¹ | - | Password, offered through SSH password and single-prompt keyboard-interactive authentication. **Use a secret.** |
 | `private-key` | ¹ | - | SSH private key (OpenSSH/PEM format). **Use a secret.** |
 | `passphrase` | | - | Passphrase of the private key, if encrypted. |
 | `host-key` | ² | - | Expected SHA256 host key fingerprint(s), one per line (`SHA256:...`). See [Security](security.md). |

@@ -250,6 +250,43 @@ func authMethods(h hop) ([]ssh.AuthMethod, error) {
 	}
 	if h.password != "" {
 		methods = append(methods, ssh.Password(h.password))
+		methods = append(methods, ssh.KeyboardInteractive(passwordChallenge(h.password)))
 	}
 	return methods, nil
+}
+
+// passwordChallenge covers servers that disable the SSH "password" method
+// but ask for the same password through keyboard-interactive. A single round
+// may include visible informational questions; those receive an empty answer
+// so a secret is never echoed. A second secret round is genuine interactive
+// authentication (commonly a TOTP prompt), which an unattended action cannot
+// satisfy safely.
+func passwordChallenge(password string) ssh.KeyboardInteractiveChallenge {
+	answeredSecret := false
+	return func(_ string, _ string, questions []string, echos []bool) ([]string, error) {
+		if len(questions) != len(echos) {
+			return nil, fmt.Errorf("keyboard-interactive authentication returned %d questions and %d echo flags", len(questions), len(echos))
+		}
+
+		answers := make([]string, len(questions))
+		secretQuestions := 0
+		for _, echo := range echos {
+			if !echo {
+				secretQuestions++
+			}
+		}
+		if secretQuestions == 0 {
+			return answers, nil
+		}
+		if answeredSecret || secretQuestions > 1 {
+			return nil, fmt.Errorf("server requested additional keyboard-interactive secrets; unattended easySFTP supports one password prompt only")
+		}
+		for i, echo := range echos {
+			if !echo {
+				answers[i] = password
+			}
+		}
+		answeredSecret = true
+		return answers, nil
+	}
 }

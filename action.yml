@@ -28,9 +28,10 @@ inputs:
     required: false
   password:
     description: >-
-      Password used for authentication. Provide this or private-key (or both).
-      Always store this in a GitHub Actions secret. As a credential, this
-      input is used in both inline and config mode.
+      Password used for password or single-prompt keyboard-interactive
+      authentication. Provide this or private-key (or both). Always store this
+      in a GitHub Actions secret. As a credential, this input is used in both
+      inline and config mode.
     required: false
   private-key:
     description: >-
@@ -124,8 +125,9 @@ inputs:
     required: false
   proxy-password:
     description: >-
-      Password for the jump host defined as connection.proxy in the config
-      file. Always store this in a GitHub Actions secret.
+      Password for password or single-prompt keyboard-interactive
+      authentication to the jump host defined as connection.proxy in the
+      config file. Always store this in a GitHub Actions secret.
     required: false
   proxy-private-key:
     description: >-

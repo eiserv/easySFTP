@@ -67,6 +67,29 @@ func (s *testServer) closeLiveConns() {
 // serverOption tweaks a testServer before it starts serving.
 type serverOption func(*testServer)
 
+// withKeyboardInteractiveOnly models the common sshd configuration with
+// PasswordAuthentication disabled and KbdInteractiveAuthentication enabled.
+// The server accepts exactly one hidden password prompt.
+func withKeyboardInteractiveOnly() serverOption {
+	return func(s *testServer) {
+		s.sshConfig.PasswordCallback = nil
+		s.sshConfig.PublicKeyCallback = nil
+		s.sshConfig.KeyboardInteractiveCallback = func(conn ssh.ConnMetadata, challenge ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+			if conn.User() != testUser {
+				return nil, errors.New("access denied")
+			}
+			answers, err := challenge("easySFTP test", "Password authentication", []string{"Password: "}, []bool{false})
+			if err != nil {
+				return nil, err
+			}
+			if len(answers) != 1 || answers[0] != testPassword {
+				return nil, errors.New("access denied")
+			}
+			return nil, nil
+		}
+	}
+}
+
 // faultyOpen rejects reads of one exact path while delegating every other
 // request to the in-memory handler.
 type faultyOpen struct {

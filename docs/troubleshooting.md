@@ -81,8 +81,10 @@ The server rejected the credentials.
 
 - Verify the secret names in your workflow match the configured secrets
   (a missing secret silently expands to an empty string).
-- Password auth: some servers disable it entirely (`PasswordAuthentication no`);
-  use a key instead.
+- A configured password is offered through both SSH password authentication
+  and a single hidden keyboard-interactive prompt. Servers that require an
+  additional interactive secret such as a TOTP code cannot be used from an
+  unattended job; use a deploy key or a dedicated CI account instead.
 - Key auth: the key must be in OpenSSH or PEM format. If it is encrypted, set
   `passphrase`. Check that the *public* key is in the server's
   `authorized_keys`.
