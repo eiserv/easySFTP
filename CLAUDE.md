@@ -153,15 +153,31 @@ range stays inside the 15% budget, so the number is not balanced on a knife
 edge. Carry the caveat with it: one host, one 13 ms path, `shaping.available`
 false in every stored result.
 
-`internal/autotune/regret_test.go` is the acceptance test issue #209 asks for:
-it replays the policy over every sweep committed under `benchmarks/matrix/`
-with at least three repeats and fails when the regret against the best measured
-cell goes over 15% (a gap under 300 ms passes on its absolute size, which is
-what the issue allows for sub-two-second runs). A sibling test asserts that the
-old fixed 1/4/16 would *fail* it, so the replay cannot quietly stop
-discriminating. **Changing a constant in `internal/autotune` means running that
-test**, and a new stored sweep that fails it means the policy needs refitting,
-not that the test needs relaxing.
+The acceptance test issue #209 asks for is in two files, because the policy can
+be scored two ways and both are worth having.
+
+`internal/autotune/regret_test.go` **replays** the policy over every sweep
+committed under `benchmarks/matrix/` with at least three repeats and fails when
+the regret against the best measured cell goes over 15% (a gap under 300 ms
+passes on its absolute size, which is what the issue allows for sub-two-second
+runs). A choice the grid did not measure is interpolated between the cells that
+bracket it, not snapped to the nearest one: snapping broke ties upward, which
+is usually the faster column, so it flattered the policy by construction
+(issue #228). A sibling test asserts that the old fixed 1/4/16 would *fail* the
+replay, so it cannot quietly stop discriminating.
+
+`internal/autotune/recorded_regret_test.go` **reads what a sweep recorded about
+itself**: the `auto[]` block holds the regret the policy actually achieved on
+that host that day, with no replay and no interpolation in it. Every row is
+printed; a row is also enforced once the sweep has at least three repeats (below
+that its "best cell" is a sample, see issue #227) and today's policy still
+chooses the settings that row measured. Until a release sweep is stored at three
+repeats this half reports rather than gates, which is why the replay still
+carries the acceptance budget.
+
+**Changing a constant in `internal/autotune` means running both**, and a stored
+sweep that fails one means the policy needs refitting, not that the test needs
+relaxing.
 
 ## Remembering a measurement between runs (`internal/autocache`)
 

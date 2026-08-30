@@ -43,11 +43,17 @@ import (
 // the runtime controller to react to; what the controller adds is on top of
 // the numbers below, not in them.
 //
-// It also cannot score a coordinate the grid does not contain. nearest snaps to
-// the closest measured neighbour, ties going up, so a choice between two swept
-// values is credited with one of them; snapNote prints the bracket, and where
-// that bracket is wide the percentage next to it is not a measurement of the
-// policy (issue #217).
+// It also cannot score a coordinate the grid does not contain. scoreOf
+// interpolates between the measured cells that bracket the choice, so a choice
+// between two swept values is estimated from both rather than credited with
+// the better one; snapNote prints the span, and where that span is wide the
+// percentage next to it is an estimate and not a measurement of the policy
+// (issues #217 and #228).
+//
+// What it cannot see at all is a sweep's own recorded auto[] regret, which is
+// a measurement rather than a replay. TestRecordedAutoRegretOfStoredSweeps in
+// recorded_regret_test.go reads those, including from the sweeps this file
+// skips.
 //
 // When this fails after a policy change, read the per-scenario table it
 // prints: it names the cell the policy chose, the cell that won, and the two
@@ -83,7 +89,7 @@ func TestPolicyRegretAgainstStoredSweeps(t *testing.T) {
 					t.Fatalf("%s: %v", group.scenario, err)
 				}
 				chosen := autotune.Plan(w, link, autotune.Fixed{})
-				at, ok := group.nearest(chosen)
+				at, ok := group.scoreOf(chosen)
 				if !ok {
 					// The policy picked coordinates this grid did not measure
 					// at all. Nothing to score, and silently dropping it would
@@ -92,13 +98,13 @@ func TestPolicyRegretAgainstStoredSweeps(t *testing.T) {
 					continue
 				}
 				best := group.best()
-				gap := time.Duration(at.MedianMS-best.MedianMS) * time.Millisecond
-				regret := at.MedianMS/best.MedianMS - 1
+				gap := time.Duration(at-best.MedianMS) * time.Millisecond
+				regret := at/best.MedianMS - 1
 
 				t.Logf("%-16s chose %d/%d/%s -> %s, best %d/%d/%s -> %s, regret %+.1f%%%s",
 					group.scenario, chosen.Connections, chosen.Concurrency, request(chosen.RequestConcurrency),
-					ms(at.MedianMS), best.Connections, best.Concurrency, requestOf(best.RequestConcurrency),
-					ms(best.MedianMS), regret*100, group.snapNote(chosen, at))
+					ms(at), best.Connections, best.Concurrency, requestOf(best.RequestConcurrency),
+					ms(best.MedianMS), regret*100, group.snapNote(chosen))
 
 				if regret > regretTarget && gap > trivialGap {
 					t.Errorf("%s: the policy is %.1f%% (%s) behind the fastest cell, over the %.0f%% target",
@@ -118,11 +124,11 @@ func TestTheFixedDefaultsWouldFailThisTest(t *testing.T) {
 	worst := 0.0
 	for _, sweep := range storedSweeps(t) {
 		for _, group := range sweep.groups() {
-			at, ok := group.nearest(old)
+			at, ok := group.scoreOf(old)
 			if !ok {
 				continue
 			}
-			worst = math.Max(worst, at.MedianMS/group.best().MedianMS-1)
+			worst = math.Max(worst, at/group.best().MedianMS-1)
 		}
 	}
 	if worst <= regretTarget {
@@ -293,42 +299,52 @@ func (g cellGroup) best() schema.Cell {
 	return best
 }
 
-// nearest is the measured cell closest to what the policy chose, per axis,
-// ties going to the larger value. A grid is a handful of powers of two, so the
-// exact choice usually is not on it; the nearest measured neighbour is the
-// closest this replay can get to what the run would have done.
-func (g cellGroup) nearest(s autotune.Settings) (schema.Cell, bool) {
-	conns := axis(g.cells, func(c schema.Cell) int { return c.Connections })
-	return g.cellAt(snap(conns, s.Connections), s)
-}
-
-// snapNote says what a scored row is hiding when the policy's connection count
-// is not on the grid: which cell it was actually scored at, and what the cell
-// below the choice measured.
+// scoreOf is the duration a choice is scored at. A grid is a handful of powers
+// of two, so the exact choice usually is not on it and the replay has to
+// estimate.
 //
-// It is a log line rather than a rule because the replay has no better answer
-// available, but a reader has to know it is reading one. The stored 'mixed'
-// sweep is why: 6 connections on a grid of 1/2/4/8 snapped up to the 8 column
-// and came out 1.3% behind the best cell, while the run really measured at
-// those settings was 30% behind it (issue #217). The bracket makes that gap
-// visible without inventing a number for a coordinate nobody swept.
-func (g cellGroup) snapNote(s autotune.Settings, at schema.Cell) string {
-	conns := axis(g.cells, func(c schema.Cell) int { return c.Connections })
-	if slices.Contains(conns, s.Connections) {
-		return ""
+// It interpolates between the measured cells that bracket the choice, weighted
+// per axis, instead of snapping to the closest measured neighbour. Snapping
+// was optimistic in the one direction that matters for an acceptance test,
+// because ties went up and up is usually the faster column: for the stored
+// "mixed" sweep the policy chose 6 connections, whose measured brackets are 8
+// (12,995 ms) and 4 (17,447 ms), and rounding to 8 scored it at +1.3% where the
+// run really measured at those settings came out +24.8% (issue #228).
+// Interpolating puts it at 15,221 ms, +17%, which is an estimate rather than a
+// measurement but is not one that flatters the policy by construction.
+//
+// A choice that is on the grid is unaffected: it is scored at its own cell.
+// Where a corner of the bracket was not measured, the weights of the corners
+// that were are renormalized, which is the same approximation one axis at a
+// time.
+func (g cellGroup) scoreOf(s autotune.Settings) (float64, bool) {
+	corners := g.bracketCells(s)
+	if len(corners) == 0 {
+		return 0, false
 	}
-	note := fmt.Sprintf("  [%d connections were not swept; scored at %d", s.Connections, at.Connections)
-	if lower, ok := largestBelow(conns, s.Connections); ok {
-		if cell, found := g.cellAt(lower, s); found {
-			note += fmt.Sprintf(", %d took %s", lower, ms(cell.MedianMS))
-		}
+	var sum, weight float64
+	for _, c := range corners {
+		sum += c.weight * c.cell.MedianMS
+		weight += c.weight
 	}
-	return note + "]"
+	if weight == 0 {
+		return 0, false
+	}
+	return sum / weight, true
 }
 
-// cellAt is the measured cell at one connection count, with the other two axes
-// snapped to values the grid has.
-func (g cellGroup) cellAt(connections int, s autotune.Settings) (schema.Cell, bool) {
+// corner is one measured cell of a bracket, with the weight interpolation
+// gives it.
+type corner struct {
+	cell   schema.Cell
+	weight float64
+}
+
+// bracketCells is every measured cell whose coordinates bracket the choice: on
+// each axis either the chosen value itself, when the grid measured it, or the
+// neighbours immediately below and above.
+func (g cellGroup) bracketCells(s autotune.Settings) []corner {
+	conns := axis(g.cells, func(c schema.Cell) int { return c.Connections })
 	concs := axis(g.cells, func(c schema.Cell) int { return c.Concurrency })
 	var requests []int
 	for _, c := range g.cells {
@@ -338,20 +354,86 @@ func (g cellGroup) cellAt(connections int, s autotune.Settings) (schema.Cell, bo
 	}
 	requests = dedup(requests)
 
-	wantConn, wantConc := connections, snap(concs, s.Concurrency)
-	var wantRequest *int
-	if len(requests) > 0 {
-		r := snap(requests, s.RequestConcurrency)
-		wantRequest = &r
+	// A grid pass that set nothing is "default", which is not the same as any
+	// measured number; where the grid swept the axis at all, only its measured
+	// values are candidates.
+	wantRequests := map[*int]float64{}
+	if len(requests) == 0 {
+		wantRequests[nil] = 1
+	} else {
+		for value, w := range bracket(requests, s.RequestConcurrency) {
+			v := value
+			wantRequests[&v] = w
+		}
 	}
+
+	var out []corner
+	for wantConn, wConn := range bracket(conns, s.Connections) {
+		for wantConc, wConc := range bracket(concs, s.Concurrency) {
+			for wantRequest, wRequest := range wantRequests {
+				if c, ok := g.cellExact(wantConn, wantConc, wantRequest); ok {
+					out = append(out, corner{cell: c, weight: wConn * wConc * wRequest})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// bracket is the measured values on one axis that a choice sits between, each
+// with its interpolation weight: the value itself at weight 1 when the grid has
+// it, otherwise the neighbours below and above weighted by how close the
+// choice is to each. A choice outside the swept range has only one neighbour
+// and is scored at it.
+func bracket(values []int, want int) map[int]float64 {
+	if slices.Contains(values, want) {
+		return map[int]float64{want: 1}
+	}
+	lo, hasLo := largestBelow(values, want)
+	hi, hasHi := smallestAbove(values, want)
+	switch {
+	case hasLo && hasHi:
+		span := float64(hi - lo)
+		return map[int]float64{lo: float64(hi-want) / span, hi: float64(want-lo) / span}
+	case hasLo:
+		return map[int]float64{lo: 1}
+	case hasHi:
+		return map[int]float64{hi: 1}
+	default:
+		return map[int]float64{snap(values, want): 1}
+	}
+}
+
+// snapNote says what a scored row is standing in for when the choice is not on
+// the grid: how many measured cells bracket it and how far apart they are. A
+// reader has to be able to see that the number next to it is a bound rather
+// than a measurement of that coordinate.
+func (g cellGroup) snapNote(s autotune.Settings) string {
+	corners := g.bracketCells(s)
+	if len(corners) < 2 {
+		return ""
+	}
+	lo, hi := corners[0].cell.MedianMS, corners[0].cell.MedianMS
+	for _, c := range corners[1:] {
+		lo = math.Min(lo, c.cell.MedianMS)
+		hi = math.Max(hi, c.cell.MedianMS)
+	}
+	return fmt.Sprintf("  [%d/%d/%s was not swept; interpolated between %d measured cells spanning %s to %s]",
+		s.Connections, s.Concurrency, request(s.RequestConcurrency), len(corners), ms(lo), ms(hi))
+}
+
+// cellExact is the measured cell at exactly these coordinates, if the grid has
+// one. A nil request concurrency is the grid pass that set nothing, which is
+// not the same as any measured number.
+func (g cellGroup) cellExact(connections, concurrency int, requestConcurrency *int) (schema.Cell, bool) {
 	for _, c := range g.cells {
-		if c.Connections != wantConn || c.Concurrency != wantConc {
+		if c.Connections != connections || c.Concurrency != concurrency {
 			continue
 		}
-		if (c.RequestConcurrency == nil) != (wantRequest == nil) {
+		if (c.RequestConcurrency == nil) != (requestConcurrency == nil) {
 			continue
 		}
-		if wantRequest != nil && *c.RequestConcurrency != *wantRequest {
+		if requestConcurrency != nil && *c.RequestConcurrency != *requestConcurrency {
 			continue
 		}
 		return c, true
@@ -380,12 +462,23 @@ func dedup(values []int) []int {
 	return out
 }
 
-// largestBelow is the largest measured value strictly under want, which is the
-// neighbour a choice cannot claim the benefit of.
+// largestBelow is the largest measured value strictly under want, and
+// smallestAbove its counterpart: together they are the two neighbours an
+// off-grid choice sits between.
 func largestBelow(values []int, want int) (int, bool) {
 	best, found := 0, false
 	for _, v := range values {
 		if v < want && (!found || v > best) {
+			best, found = v, true
+		}
+	}
+	return best, found
+}
+
+func smallestAbove(values []int, want int) (int, bool) {
+	best, found := 0, false
+	for _, v := range values {
+		if v > want && (!found || v < best) {
 			best, found = v, true
 		}
 	}
