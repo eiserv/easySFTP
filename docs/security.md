@@ -208,11 +208,16 @@ Apache (vhost or `.htaccess`):
   `.github/workflows/release-binaries.yml` and to the release commit. The
   launcher verifies it with `gh attestation verify` before running the binary,
   pinning both `--repo` and `--signer-workflow`, and **fails the run** if the
-  check runs and does not pass. You can run the same check yourself:
+  check runs and does not pass. When the action ref is a full commit SHA, the
+  launcher also pins `--source-digest` to that exact SHA. This prevents a
+  mutable release asset from being replaced with a validly attested binary
+  built by the same workflow from a different commit. You can run the same
+  check yourself:
 
   ```bash
   gh attestation verify easysftp_linux_x64 --repo eiserv/easySFTP \
-    --signer-workflow eiserv/easySFTP/.github/workflows/release-binaries.yml
+    --signer-workflow eiserv/easySFTP/.github/workflows/release-binaries.yml \
+    --source-digest '<full release commit SHA>'
   ```
 
   If the check cannot run at all (no `gh` on the runner, no token, or a `gh`

@@ -237,14 +237,24 @@ fi
 # attestation from another repository or another workflow.
 saw_repo=0
 saw_workflow=0
+saw_source_digest=0
+previous=''
 for arg in "$@"; do
   case "$arg" in
     eiserv/easySFTP) saw_repo=1 ;;
     eiserv/easySFTP/.github/workflows/release-binaries.yml) saw_workflow=1 ;;
   esac
+  if [[ "$previous" == '--source-digest' && "$arg" == "${EXPECTED_SOURCE_DIGEST:-}" ]]; then
+    saw_source_digest=1
+  fi
+  previous=$arg
 done
 if (( ! saw_repo || ! saw_workflow )); then
   printf 'mock gh: verify_release_provenance must pin --repo and --signer-workflow\n' >&2
+  exit 1
+fi
+if [[ -n "${EXPECTED_SOURCE_DIGEST:-}" && "$saw_source_digest" != 1 ]]; then
+  printf 'mock gh: verify_release_provenance must pin --source-digest to the action commit\n' >&2
   exit 1
 fi
 if [[ -z "${GH_TOKEN:-}" ]]; then
@@ -262,9 +272,10 @@ chmod +x "$tmp/ghbin/gh"
 provenance_asset="$tmp/assets/easysftp_linux_x64"
 
 provenance_ok=$(PATH="$tmp/ghbin:$PATH" GH_TOKEN=mock-token \
-  verify_release_provenance "$provenance_asset" easysftp_linux_x64 v1.2.3)
+  EXPECTED_SOURCE_DIGEST="$release_sha" \
+  verify_release_provenance "$provenance_asset" easysftp_linux_x64 v1.2.3 "$release_sha")
 expect_equal 'verified provenance is reported' \
-  'Verified build provenance for easysftp_linux_x64 (v1.2.3, built by eiserv/easySFTP/.github/workflows/release-binaries.yml)' \
+  "Verified build provenance for easysftp_linux_x64 (v1.2.3, built by eiserv/easySFTP/.github/workflows/release-binaries.yml from source commit $release_sha)" \
   "$provenance_ok"
 
 failing_provenance() (

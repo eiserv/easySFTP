@@ -231,8 +231,17 @@ verify_release_provenance() {
   local binary=$1
   local asset=$2
   local version=$3
+  local source_digest=${4:-}
   local token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
   local output=''
+  local -a constraints=(
+    --repo "$provenance_repo"
+    --signer-workflow "$provenance_workflow"
+  )
+
+  if [[ -n "$source_digest" ]]; then
+    constraints+=(--source-digest "$source_digest")
+  fi
 
   if ! command -v gh >/dev/null 2>&1; then
     provenance_unavailable 'the GitHub CLI (gh) is not installed on this runner'
@@ -248,13 +257,13 @@ verify_release_provenance() {
   fi
 
   if ! output=$(GH_TOKEN="$token" gh attestation verify "$binary" \
-    --repo "$provenance_repo" \
-    --signer-workflow "$provenance_workflow" 2>&1); then
+    "${constraints[@]}" 2>&1); then
     printf '%s\n' "$output" >&2
-    easysftp_error "build provenance verification failed for the $version release asset '$asset'; it was not built by $provenance_workflow. Do not use this run's result. Pin the action to a non-release commit to build from source instead."
+    easysftp_error "build provenance verification failed for the $version release asset '$asset'; it was not built by $provenance_workflow${source_digest:+ from source commit $source_digest}. Do not use this run's result. Pin the action to a non-release commit to build from source instead."
     return 1
   fi
-  printf 'Verified build provenance for %s (%s, built by %s)\n' "$asset" "$version" "$provenance_workflow"
+  printf 'Verified build provenance for %s (%s, built by %s%s)\n' \
+    "$asset" "$version" "$provenance_workflow" "${source_digest:+ from source commit $source_digest}"
 }
 
 # provenance_unavailable reports that the provenance check could not run, and
