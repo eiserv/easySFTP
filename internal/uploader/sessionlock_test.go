@@ -70,6 +70,42 @@ func TestCloseSSHRunsDuringAnInFlightReconnect(t *testing.T) {
 	sess.close()
 }
 
+func TestSessionReadsRunDuringAnInFlightPooledDial(t *testing.T) {
+	srv := startTestServer(t, withHangHandshakeAfter(1))
+	cfg := baseConfig(srv)
+	cfg.Connections = 2
+	cfg.Concurrency = 2
+
+	sess, err := newSession(context.Background(), cfg, newTuning(cfg), testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.setSpread(2)
+	acquired := make(chan struct{})
+	go func() {
+		_, _, _ = sess.acquire(1)
+		close(acquired)
+	}()
+	waitFor(t, "the pooled dial to reach the server", func() bool {
+		return atomic.LoadInt32(&srv.accepted) > 1
+	})
+
+	read := make(chan struct{})
+	go func() {
+		_ = sess.liveSSH()
+		close(read)
+	}()
+	select {
+	case <-read:
+	case <-time.After(time.Second):
+		t.Fatal("a session read blocked behind an in-flight pooled handshake")
+	}
+
+	srv.closeLiveConns()
+	<-acquired
+	sess.close()
+}
+
 // TestConcurrentReconnectsCollapseIntoOne pins the behaviour session.do
 // documents and that used to fall out of holding the mutex across the redial:
 // workers that all fail on the same connection cost one reconnect between

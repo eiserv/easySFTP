@@ -310,6 +310,32 @@ func TestSweepRunsForSyncUploads(t *testing.T) {
 	}
 }
 
+func TestSweepReachesPlannedDirectoryWithNoChangedFiles(t *testing.T) {
+	shrinkStaleTempMaxAge(t)
+
+	srv := startTestServer(t)
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{
+		"index.html":       "1",
+		"assets/deep/a.js": "unchanged",
+	})
+	cfg := syncConfig(srv, local)
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+
+	orphan := "/www/assets/deep/old.js" + tmpSuffix + ".42"
+	writeRemoteFile(t, srv.verifyClient(t), orphan, "partial")
+	// No local file changed. The upload subset is empty, but the deployment's
+	// full planned directory set still reaches assets/deep.
+	if _, err := Run(context.Background(), cfg, testLogger{t}); err != nil {
+		t.Fatal(err)
+	}
+	if remoteExists(t, srv, orphan) {
+		t.Error("stale temp file survived in a planned directory with no changed files")
+	}
+}
+
 // Dry runs must not delete anything, orphaned temp files included.
 func TestSweepSkippedInDryRun(t *testing.T) {
 	shrinkStaleTempMaxAge(t)

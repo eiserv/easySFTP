@@ -25,6 +25,10 @@ import (
 // rename stays on one filesystem and is atomic.
 const tmpSuffix = ".easysftp-tmp"
 
+func uploadTempPath(remotePath string, index int) string {
+	return fmt.Sprintf("%s%s.%d", remotePath, tmpSuffix, index)
+}
+
 // bakSuffix names the short-lived copy of the live file that the non-atomic
 // publish path parks the target under while it renames the upload into place.
 // It sits inside the tmpSuffix family on purpose, so isTempFileName recognises
@@ -70,13 +74,14 @@ type transferEnv struct {
 // planned is the deployment's full plan, which is the same slice as files for
 // overlay and clean but a superset of it for sync (which narrows the upload to
 // the changed files). Only the stale-temp sweep needs the difference: the
-// directories it visits follow what is being uploaded, but the targets it must
-// not remove are every planned one. See sweepStaleTemps and issue #186.
+// directories it visits are the deployment's full planned directory set, and
+// the targets it must not remove are every planned one. See sweepStaleTemps
+// and issues #186 and #244.
 //
 // It returns which files completed, indexed like files, so that on a partial
 // failure the caller knows what actually made it to the server (the sync
 // strategy uses this to persist a recovery manifest).
-func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, planned []fileItem, dirs []string, base string, stats *Stats, verb string, watch *stallWatchdog, skipUnchanged bool, log Logger) ([]bool, error) {
+func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, planned []fileItem, dirs, sweepDirs []string, base string, stats *Stats, verb string, watch *stallWatchdog, skipUnchanged bool, log Logger) ([]bool, error) {
 	// Declared before the first failure point: callers index the returned
 	// slice by file, so it must be sized even when nothing was uploaded.
 	completed := make([]bool, len(files))
@@ -93,10 +98,10 @@ func uploadFiles(ctx context.Context, cfg *config.Config, sess *session, files, 
 		}
 
 		// Before any upload starts, remove temp files that an earlier killed
-		// run left in the directories this run uploads into; see
+		// run left anywhere in the deployment's planned directory tree; see
 		// sweepStaleTemps.
 		endSweep := metrics.Phase("sweep_stale_temps")
-		sweepStaleTemps(ctx, sess, watch, base, files, planned, log)
+		sweepStaleTemps(ctx, sess, watch, base, sweepDirs, planned, log)
 		endSweep()
 	}
 
@@ -232,7 +237,7 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 	// The four round-trips below (open, write, chmod, rename) are sampled
 	// separately: in the small-file scenario the payload is a rounding error
 	// and the question is which of them the run is really spending its time in.
-	tmpPath := fmt.Sprintf("%s%s.%d", f.remotePath, tmpSuffix, index)
+	tmpPath := uploadTempPath(f.remotePath, index)
 	doneOpen := metrics.Op("sftp_open")
 	dst, err := client.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	doneOpen(err)
@@ -244,7 +249,7 @@ func uploadFile(ctx context.Context, env *transferEnv, f fileItem, index int, mo
 	// instead of streaming a whole large file first.
 	var reader io.Reader = &ctxReader{ctx: ctx, r: src}
 	if watch != nil {
-		reader = watch.reader(reader)
+		reader = watch.writeProgress(reader)
 	}
 	doneWrite := metrics.Op("sftp_write")
 	n, err := io.Copy(dst, reader)
@@ -463,13 +468,13 @@ func isTempFileName(name string) bool {
 // deletes a file it did not just write, so the orphans would otherwise sit in
 // the target forever, publicly served when the target is a web root.
 //
-// The swept set is exactly the directories that receive files this run (the
-// parent directory of every uploaded remote path) plus the deployment's remote
-// base, where the sync manifest's temp file lives even when no changed file
-// does. Nothing above the base is ever listed or touched: a deploy to
-// /var/www/html/blog has no business reading /var. That keeps the added
-// round-trips proportional to the run and the sweep's reach inside the
-// deployment.
+// The swept set is the deployment's full planned directory tree plus its
+// remote base, where the sync manifest's temp file lives even when no changed
+// file does. This deliberately reaches a directory whose files are unchanged:
+// otherwise debris from an interrupted run stays there forever. Nothing above
+// the base is ever listed or touched: a deploy to /var/www/html/blog has no
+// business reading /var. The extra listings buy complete cleanup inside the
+// tree and remain bounded by the plan.
 //
 // Three guards bound what the sweep may remove: the name must match the temp
 // pattern (isTempFileName), the entry must be older than staleTempMaxAge (a
@@ -498,20 +503,24 @@ func isTempFileName(name string) bool {
 // connection redials. A listing or removal failure only warns and never fails
 // the deploy. Removals are logged, so a user who wondered what those files were
 // gets an answer.
-func sweepStaleTemps(ctx context.Context, sess *session, watch *stallWatchdog, base string, files, planned []fileItem, log Logger) {
+func sweepStaleTemps(ctx context.Context, sess *session, watch *stallWatchdog, base string, plannedDirs []string, planned []fileItem, log Logger) {
 	keep := make(map[string]struct{}, len(planned))
 	for _, f := range planned {
 		keep[f.remotePath] = struct{}{}
 	}
-	touched := make(map[string]struct{}, len(files)+1)
+	touched := make(map[string]struct{}, len(plannedDirs)+1)
 	// A single-file overlay deploy without a trailing slash resolves base to
 	// the planned file itself, not a directory; its parent joins the set via
 	// path.Dir below, so the file path is skipped here.
-	if _, isPlannedFile := keep[base]; !isPlannedFile {
-		touched[base] = struct{}{}
+	sweepBase := base
+	if _, isPlannedFile := keep[base]; isPlannedFile {
+		sweepBase = path.Dir(base)
 	}
-	for _, f := range files {
-		touched[path.Dir(f.remotePath)] = struct{}{}
+	touched[sweepBase] = struct{}{}
+	for _, dir := range plannedDirs {
+		if dir == sweepBase || strings.HasPrefix(dir, strings.TrimSuffix(sweepBase, "/")+"/") {
+			touched[dir] = struct{}{}
+		}
 	}
 	dirs := make([]string, 0, len(touched))
 	for dir := range touched {

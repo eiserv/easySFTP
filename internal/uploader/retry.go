@@ -32,22 +32,23 @@ func uploadFileWithRetry(ctx context.Context, env *transferEnv, f fileItem, inde
 	doneFile := metrics.Op("file_upload")
 	defer func() { doneFile(err) }()
 	var lastErr error
+	client, c, gen := sess.acquire(index)
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
 			metrics.Count("retries", 1)
 			env.progress.failed()
-			backoff := time.Duration(1<<(attempt-1)) * time.Second
+			backoff := retryBackoff(attempt)
 			log.Warningf("retrying upload of %s in %s (attempt %d/%d): %v", f.localPath, backoff, attempt+1, retries+1, lastErr)
 			if err := sleepCtx(ctx, backoff); err != nil {
 				return 0, err
 			}
+			client, gen = sess.connection(c)
 		}
-		client, c, gen := sess.acquire(index)
 		if attempt > 0 {
 			// A previous attempt may have left its temp file behind (a dead
 			// connection cannot run the normal cleanup). Clear it so the
 			// fresh attempt starts from a clean slate; harmless when absent.
-			_ = client.Remove(fmt.Sprintf("%s%s.%d", f.remotePath, tmpSuffix, index))
+			_ = client.Remove(uploadTempPath(f.remotePath, index))
 		}
 		n, err := uploadFile(ctx, env, f, index, mode, client)
 		if err == nil {

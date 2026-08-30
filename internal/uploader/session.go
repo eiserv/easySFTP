@@ -93,7 +93,7 @@ func newSession(ctx context.Context, cfg *config.Config, tune *tuning, log Logge
 	var lastErr error
 	for attempt := 0; attempt <= cfg.Retries; attempt++ {
 		if attempt > 0 {
-			backoff := time.Duration(1<<(attempt-1)) * time.Second
+			backoff := retryBackoff(attempt)
 			log.Warningf("could not connect; retrying in %s (attempt %d/%d): %v", backoff, attempt+1, cfg.Retries+1, lastErr)
 			if err := sleepCtx(ctx, backoff); err != nil {
 				return nil, err
@@ -320,6 +320,16 @@ func (s *session) acquire(index int) (*sftp.Client, *conn, int) {
 	}
 }
 
+// connection snapshots the current client and generation of the connection a
+// file already acquired. Retries use this instead of routing the file index
+// through a possibly changed spread again, so runtime tuning cannot move a
+// retry away from the connection it just reconnected.
+func (s *session) connection(c *conn) (*sftp.Client, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return c.sftp, c.gen
+}
+
 // dialPooled opens one additional pooled connection with s.mu released, but
 // with at most one handshake in flight for the whole session. That second half
 // is what holding s.mu across the dial used to give and is worth keeping: a
@@ -472,7 +482,7 @@ func (s *session) reconnect(ctx context.Context, c *conn, gen int) (*sftp.Client
 		// The op spans the backoff too: from the run's point of view that wait
 		// is exactly what a dropped connection costs.
 		doneReconnect := metrics.Op("reconnect")
-		backoff := time.Duration(1<<(attempt-1)) * time.Second
+		backoff := retryBackoff(attempt)
 		s.log.Warningf("connection to the server was lost; reconnecting in %s (reconnect %d/%d)", backoff, attempt, s.cfg.Retries)
 		fresh, err := s.redial(ctx, backoff, &dead)
 		doneReconnect(err)

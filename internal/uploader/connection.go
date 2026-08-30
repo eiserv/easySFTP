@@ -29,15 +29,48 @@ const keepaliveInterval = 30 * time.Second
 // opens later; interval is a parameter so tests can drive it with a short tick
 // instead of waiting 30s.
 func sendKeepalives(ctx context.Context, clients func() []*ssh.Client, interval time.Duration) {
+	keepaliveLoop(ctx, func() []keepaliveSender {
+		live := clients()
+		senders := make([]keepaliveSender, len(live))
+		for i, client := range live {
+			senders[i] = client
+		}
+		return senders
+	}, interval)
+}
+
+type keepaliveSender interface {
+	SendRequest(name string, wantReply bool, payload []byte) (bool, []byte, error)
+}
+
+// keepaliveLoop decouples every connection from every other one. A keepalive
+// is advisory and does not need a reply; sending concurrently means a wedged
+// transport cannot prevent healthy pool members from being pinged. At most one
+// request per connection may be in flight, which also bounds blocked workers.
+func keepaliveLoop(ctx context.Context, clients func() []keepaliveSender, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	done := make(chan keepaliveSender)
+	inFlight := make(map[keepaliveSender]struct{})
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case client := <-done:
+			delete(inFlight, client)
 		case <-t.C:
-			for _, c := range clients() {
-				_, _, _ = c.SendRequest("keepalive@openssh.com", true, nil)
+			for _, client := range clients() {
+				if _, busy := inFlight[client]; busy {
+					continue
+				}
+				inFlight[client] = struct{}{}
+				go func(client keepaliveSender) {
+					_, _, _ = client.SendRequest("keepalive@openssh.com", false, nil)
+					select {
+					case done <- client:
+					case <-ctx.Done():
+					}
+				}(client)
 			}
 		}
 	}

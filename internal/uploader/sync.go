@@ -157,7 +157,7 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	// goes along with the changed subset because the stale-temp sweep must not
 	// remove an unchanged planned target that happens to be named like a temp
 	// file; see uploadFiles and issue #186.
-	completed, err := uploadFiles(ctx, cfg, sess, upload, p.files, dirs, base, stats, verb, watch, false, log)
+	completed, err := uploadFiles(ctx, cfg, sess, upload, p.files, dirs, p.remoteDirs, base, stats, verb, watch, false, log)
 	if err != nil {
 		writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, nil), log)
 		return err

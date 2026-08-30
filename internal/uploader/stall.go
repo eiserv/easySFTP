@@ -10,7 +10,7 @@ import (
 
 // stallWatchdog fails a run fast when its active transfers stop making
 // progress. Transfers mark themselves active for the duration of each upload
-// attempt and tick the watchdog on every read that moved bytes. A monitor
+// attempt and tick the watchdog after a remote write round completes. A monitor
 // goroutine fires when transfers are active but no tick arrived for the
 // configured timeout; firing closes the run's SSH connections, which unblocks
 // every SFTP operation stuck on the stalled server with an error, so the run
@@ -90,18 +90,26 @@ func (w *stallWatchdog) monitor() {
 	}
 }
 
-// reader wraps r so that every read that moved bytes counts as progress.
-func (w *stallWatchdog) reader(r io.Reader) io.Reader { return &tickReader{w: w, r: r} }
-
-type tickReader struct {
-	w *stallWatchdog
-	r io.Reader
+// writeProgress wraps the source with a one-read lag. uploadFile deliberately
+// passes a reader without Size/Len/Stat to pkg/sftp, which keeps its ReadFrom
+// loop sequential: it asks for the next packet only after the previous remote
+// write completed. Ticking before that next read therefore records server-side
+// progress, while ticking on the first local read would not.
+func (w *stallWatchdog) writeProgress(r io.Reader) io.Reader {
+	return &writeProgressReader{w: w, r: r}
 }
 
-func (t *tickReader) Read(p []byte) (int, error) {
-	n, err := t.r.Read(p)
-	if n > 0 {
-		t.w.ticks.Add(1)
+type writeProgressReader struct {
+	w       *stallWatchdog
+	r       io.Reader
+	pending bool
+}
+
+func (r *writeProgressReader) Read(p []byte) (int, error) {
+	if r.pending {
+		r.w.tick()
 	}
+	n, err := r.r.Read(p)
+	r.pending = n > 0
 	return n, err
 }
