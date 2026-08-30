@@ -236,7 +236,7 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		}
 		var files, dirs []string
 		endRemoteScan := metrics.Phase("remote_scan")
-		files, dirs, err := listRemoteContents(ctx, sess, base, watch)
+		files, dirs, err := listRemoteContents(ctx, sess, base, watch, log)
 		endRemoteScan()
 		if err != nil {
 			return fmt.Errorf("scanning remote directory %q: %w", p.pair.Remote, err)

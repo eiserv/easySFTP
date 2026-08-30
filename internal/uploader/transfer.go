@@ -550,12 +550,18 @@ func sweepDirStaleTemps(client *sftp.Client, dir string, keep map[string]struct{
 		if time.Since(e.ModTime()) < staleTempMaxAge {
 			continue
 		}
-		full := path.Join(dir, e.Name())
+		// Names come from the server; a temp-looking one that points out of
+		// the directory it was listed from is not swept (issue #223).
+		full, err := safeChild(dir, e.Name())
+		if err != nil {
+			log.Warningf("skipping remote entry while sweeping %s: %v", dir, err)
+			continue
+		}
 		if _, ok := keep[full]; ok {
 			continue
 		}
 		done := metrics.Op("sftp_remove")
-		err := client.Remove(full)
+		err = client.Remove(full)
 		done(err)
 		if err != nil {
 			if isConnError(err) {

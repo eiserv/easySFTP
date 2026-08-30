@@ -948,3 +948,94 @@ func (l *recordingLogger) Warningf(format string, args ...any) {
 	defer l.mu.Unlock()
 	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
 }
+
+// lyingList adds one synthetic entry, once, to the listing of one exact
+// directory, so a test can play a server that answers a listing with a name
+// that points out of the directory it listed. No real server does this; the
+// point is that easySFTP must not join it into a delete path (issue #223).
+//
+// The name to inject is ".." rather than "../victim.txt", because pkg/sftp's
+// client reduces every listed name to its last component (path.Base, see
+// client.go's ReadDir) and drops the two entries a server sends literally
+// ("." and ".."). What survives that is a name whose *base* climbs, e.g.
+// "sub/..", which reaches the caller as "..". That is the whole remaining
+// escape on this path, and it is enough: joined onto the target it is the
+// target's parent, which the clean scan would then walk and empty.
+//
+// Injecting only once keeps an unfixed run terminating: the parent's listing
+// contains the target again, so a permanent injection would loop forever
+// instead of failing.
+type lyingList struct {
+	inner sftp.FileLister
+	dir   string
+	name  string
+	isDir bool
+	once  sync.Once
+}
+
+func (l *lyingList) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
+	lister, err := l.inner.Filelist(r)
+	if err != nil || r.Method != "List" || r.Filepath != l.dir {
+		return lister, err
+	}
+	injected := false
+	l.once.Do(func() { injected = true })
+	if !injected {
+		return lister, nil
+	}
+	return sliceLister(append(drainLister(lister), fakeFileInfo{name: l.name, dir: l.isDir})), nil
+}
+
+func withLyingList(dir, name string, isDir bool) serverOption {
+	return func(s *testServer) {
+		s.handlers.FileList = &lyingList{inner: s.handlers.FileList, dir: dir, name: name, isDir: isDir}
+	}
+}
+
+// drainLister reads a ListerAt fully into a slice.
+func drainLister(l sftp.ListerAt) []os.FileInfo {
+	var all []os.FileInfo
+	buf := make([]os.FileInfo, 16)
+	for off := int64(0); ; {
+		n, err := l.ListAt(buf, off)
+		all = append(all, buf[:n]...)
+		off += int64(n)
+		if err != nil {
+			return all
+		}
+	}
+}
+
+// sliceLister serves a fixed slice of entries as a sftp.ListerAt.
+type sliceLister []os.FileInfo
+
+func (l sliceLister) ListAt(f []os.FileInfo, off int64) (int, error) {
+	if off >= int64(len(l)) {
+		return 0, io.EOF
+	}
+	n := copy(f, l[off:])
+	if off+int64(n) >= int64(len(l)) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+// fakeFileInfo is a minimal os.FileInfo for an entry the server invents. Its
+// ModTime is the epoch, so the stale-temp sweep considers it old enough to
+// remove and the name is the only thing standing between it and a Remove.
+type fakeFileInfo struct {
+	name string
+	dir  bool
+}
+
+func (f fakeFileInfo) Name() string { return f.name }
+func (f fakeFileInfo) Size() int64  { return 0 }
+func (f fakeFileInfo) Mode() os.FileMode {
+	if f.dir {
+		return os.ModeDir | 0o755
+	}
+	return 0o644
+}
+func (f fakeFileInfo) ModTime() time.Time { return time.Unix(0, 0) }
+func (f fakeFileInfo) IsDir() bool        { return f.dir }
+func (f fakeFileInfo) Sys() any           { return nil }

@@ -24,6 +24,19 @@ import (
 // and v2 (mtime in whole seconds); see readManifest.
 const manifestVersion = 3
 
+// maxManifestBytes caps what readManifest will pull into memory. The manifest
+// is a remote file, so its size is not this run's to trust: without a cap, a
+// server (or anything that can write the deploy target) turns a sync into an
+// unbounded allocation. At roughly 120 bytes per entry this still admits about
+// half a million files, far past any plausible deployment, and an over-size
+// manifest degrades to a first sync exactly like an unreadable one. See
+// issue #223.
+//
+// A var rather than a const only so the size test can lower it instead of
+// seeding 64 MiB through the in-process server; no test in this package runs
+// in parallel.
+var maxManifestBytes int64 = 64 << 20
+
 // manifestEntry records what is known about one file from the last sync.
 // Size and MTime enable the size+mtime fast path in hashPlanFiles: an entry
 // with MTime 0 never matches and always falls back to a full re-hash.
@@ -99,9 +112,20 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 
 	var toDelete []string // paths relative to base, ascending
 	for rel := range old.Files {
-		if _, ok := local[rel]; !ok {
-			toDelete = append(toDelete, rel)
+		if _, ok := local[rel]; ok {
+			continue
 		}
+		// The manifest lives in the deploy target, so its keys are data the
+		// server (or anything else that can write that one file) supplies,
+		// and every key that survives here becomes an argument to Remove.
+		// readManifest already drops keys that would leave the deployment;
+		// this re-checks at the point the key becomes a delete target, which
+		// is where the property is worth stating. See safeJoin and issue #223.
+		if _, err := safeJoin(base, rel); err != nil {
+			log.Warningf("ignoring sync manifest entry in %s: %v", base, err)
+			continue
+		}
+		toDelete = append(toDelete, rel)
 	}
 	sort.Strings(toDelete)
 
@@ -141,7 +165,8 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 
 	deletePaths := make([]string, len(toDelete))
 	for i, rel := range toDelete {
-		deletePaths[i] = path.Join(base, rel)
+		// Cannot fail: every entry of toDelete passed safeJoin above.
+		deletePaths[i], _ = safeJoin(base, rel)
 	}
 	endSweep := metrics.Phase("delete_sweep")
 	deleteResults, deleteErr := deleteRemoteFiles(ctx, cfg, sess, deletePaths, watch, log)
@@ -165,7 +190,8 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 
 	deletedFull := make([]string, len(deleted))
 	for i, rel := range deleted {
-		deletedFull[i] = path.Join(base, rel)
+		// deleted is a subset of toDelete, so this cannot fail either.
+		deletedFull[i], _ = safeJoin(base, rel)
 	}
 	pruneEmptyDirs(ctx, cfg, sess, watch, base, deletedFull)
 	endWrite := metrics.Phase("manifest_write")
@@ -270,12 +296,16 @@ func readManifest(client *sftp.Client, dir, name string, log Logger) (manifest, 
 	}
 	defer f.Close()
 
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(io.LimitReader(f, maxManifestBytes+1))
 	if err != nil {
 		if isConnError(err) {
 			return empty, err
 		}
 		log.Warningf("could not read sync manifest in %s (%v); treating as first sync", dir, err)
+		return empty, nil
+	}
+	if int64(len(data)) > maxManifestBytes {
+		log.Warningf("sync manifest in %s is larger than %s; treating as first sync (nothing will be deleted this run)", dir, HumanSize(maxManifestBytes))
 		return empty, nil
 	}
 
@@ -291,7 +321,7 @@ func readManifest(client *sftp.Client, dir, name string, log Logger) (manifest, 
 				m.Files[rel] = e
 			}
 		}
-		return m, nil
+		return confineManifest(m, dir, log), nil
 	}
 
 	var v1 struct {
@@ -303,11 +333,36 @@ func readManifest(client *sftp.Client, dir, name string, log Logger) (manifest, 
 		for rel, hash := range v1.Files {
 			files[rel] = manifestEntry{Hash: hash}
 		}
-		return manifest{Version: v1.Version, Files: files}, nil
+		return confineManifest(manifest{Version: v1.Version, Files: files}, dir, log), nil
 	}
 
 	log.Warningf("sync manifest in %s is unreadable; treating as first sync", dir)
 	return empty, nil
+}
+
+// confineManifest drops every entry whose key would not stay under dir. The
+// keys easySFTP writes are always plain relative slash paths, so a key that is
+// absolute or climbs out was not written by a run of this action; deleting
+// what it points at would hand whoever put it there the deploy account's whole
+// reach. Dropping is the right degradation: the file it named is simply not
+// deleted, and the next successful sync rewrites the manifest from the local
+// tree without it. See issue #223.
+func confineManifest(m manifest, dir string, log Logger) manifest {
+	var dropped []string
+	for rel := range m.Files {
+		if _, err := safeJoin(dir, rel); err != nil {
+			dropped = append(dropped, rel)
+		}
+	}
+	if len(dropped) == 0 {
+		return m
+	}
+	sort.Strings(dropped)
+	for _, rel := range dropped {
+		delete(m.Files, rel)
+	}
+	log.Warningf("sync manifest in %s has %d entry/entries that point outside the deployment (first: %q); ignoring them", dir, len(dropped), dropped[0])
+	return m
 }
 
 // writeManifest atomically writes the manifest into dir under name.

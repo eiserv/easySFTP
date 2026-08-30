@@ -206,7 +206,7 @@ func checkMaxDeletes(n int, cfg *config.Config) error {
 // The worker count is asked for per level rather than fixed for the scan: with
 // advanced.concurrency at auto it is the width of the level being listed, and a
 // tree whose levels are one directory wide never opens a worker it cannot use.
-func listRemoteContents(ctx context.Context, sess *session, root string, watch *stallWatchdog) (files, dirs []string, err error) {
+func listRemoteContents(ctx context.Context, sess *session, root string, watch *stallWatchdog, log Logger) (files, dirs []string, err error) {
 	level := []string{root}
 	for len(level) > 0 {
 		entries := make([][]fs.FileInfo, len(level))
@@ -250,7 +250,15 @@ func listRemoteContents(ctx context.Context, sess *session, root string, watch *
 		var next []string
 		for i, dir := range level {
 			for _, entry := range entries[i] {
-				full := path.Join(dir, entry.Name())
+				// The name comes from the server. Everything collected here
+				// is deleted a moment later, so an entry that does not name
+				// something inside the directory it was listed from is
+				// dropped rather than followed; see safeJoin and issue #223.
+				full, err := safeChild(dir, entry.Name())
+				if err != nil {
+					log.Warningf("skipping remote entry while scanning %s: %v", dir, err)
+					continue
+				}
 				if entry.IsDir() {
 					dirs = append(dirs, full)
 					next = append(next, full)
@@ -279,4 +287,69 @@ func parentDirs(remotePath string) []string {
 	}
 	sort.Strings(dirs)
 	return dirs
+}
+
+// safeJoin joins a remote-supplied relative path onto base and refuses
+// anything whose result would not stay strictly under it.
+//
+// path.Join cleans, it does not confine: path.Join("/var/www", "../../etc")
+// is "/etc". Three inputs reach this package from the server rather than from
+// the configuration, and all three end up as arguments to Remove or
+// RemoveDirectory: the keys of the sync manifest (a file that lives in the
+// deploy target, so anything else able to write there can choose them), and
+// the entry names a server returns from ReadDir during the clean-mode scan and
+// the stale-temp sweep. Whoever controls one of those should not thereby
+// control where this run deletes; see issue #223.
+//
+// The three are not equally exposed. The manifest is the one an attacker needs
+// no server access for, and its keys arrive exactly as written. Listing names
+// pass through pkg/sftp's client first, which drops a literal "." or ".." and
+// reduces everything else to its last component, so the only escape left on
+// that path is a name whose base climbs ("sub/.." arrives as ".."). That is
+// still an escape, and the guard is the same one, so both go through it.
+//
+// Rejecting a leading ".." after path.Clean is enough on its own (Clean
+// resolves every interior "..", so a cleaned relative path that does not start
+// with ".." cannot escape), but the containment check is kept as the property
+// the caller actually cares about, stated where a reader can see it.
+func safeJoin(base, rel string) (string, error) {
+	if rel == "" || rel == "." {
+		return "", fmt.Errorf("refusing remote-supplied path %q: it names no file under %q", rel, base)
+	}
+	if strings.HasPrefix(rel, "/") {
+		return "", fmt.Errorf("refusing remote-supplied path %q: it is absolute, not relative to %q", rel, base)
+	}
+	cleaned := path.Clean(rel)
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("refusing remote-supplied path %q: it resolves to %q, outside %q", rel, path.Join(base, cleaned), base)
+	}
+	full := path.Join(base, cleaned)
+	if !within(base, full) {
+		return "", fmt.Errorf("refusing remote-supplied path %q: it resolves to %q, outside %q", rel, full, base)
+	}
+	return full, nil
+}
+
+// safeChild is safeJoin for a single entry name from a directory listing,
+// where a path separator is already wrong: ReadDir returns names, not paths,
+// so a server that answers with one is not describing its own directory.
+func safeChild(dir, name string) (string, error) {
+	if strings.Contains(name, "/") {
+		return "", fmt.Errorf("refusing remote-supplied directory entry %q in %q: an entry name cannot contain %q", name, dir, "/")
+	}
+	return safeJoin(dir, name)
+}
+
+// within reports whether full is strictly below base, both as slash paths.
+func within(base, full string) bool {
+	b := path.Clean(base)
+	if b == "." {
+		// A relative base resolved against the session's working directory.
+		// Everything that is itself relative and does not climb is under it.
+		return !strings.HasPrefix(full, "/") && full != ".." && !strings.HasPrefix(full, "../")
+	}
+	if full == b {
+		return false
+	}
+	return strings.HasPrefix(full, strings.TrimSuffix(b, "/")+"/")
 }

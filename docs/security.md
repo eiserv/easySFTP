@@ -82,13 +82,29 @@ update the secret with the new keys.
 ## The sync manifest in web roots
 
 The `sync` strategy keeps its manifest (default `.easysftp-manifest.json`)
-inside each deploy target. When the target is a public web root, the manifest
-is served like any other file and discloses the deployment's complete relative
-file list plus a SHA-256 hash of each file's content. That is information
-disclosure, not compromise, but it maps out paths that are not linked anywhere
-(admin bundles, backups, generated files) and lets anyone confirm exact file
-contents by hash. Being a dotfile is not protection: Apache's default `.ht*`
-rules do not cover it, and nginx setups vary.
+inside each deploy target. The file is both **read by anyone who can reach the
+target over HTTP** and **parsed by the next run**, so it matters twice.
+
+**Read.** When the target is a public web root, the manifest is served like any
+other file and discloses the deployment's complete relative file list plus a
+SHA-256 hash of each file's content. That is information disclosure, not
+compromise, but it maps out paths that are not linked anywhere (admin bundles,
+backups, generated files) and lets anyone confirm exact file contents by hash.
+Being a dotfile is not protection: Apache's default `.ht*` rules do not cover
+it, and nginx setups vary.
+
+**Parsed.** The next `sync` run reads the manifest and deletes every entry that
+is no longer present locally, so its keys are delete targets. Anything else
+able to write that one file (a CMS upload directory, a second workflow, a
+compromised script, a shared-hosting neighbour) would otherwise be choosing
+where the deploy account deletes. easySFTP confines them: a key that is
+absolute or climbs out of the deployment is ignored with a warning and nothing
+is removed for it, and the same confinement applies to the entry names a server
+returns from a directory listing during a `clean` scan or the stale-temp sweep.
+The manifest is also read under a size cap and an over-size one is treated as a
+first sync (upload everything, delete nothing). Write access to the manifest
+still lets someone suppress deletions or force re-uploads inside the
+deployment, so the guidance below is worth following either way.
 
 Pick one (or both):
 
