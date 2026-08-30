@@ -255,34 +255,44 @@ exit "${MOCK_GH_EXIT:-0}"
 MOCK_GH
 chmod +x "$tmp/ghbin/gh"
 
-# Each case runs in a subshell so its PATH and token stay local to it.
-check_provenance() (
-  PATH=$1
-  export GH_TOKEN=$2 GITHUB_TOKEN=$2 MOCK_GH_EXIT=${3:-0}
-  verify_release_provenance "$tmp/assets/easysftp_linux_x64" easysftp_linux_x64 v1.2.3
-)
+# The three cases differ only in the environment the check runs in. The
+# failing one is a function because expect_failure takes a command, and its
+# body is a subshell so the environment it sets does not leak into the rest of
+# this script.
+provenance_asset="$tmp/assets/easysftp_linux_x64"
 
-provenance_ok=$(check_provenance "$tmp/ghbin:$PATH" mock-token)
+provenance_ok=$(PATH="$tmp/ghbin:$PATH" GH_TOKEN=mock-token \
+  verify_release_provenance "$provenance_asset" easysftp_linux_x64 v1.2.3)
 expect_equal 'verified provenance is reported' \
   'Verified build provenance for easysftp_linux_x64 (v1.2.3, built by eiserv/easySFTP/.github/workflows/release-binaries.yml)' \
   "$provenance_ok"
 
-expect_failure 'a failed provenance check fails the run' \
-  check_provenance "$tmp/ghbin:$PATH" mock-token 1
+failing_provenance() (
+  PATH="$tmp/ghbin:$PATH" GH_TOKEN=mock-token MOCK_GH_EXIT=1 \
+    verify_release_provenance "$provenance_asset" easysftp_linux_x64 v1.2.3
+)
+expect_failure 'a failed provenance check fails the run' failing_provenance
 
 # A runner without the tooling keeps working on the checksum alone and says so.
-# Tampering fails closed; a missing prerequisite does not break a deploy.
+# Tampering fails closed; a missing prerequisite does not break a deploy. Both
+# ways of missing it are covered: no gh on PATH, and no token to read the
+# attestation with.
 mkdir -p "$tmp/nogh"
-no_gh_warning=$(check_provenance "$tmp/nogh" '')
-case "$no_gh_warning" in
-  '::warning::easySFTP action: could not verify the build provenance'*)
-    echo 'PASS: an unavailable provenance check warns instead of failing'
-    ;;
-  *)
-    echo "FAIL: an unavailable provenance check should warn, got '$no_gh_warning'" >&2
-    failures=$((failures + 1))
-    ;;
-esac
+no_gh_warning=$(PATH="$tmp/nogh" \
+  verify_release_provenance "$provenance_asset" easysftp_linux_x64 v1.2.3)
+no_token_warning=$(PATH="$tmp/ghbin:$PATH" GH_TOKEN='' GITHUB_TOKEN='' \
+  verify_release_provenance "$provenance_asset" easysftp_linux_x64 v1.2.3)
+for warning in "$no_gh_warning" "$no_token_warning"; do
+  case "$warning" in
+    '::warning::easySFTP action: could not verify the build provenance'*)
+      echo 'PASS: an unavailable provenance check warns instead of failing'
+      ;;
+    *)
+      echo "FAIL: an unavailable provenance check should warn, got '$warning'" >&2
+      failures=$((failures + 1))
+      ;;
+  esac
+done
 
 if (( failures != 0 )); then
   echo "$failures action test(s) failed" >&2
