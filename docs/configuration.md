@@ -294,7 +294,10 @@ number you wrote always wins. A missing, unreadable or outdated file costs at
 most a warning, never the deploy. [Transfer
 tuning](tuning.md#remembering-what-it-measured) explains what is stored, what
 is restored (a measurement, never a decision) and when a record stops being
-used.
+used. The path is trusted configuration and is not a filesystem sandbox;
+normally keep it under the workspace or the runner's temporary directory.
+Concurrent runs may share one path: write-back is serialized and merges the
+latest records instead of replacing another run's update.
 
 #### `permissions`
 

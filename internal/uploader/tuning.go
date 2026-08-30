@@ -64,12 +64,10 @@ type tuning struct {
 	// ceiling is an upper bound on the pool that came from an earlier run
 	// against this server: it refused a connection, or a growth step
 	// measurably did not pay. Zero is the normal case and means the policy is
-	// free up to its own maximum. capped latches when the bound actually held
-	// something back, which is what tells the write-back that this run did
-	// not put the limit to the test (issue #212, and see
-	// autocache.MaxCeilingCarry).
+	// free up to its own maximum. Every run that inherits the ceiling but sees
+	// no fresh pushback carries it as untested, even when a small deploy never
+	// asked enough of the pool for the ceiling to clamp a decision (issue #246).
 	ceiling int
-	capped  bool
 
 	// observed is what this run's own transfers measured about the link, per
 	// connection, and observedBytes the size of the transfer that produced it.
@@ -222,7 +220,6 @@ func (t *tuning) clampLocked(n int) int {
 	if t.fixed.Connections > 0 || t.ceiling <= 0 || n <= t.ceiling {
 		return n
 	}
-	t.capped = true
 	return t.ceiling
 }
 
@@ -270,7 +267,7 @@ func (t *tuning) cacheObservation(runWork autotune.Workload, granted int, refuse
 		obs.ConnectionCeiling = max(granted, 1)
 	case t.spreadDown > 0:
 		obs.ConnectionCeiling = max(t.finalSpread, 1)
-	case t.capped:
+	case t.ceiling > 0:
 		obs.CeilingUntested = true
 	}
 	return obs

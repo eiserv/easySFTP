@@ -315,9 +315,8 @@ const (
 	// has been observed. It is what the whole policy starts from.
 	SourcePrior Source = iota
 	// SourceCached is an observation carried over from an earlier run with a
-	// similar workload and link (issue #212). easySFTP does not produce these
-	// yet; Link accepts them so the policy that consumes one is written and
-	// tested before the cache exists.
+	// similar workload and link (issue #212). It is validated against the
+	// current workload and freshly measured RTT before the policy consumes it.
 	SourceCached
 	// SourceRuntime is what this transfer is achieving right now, which is the
 	// only evidence that describes the run being tuned.

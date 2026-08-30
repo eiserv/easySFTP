@@ -143,14 +143,15 @@ func (c *autoCache) save(obs autocache.Observation, log Logger, debug bool) {
 	}
 	obs.Target = c.target
 	obs.Reused = c.decision.Hit
-	if !c.store.Update(obs, time.Now()) {
+	changed, err := autocache.UpdateFile(c.path, obs, time.Now())
+	if err != nil {
+		log.Warningf("could not write the auto-tuning cache at %s (%v); the next run plans from easySFTP's own assumptions", c.path, err)
+		return
+	}
+	if !changed {
 		if debug {
 			log.Infof("auto tuning: the cache at %s already says everything this run learned", c.path)
 		}
-		return
-	}
-	if err := autocache.Save(c.path, c.store); err != nil {
-		log.Warningf("could not write the auto-tuning cache at %s (%v); the next run plans from easySFTP's own assumptions", c.path, err)
 		return
 	}
 	if debug {

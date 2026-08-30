@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -38,6 +39,57 @@ func TestRoundTrip(t *testing.T) {
 	b.MeasuredAt, b.LastUsed = time.Time{}, time.Time{}
 	if a != b {
 		t.Errorf("record changed on the way through the file:\n got %+v\nwant %+v", b, a)
+	}
+}
+
+func TestConcurrentUpdateFileMergesEveryWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auto.json")
+	const writers = 6
+	start := make(chan struct{})
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, err := UpdateFile(path, Observation{
+				Target:   string(rune('a' + i)),
+				Workload: mediumTree(),
+				Link:     measuredLink(),
+				Measured: true,
+			}, time.Date(2026, 8, 30, i, 0, 0, 0, time.UTC))
+			errs <- err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Records) != writers {
+		t.Fatalf("concurrent writers left %d records, want %d: %+v", len(store.Records), writers, store.Records)
+	}
+	seen := map[string]bool{}
+	for _, record := range store.Records {
+		seen[record.Target] = true
+	}
+	for i := 0; i < writers; i++ {
+		target := string(rune('a' + i))
+		if !seen[target] {
+			t.Errorf("record %q was lost", target)
+		}
+	}
+	if _, err := os.Stat(path + ".lock"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("lock sidecar survived the writers: %v", err)
 	}
 }
 

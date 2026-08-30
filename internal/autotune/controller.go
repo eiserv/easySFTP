@@ -458,7 +458,10 @@ func (c *Controller) remaining(p Progress) Workload {
 	}
 	largest := int64(0)
 	if uploads > 0 {
-		largest = bytes / int64(uploads)
+		// Progress does not identify which individual files remain. Preserve
+		// the plan's largest-file bound instead of silently replacing it with
+		// the mean, capped only by all bytes still left to upload.
+		largest = min(c.workload.LargestUpload, bytes)
 	}
 	// The shape carries over from the plan: which files are left is not known,
 	// but nothing observed so far suggests they are shaped differently from

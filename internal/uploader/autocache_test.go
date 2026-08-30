@@ -250,6 +250,20 @@ func TestCacheObservationReadsTheServersAnswer(t *testing.T) {
 		}
 	})
 
+	t.Run("small deploy still carries an inherited ceiling", func(t *testing.T) {
+		tune := newTuning(adaptive())
+		tune.setLink(autotune.Link{RTT: 13 * time.Millisecond, Handshake: 360 * time.Millisecond})
+		tune.applyCache(autocache.Decision{Hit: true, ConnectionCeiling: 4})
+		// One small file plans one connection, so the inherited ceiling never
+		// has to clamp it. That makes the ceiling untested, not disproved.
+		tune.planFor(autotune.SummarizeUploads([]int64{4096}))
+
+		obs := tune.cacheObservation(work, 1, false)
+		if obs.ConnectionCeiling != 0 || !obs.CeilingUntested {
+			t.Errorf("obs = %+v, want the unused inherited ceiling carried as untested", obs)
+		}
+	})
+
 	t.Run("nothing pushed back", func(t *testing.T) {
 		tune := newTuning(adaptive())
 		obs := tune.cacheObservation(work, 4, false)

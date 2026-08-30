@@ -6,12 +6,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // fileMode is what the cache file is created with. It holds no secrets (the
 // target is a fingerprint, see Record.Target), but it describes somebody's
 // deployment and there is no reason for it to be world readable.
 const fileMode = 0o600
+
+const (
+	lockWait  = 3 * time.Second
+	lockStale = 10 * time.Minute
+	lockPoll  = 25 * time.Millisecond
+)
 
 // ErrEmpty reports a path that holds no usable store yet: the file does not
 // exist, or it is empty. It is the normal state of a first run and the caller
@@ -64,6 +71,36 @@ func Save(path string, s *Store) error {
 	if path == "" || s == nil {
 		return nil
 	}
+	return withStoreLock(path, func() error { return saveUnlocked(path, s) })
+}
+
+// UpdateFile serializes one run's read-modify-write with every other process
+// using the same cache path. Reloading after the lock is acquired is the
+// important part: each writer merges its observation into the records the
+// previous writer just committed instead of replacing the whole document it
+// happened to read at startup.
+func UpdateFile(path string, obs Observation, at time.Time) (bool, error) {
+	if path == "" {
+		return false, nil
+	}
+	changed := false
+	err := withStoreLock(path, func() error {
+		store, loadErr := Load(path)
+		if loadErr != nil && !errors.Is(loadErr, ErrEmpty) {
+			// The caller already warned when it read this unusable file. A fresh
+			// valid store is the recoverable outcome at write-back time.
+			store = &Store{Version: FormatVersion}
+		}
+		changed = store.Update(obs, at)
+		if !changed {
+			return nil
+		}
+		return saveUnlocked(path, store)
+	})
+	return changed, err
+}
+
+func saveUnlocked(path string, s *Store) error {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -93,4 +130,48 @@ func Save(path string, s *Store) error {
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+// withStoreLock is a small cross-platform lock built from O_EXCL. The lock is
+// held only around a tiny JSON read and atomic write. A killed process can
+// leave the sidecar behind, so an old lock is recoverable; a fresh lock that
+// does not clear within lockWait costs a cache warning, never the deploy.
+func withStoreLock(path string, fn func() error) error {
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	lockPath := path + ".lock"
+	deadline := time.Now().Add(lockWait)
+	for {
+		lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
+		if err == nil {
+			name := lock.Name()
+			if _, writeErr := fmt.Fprintf(lock, "%d\n", os.Getpid()); writeErr != nil {
+				lock.Close()
+				os.Remove(name)
+				return writeErr
+			}
+			if closeErr := lock.Close(); closeErr != nil {
+				os.Remove(name)
+				return closeErr
+			}
+			defer os.Remove(name)
+			return fn()
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > lockStale {
+			if removeErr := os.Remove(lockPath); removeErr == nil || errors.Is(removeErr, os.ErrNotExist) {
+				continue
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for concurrent cache writer at %s", lockPath)
+		}
+		time.Sleep(lockPoll)
+	}
 }
