@@ -255,17 +255,25 @@ exit "${MOCK_GH_EXIT:-0}"
 MOCK_GH
 chmod +x "$tmp/ghbin/gh"
 
-provenance_ok=$(
-  PATH="$tmp/ghbin:$PATH" GH_TOKEN=mock-token     verify_release_provenance "$tmp/assets/easysftp_linux_x64" easysftp_linux_x64 v1.2.3
+# Each case runs in a subshell so its PATH and token stay local to it.
+check_provenance() (
+  PATH=$1
+  export GH_TOKEN=$2 GITHUB_TOKEN=$2 MOCK_GH_EXIT=${3:-0}
+  verify_release_provenance "$tmp/assets/easysftp_linux_x64" easysftp_linux_x64 v1.2.3
 )
-expect_equal 'verified provenance is reported'   'Verified build provenance for easysftp_linux_x64 (v1.2.3, built by eiserv/easySFTP/.github/workflows/release-binaries.yml)'   "$provenance_ok"
 
-expect_failure 'a failed provenance check fails the run' env   PATH="$tmp/ghbin:$PATH" GH_TOKEN=mock-token MOCK_GH_EXIT=1   bash -c 'source "$0"; verify_release_provenance "$1" easysftp_linux_x64 v1.2.3'   "$repo_root/scripts/action-lib.sh" "$tmp/assets/easysftp_linux_x64"
+provenance_ok=$(check_provenance "$tmp/ghbin:$PATH" mock-token)
+expect_equal 'verified provenance is reported' \
+  'Verified build provenance for easysftp_linux_x64 (v1.2.3, built by eiserv/easySFTP/.github/workflows/release-binaries.yml)' \
+  "$provenance_ok"
+
+expect_failure 'a failed provenance check fails the run' \
+  check_provenance "$tmp/ghbin:$PATH" mock-token 1
 
 # A runner without the tooling keeps working on the checksum alone and says so.
 # Tampering fails closed; a missing prerequisite does not break a deploy.
 mkdir -p "$tmp/nogh"
-no_gh_warning=$(PATH="$tmp/nogh" GH_TOKEN='' GITHUB_TOKEN=''   verify_release_provenance "$tmp/assets/easysftp_linux_x64" easysftp_linux_x64 v1.2.3)
+no_gh_warning=$(check_provenance "$tmp/nogh" '')
 case "$no_gh_warning" in
   '::warning::easySFTP action: could not verify the build provenance'*)
     echo 'PASS: an unavailable provenance check warns instead of failing'
