@@ -5,6 +5,43 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0](https://github.com/eiserv/easySFTP/compare/v3.7.0...v3.8.0) (2026-08-30)
+
+
+### Features
+
+* **action:** mask credentials the runner does not mask for us ([#252](https://github.com/eiserv/easySFTP/issues/252)) ([3d233ed](https://github.com/eiserv/easySFTP/commit/3d233edb7c12519d6cf46744ff61dcd9c691693c)), closes [#149](https://github.com/eiserv/easySFTP/issues/149)
+* **auth:** support keyboard-interactive passwords ([#268](https://github.com/eiserv/easySFTP/issues/268)) ([2f167a0](https://github.com/eiserv/easySFTP/commit/2f167a080a148e5895ec1182dba576d5e4d1d7bd))
+* **security:** verify release binaries against build provenance ([#263](https://github.com/eiserv/easySFTP/issues/263)) ([d57980e](https://github.com/eiserv/easySFTP/commit/d57980e9508ce6a8df661978546a10b88f616e36))
+* **ssh:** allow explicit legacy algorithms ([#269](https://github.com/eiserv/easySFTP/issues/269)) ([d54f266](https://github.com/eiserv/easySFTP/commit/d54f2664b6a20fb736284d71a99df60adffdcd4b))
+
+
+### Bug Fixes
+
+* **action:** bound the release fetch so a stall fails instead of hanging ([#251](https://github.com/eiserv/easySFTP/issues/251)) ([122ad32](https://github.com/eiserv/easySFTP/commit/122ad32b14d02671f78f57175f2311cfbafeed0b)), closes [#236](https://github.com/eiserv/easySFTP/issues/236)
+* **autocache:** anchor a record that never held a throughput like any other ([#255](https://github.com/eiserv/easySFTP/issues/255)) ([8683f2c](https://github.com/eiserv/easySFTP/commit/8683f2c795e2a90fe39ebdc8481b5905d83506c6)), closes [#225](https://github.com/eiserv/easySFTP/issues/225)
+* **benchmark:** derive the stored settings sentence from the config ([#257](https://github.com/eiserv/easySFTP/issues/257)) ([4395ae2](https://github.com/eiserv/easySFTP/commit/4395ae276f1ca5658b6539e2ef919ff53f55d1bd)), closes [#229](https://github.com/eiserv/easySFTP/issues/229)
+* **security:** bind release attestations to SHA pins ([#265](https://github.com/eiserv/easySFTP/issues/265)) ([a0c45e0](https://github.com/eiserv/easySFTP/commit/a0c45e0f783adb0c4aad1f52ef318cfa64dc0484))
+* **tuning:** preserve cache evidence across concurrent runs ([#267](https://github.com/eiserv/easySFTP/issues/267)) ([036764b](https://github.com/eiserv/easySFTP/commit/036764b4aac87bbe024f413a1c9db181e1f1f539))
+* **uploader:** confine remote-supplied names to the deployment before deleting ([#260](https://github.com/eiserv/easySFTP/issues/260)) ([b1228bb](https://github.com/eiserv/easySFTP/commit/b1228bbc9c72677166178ca7942a343aa824997a)), closes [#223](https://github.com/eiserv/easySFTP/issues/223)
+* **uploader:** harden pool retries and cleanup ([#266](https://github.com/eiserv/easySFTP/issues/266)) ([8b84066](https://github.com/eiserv/easySFTP/commit/8b84066c52c7227375cbaa29324a15a1ea6e4edb))
+* **uploader:** make safety.max_deletes count directories and cover the run ([#262](https://github.com/eiserv/easySFTP/issues/262)) ([8f78e69](https://github.com/eiserv/easySFTP/commit/8f78e69ed9dfbd55d3f7d18ea6f4a428c44cfeed)), closes [#237](https://github.com/eiserv/easySFTP/issues/237)
+* **uploader:** refuse a destructive target that climbs above the login directory ([#254](https://github.com/eiserv/easySFTP/issues/254)) ([154ac45](https://github.com/eiserv/easySFTP/commit/154ac453fac28c4d043cfa626670814130a80b6f)), closes [#222](https://github.com/eiserv/easySFTP/issues/222)
+* **uploader:** stop the non-atomic publish from losing the file it replaces ([#256](https://github.com/eiserv/easySFTP/issues/256)) ([e498380](https://github.com/eiserv/easySFTP/commit/e49838025f7f103fcd07b3a698ebbe749def9681)), closes [#242](https://github.com/eiserv/easySFTP/issues/242)
+* **uploader:** stop the stall watchdog blocking behind an in-flight redial ([#261](https://github.com/eiserv/easySFTP/issues/261)) ([2b0d579](https://github.com/eiserv/easySFTP/commit/2b0d5794d15c85040487aa2cd3eb4c5f78f89acd)), closes [#224](https://github.com/eiserv/easySFTP/issues/224)
+
+
+### Performance
+
+* **action:** keep the benchmark corpus out of the action download ([#248](https://github.com/eiserv/easySFTP/issues/248)) ([5111668](https://github.com/eiserv/easySFTP/commit/5111668783853cf945d464d2297e46c57646bac7)), closes [#226](https://github.com/eiserv/easySFTP/issues/226)
+* **tuning:** fit the throughput prior to the link that was measured ([#258](https://github.com/eiserv/easySFTP/issues/258)) ([fa61777](https://github.com/eiserv/easySFTP/commit/fa61777124cba89509ad99a0f3ee2f7a48c0a4d8))
+
+
+### Documentation
+
+* **agents:** make AGENTS.md a pointer instead of a stale second copy ([#250](https://github.com/eiserv/easySFTP/issues/250)) ([f0b1a7b](https://github.com/eiserv/easySFTP/commit/f0b1a7b7454df252118894576eddacc6cba3e537)), closes [#231](https://github.com/eiserv/easySFTP/issues/231)
+* **readme:** stop claiming the alternatives are unmaintained ([#249](https://github.com/eiserv/easySFTP/issues/249)) ([057aa8e](https://github.com/eiserv/easySFTP/commit/057aa8e702e4fd815224b81ce6263c5066dfe827)), closes [#234](https://github.com/eiserv/easySFTP/issues/234)
+
 ## [3.7.0](https://github.com/eiserv/easySFTP/compare/v3.6.0...v3.7.0) (2026-08-25)
 
 
