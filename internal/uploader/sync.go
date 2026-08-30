@@ -62,7 +62,7 @@ type manifest struct {
 // manifest: it uploads new/changed files, deletes files that the previous sync
 // wrote but are now gone locally, prunes empty directories and rewrites the
 // manifest. Unchanged files are skipped.
-func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, watch *stallWatchdog, log Logger) error {
+func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, budget *deleteBudget, watch *stallWatchdog, log Logger) error {
 	verb := planVerb(cfg)
 	base := normalizeRemote(p.pair.Remote)
 
@@ -138,7 +138,7 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		if err := checkRemoteRoot(p.pair.Remote); err != nil {
 			return err
 		}
-		if err := checkMaxDeletes(len(toDelete), cfg); err != nil {
+		if err := budget.reserve(len(toDelete)); err != nil {
 			return err
 		}
 	}
@@ -193,7 +193,10 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		// deleted is a subset of toDelete, so this cannot fail either.
 		deletedFull[i], _ = safeJoin(base, rel)
 	}
-	pruneEmptyDirs(ctx, cfg, sess, watch, base, deletedFull)
+	// The prune's directories are only known once the file deletions have
+	// happened, so they are charged one at a time and pruning stops (rather
+	// than the run failing) if the budget runs out; see deleteBudget.
+	stats.DirsDeleted += pruneEmptyDirs(ctx, cfg, sess, watch, base, deletedFull, budget)
 	endWrite := metrics.Phase("manifest_write")
 	err = sess.do(ctx, watch, func(client *sftp.Client) error {
 		return writeManifest(client, base, cfg.SyncManifestName(), manifest{Version: manifestVersion, Files: local})
@@ -391,7 +394,7 @@ func writeManifest(client *sftp.Client, dir, name string, m manifest) error {
 // deepest first, walking up to (but not including) base. Each removal runs
 // through sess.do: the outcome stays best-effort, but a dropped connection is
 // redialed rather than silently failing every remaining removal.
-func pruneEmptyDirs(ctx context.Context, cfg *config.Config, sess *session, watch *stallWatchdog, base string, deleted []string) {
+func pruneEmptyDirs(ctx context.Context, cfg *config.Config, sess *session, watch *stallWatchdog, base string, deleted []string, budget *deleteBudget) int {
 	seen := map[string]struct{}{}
 	var candidates []string
 	for _, f := range deleted {
@@ -404,7 +407,7 @@ func pruneEmptyDirs(ctx context.Context, cfg *config.Config, sess *session, watc
 		}
 	}
 	defer metrics.Phase("prune_dirs")()
-	removeRemoteDirs(ctx, cfg, sess, watch, candidates)
+	return removeRemoteDirs(ctx, cfg, sess, watch, candidates, budget)
 }
 
 // hashFile returns the sha256 hex digest of a local file's contents.

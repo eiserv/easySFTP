@@ -66,6 +66,7 @@ func run() error {
 	stats, runErr := uploader.Run(ctx, cfg, ghaLogger{})
 	metrics.Set("files_uploaded", int64(stats.FilesUploaded))
 	metrics.Set("files_deleted", int64(stats.FilesDeleted))
+	metrics.Set("dirs_deleted", int64(stats.DirsDeleted))
 	metrics.Set("files_skipped", int64(stats.FilesSkipped))
 	metrics.Set("bytes_uploaded", stats.BytesUploaded)
 	if runErr != nil {
@@ -76,8 +77,8 @@ func run() error {
 		mode = "would upload (dry-run)"
 	}
 	if runErr == nil {
-		gha.Infof("done: %s %d file(s), %s, deleted %d file(s), skipped %d unchanged, took %s",
-			mode, stats.FilesUploaded, humanBytes(stats.BytesUploaded), stats.FilesDeleted, stats.FilesSkipped, stats.Duration.Round(time.Millisecond))
+		gha.Infof("done: %s %d file(s), %s, deleted %d file(s) and %d director(y/ies), skipped %d unchanged, took %s",
+			mode, stats.FilesUploaded, humanBytes(stats.BytesUploaded), stats.FilesDeleted, stats.DirsDeleted, stats.FilesSkipped, stats.Duration.Round(time.Millisecond))
 	}
 
 	reportStats(cfg, stats, mode, runErr)
@@ -169,6 +170,7 @@ func reportStats(cfg *config.Config, stats *uploader.Stats, mode string, runErr 
 
 	gha.SetOutput("files-uploaded", fmt.Sprintf("%d", stats.FilesUploaded))
 	gha.SetOutput("files-deleted", fmt.Sprintf("%d", stats.FilesDeleted))
+	gha.SetOutput("dirs-deleted", fmt.Sprintf("%d", stats.DirsDeleted))
 	gha.SetOutput("files-skipped", fmt.Sprintf("%d", stats.FilesSkipped))
 	gha.SetOutput("bytes-uploaded", fmt.Sprintf("%d", stats.BytesUploaded))
 	gha.SetOutput("duration-ms", fmt.Sprintf("%d", stats.Duration.Milliseconds()))
@@ -178,8 +180,8 @@ func reportStats(cfg *config.Config, stats *uploader.Stats, mode string, runErr 
 		configSource = fmt.Sprintf("`%s` (version 3)", cfg.ConfigPath)
 	}
 	summary := fmt.Sprintf(
-		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Host key | %s |\n| Configuration | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %s |\n| Duration | %s |\n",
-		status, hostKeyStatus(cfg), configSource, mode, stats.FilesUploaded, stats.FilesDeleted, stats.FilesSkipped, humanBytes(stats.BytesUploaded), stats.Duration.Round(time.Millisecond))
+		"### easySFTP\n\n| Metric | Value |\n|---|---|\n| Status | %s |\n| Host key | %s |\n| Configuration | %s |\n| Files %s | %d |\n| Files deleted | %d |\n| Directories removed | %d |\n| Files skipped (unchanged) | %d |\n| Bytes transferred | %s |\n| Duration | %s |\n",
+		status, hostKeyStatus(cfg), configSource, mode, stats.FilesUploaded, stats.FilesDeleted, stats.DirsDeleted, stats.FilesSkipped, humanBytes(stats.BytesUploaded), stats.Duration.Round(time.Millisecond))
 	summary += deploymentBreakdown(stats.Deployments)
 	gha.AppendSummary(summary)
 }

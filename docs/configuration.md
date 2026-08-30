@@ -156,7 +156,7 @@ deployments:                   # at least one named deployment
     mode: clean
 
 safety:
-  max_deletes: 500             # 0 = unlimited
+  max_deletes: 500             # files + directories, whole run; 0 = unlimited
 
 advanced:
   retries: 2
@@ -186,7 +186,7 @@ sync:
 | `connection` | ✅ | Where and as whom to connect. Credentials are **not** here; they stay inputs. |
 | `defaults` | | `mode` and `exclude` defaults applied to every deployment. |
 | `deployments` | ✅ | A **map** of named deployments (at least one). The name appears in logs and the job summary. |
-| `safety` | | `max_deletes` (0 = unlimited); see [delete guards](strategies.md#delete-guards). |
+| `safety` | | `max_deletes`: the most remote entries, **files and directories together**, the **whole run** may remove (0 = unlimited, the default); see [delete guards](strategies.md#delete-guards). |
 | `advanced` | | Transfer tuning; the defaults suit most deploys. |
 | `permissions` | | Remote file/dir modes and `preserve_times` (all best-effort). |
 | `sync` | | The sync mode's manifest name and fast-path. |
@@ -393,6 +393,7 @@ exclude: |
 |---|---|
 | `files-uploaded` | Number of uploaded files (planned files in dry-run mode). |
 | `files-deleted` | Number of remote files removed by the `clean`/`sync` mode. |
+| `dirs-deleted` | Number of remote directories removed by the `clean` mode's sweep or the `sync` mode's prune. Counted against `safety.max_deletes` together with `files-deleted`. |
 | `files-skipped` | Number of unchanged files skipped (by `sync`, or by `overlay` with `advanced.skip_unchanged`). |
 | `bytes-uploaded` | Total bytes transferred (planned bytes in dry-run mode). |
 | `duration-ms` | Total runtime in milliseconds. |

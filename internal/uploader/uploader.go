@@ -35,6 +35,11 @@ type Logger interface {
 type Stats struct {
 	FilesUploaded int
 	FilesDeleted  int
+	// DirsDeleted counts remote directories removed by the clean mode's sweep
+	// and the sync mode's prune. They are reported apart from FilesDeleted so
+	// the existing files-deleted output keeps meaning files, but they are
+	// charged to the same safety.max_deletes budget; see deleteBudget.
+	DirsDeleted   int
 	FilesSkipped  int // unchanged files skipped (sync, or overlay with skip-unchanged)
 	BytesUploaded int64
 	Duration      time.Duration
@@ -62,6 +67,10 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	start := time.Now()
 	stats := &Stats{}
 	defer func() { stats.Duration = time.Since(start) }()
+
+	// One budget for the whole run: safety.max_deletes lives under a run-wide
+	// safety: section and is enforced like one (issue #237).
+	budget := newDeleteBudget(cfg)
 
 	// Everything the configuration left at "auto" is this value's to decide;
 	// see internal/autotune and docs/tuning.md. The benchmark reads the
@@ -161,7 +170,7 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 		}
 		before := *stats
 		planStart := time.Now()
-		err := executePlan(ctx, cfg, sess, p, stats, watch, log)
+		err := executePlan(ctx, cfg, sess, p, stats, budget, watch, log)
 		// Recorded from the before/after delta (not threaded through
 		// executePlan) so a deployment's partial progress on failure is
 		// still captured, matching the totals' own partial-progress
@@ -206,7 +215,7 @@ func logDeploymentSummary(cfg *config.Config, pair config.UploadPair, ds Deploym
 }
 
 // executePlan performs (or previews) one plan according to its strategy.
-func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, watch *stallWatchdog, log Logger) error {
+func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, budget *deleteBudget, watch *stallWatchdog, log Logger) error {
 	header := fmt.Sprintf("%s => %s [%s] (%d local files)", p.pair.Local, p.pair.Remote, p.strategy, len(p.files))
 	if p.pair.Name != "" {
 		header = fmt.Sprintf("%s: %s", p.pair.Name, header)
@@ -219,14 +228,14 @@ func executePlan(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	}
 
 	if p.strategy == config.StrategySync {
-		return executeSync(ctx, cfg, sess, p, stats, watch, log)
+		return executeSync(ctx, cfg, sess, p, stats, budget, watch, log)
 	}
-	return executeOverlayOrClean(ctx, cfg, sess, p, stats, watch, log)
+	return executeOverlayOrClean(ctx, cfg, sess, p, stats, budget, watch, log)
 }
 
 // executeOverlayOrClean uploads the plan, first wiping the remote target when
 // the strategy is clean.
-func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, watch *stallWatchdog, log Logger) error {
+func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *session, p plan, stats *Stats, budget *deleteBudget, watch *stallWatchdog, log Logger) error {
 	verb := planVerb(cfg)
 	base := normalizeRemote(p.pair.Remote)
 
@@ -241,7 +250,10 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		if err != nil {
 			return fmt.Errorf("scanning remote directory %q: %w", p.pair.Remote, err)
 		}
-		if err := checkMaxDeletes(len(files), cfg); err != nil {
+		// Files and directories together: everything this sweep is about to
+		// remove is known now, so a run that would go over the limit is refused
+		// before it removes anything (issue #237).
+		if err := budget.reserve(len(files) + len(dirs)); err != nil {
 			return err
 		}
 		endSweep := metrics.Phase("delete_sweep")
@@ -253,7 +265,7 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		}
 		// Best effort, but parallel within a depth: siblings are independent;
 		// parents still wait for every child level to finish.
-		removeRemoteDirs(ctx, cfg, sess, watch, dirs)
+		stats.DirsDeleted += removeRemoteDirs(ctx, cfg, sess, watch, dirs, nil)
 		endSweep()
 	}
 

@@ -63,7 +63,8 @@ deployments:
     # single files only support the overlay mode
 
 safety:
-  # Abort if a run would delete more than this many files (0 = unlimited).
+  # Abort if the whole run would remove more than this many remote entries,
+  # files and directories together (0 = unlimited, the default).
   # Deleting the remote root ("/") is always refused, independent of this.
   max_deletes: 200
 

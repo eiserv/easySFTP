@@ -8,6 +8,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pkg/sftp"
 
@@ -81,11 +82,24 @@ func countDeleted(deleted []bool) int {
 // removeRemoteDirs removes independent directories at the same depth in
 // parallel, while keeping the real child-before-parent dependency between
 // depths. Directory removal is best effort, matching the previous behavior:
-// a non-empty or unreadable directory is left in place.
-func removeRemoteDirs(ctx context.Context, cfg *config.Config, sess *session, watch *stallWatchdog, dirs []string) {
-	if cfg.DryRun || len(dirs) == 0 {
-		return
+// a non-empty or unreadable directory is left in place. It returns how many
+// directories it actually removed, which is what the run reports as
+// dirs-deleted.
+//
+// budget is non-nil only where the count could not be reserved in advance
+// (the sync mode's prune of directories it just emptied): removals are then
+// charged one at a time and pruning stops once the budget is spent. The clean
+// mode reserves its whole listing up front and passes nil; see deleteBudget
+// and issue #237.
+func removeRemoteDirs(ctx context.Context, cfg *config.Config, sess *session, watch *stallWatchdog, dirs []string, budget *deleteBudget) int {
+	if len(dirs) == 0 {
+		return 0
 	}
+	if cfg.DryRun {
+		// The planned count, like every other dry-run number.
+		return len(dirs)
+	}
+	var removed atomic.Int64
 	byDepth := make(map[int][]string)
 	var depths []int
 	for _, dir := range dirs {
@@ -100,14 +114,24 @@ func removeRemoteDirs(ctx context.Context, cfg *config.Config, sess *session, wa
 		level := byDepth[depth]
 		_ = runBounded(ctx, sess.workers(len(level)), len(level), func(groupCtx context.Context, i int) error {
 			dir := level[i]
-			_ = sess.do(groupCtx, watch, func(client *sftp.Client) error {
+			if budget != nil && !budget.take() {
+				return nil
+			}
+			err := sess.do(groupCtx, watch, func(client *sftp.Client) error {
 				done := metrics.Op("sftp_rmdir")
 				err := client.RemoveDirectory(dir)
 				done(err)
 				watch.tick()
 				return err
 			})
+			switch {
+			case err == nil:
+				removed.Add(1)
+			case budget != nil:
+				budget.refund()
+			}
 			return nil
 		})
 	}
+	return int(removed.Load())
 }

@@ -260,11 +260,17 @@ empty, and so does a path whose last component was stripped by a shell.
 This guard cannot be disabled; see
 [delete guards](strategies.md#delete-guards).
 
-### `refusing to delete N files: exceeds safety.max_deletes`
+### `refusing to delete N remote entries: exceeds safety.max_deletes`
 
-Your run would delete more files than `safety.max_deletes` allows. Inspect the
-plan with `dry-run: true`; if the deletions are intended, raise (or remove)
-the limit in the config file.
+Your run would remove more remote entries than `safety.max_deletes` allows.
+Inspect the plan with `dry-run: true`; if the deletions are intended, raise
+(or remove) the limit in the config file.
+
+Two things count towards the limit that its name does not spell out:
+**directories** as well as files, and **every deployment of the run**, not
+each one on its own. A variant of the message that says "N more remote
+entries: M were already deleted earlier in this run" is the second case: an
+earlier deployment used part of the budget.
 
 ## Configuration errors
 

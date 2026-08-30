@@ -121,6 +121,7 @@ func TestReportStatsOnFailure(t *testing.T) {
 	stats := &uploader.Stats{
 		FilesUploaded: 3,
 		FilesDeleted:  1,
+		DirsDeleted:   2,
 		FilesSkipped:  4,
 		BytesUploaded: 2048,
 		Duration:      1500 * time.Millisecond,
@@ -136,6 +137,7 @@ func TestReportStatsOnFailure(t *testing.T) {
 	for name, want := range map[string]string{
 		"files-uploaded": "3",
 		"files-deleted":  "1",
+		"dirs-deleted":   "2",
 		"files-skipped":  "4",
 		"bytes-uploaded": "2048",
 		"duration-ms":    "1500",
@@ -155,6 +157,7 @@ func TestReportStatsOnFailure(t *testing.T) {
 		"| Configuration | inline inputs |",
 		"| Files uploaded | 3 |",
 		"| Files deleted | 1 |",
+		"| Directories removed | 2 |",
 		"| Files skipped (unchanged) | 4 |",
 		"| Bytes transferred | 2.0 KiB (2,048 bytes) |",
 	} {

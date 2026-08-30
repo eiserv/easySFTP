@@ -9,6 +9,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pkg/sftp"
@@ -188,12 +189,75 @@ func checkRemoteRoot(remote string) error {
 	return nil
 }
 
-// checkMaxDeletes enforces the guards.max_deletes limit (0 means unlimited).
-func checkMaxDeletes(n int, cfg *config.Config) error {
-	if cfg.Safety.MaxDeletes > 0 && n > cfg.Safety.MaxDeletes {
-		return fmt.Errorf("refusing to delete %d files: exceeds safety.max_deletes=%d (raise the limit in the config file, or run with dry-run to inspect the plan)", n, cfg.Safety.MaxDeletes)
+// deleteBudget enforces safety.max_deletes. Three things about it are worth
+// stating, because the code used to disagree with what the setting's name
+// promises (issue #237):
+//
+//   - It counts **every remote entry a run removes**, directories included.
+//     Directory removals used to be free, so a clean run against a tree of
+//     10,000 empty directories with max_deletes: 10 proceeded.
+//   - It is **run-wide**. The check used to sit inside the per-deployment
+//     execute functions, so a config file with eight deployments and
+//     max_deletes: 100 permitted 800 removals. The key lives under a run-wide
+//     safety: section and now behaves like it.
+//   - 0 still means unlimited, which is the default. Making the guard finite
+//     by default is a product decision, not this one; what changed is that
+//     the guard a user does set is the guard they get.
+//
+// A limit is checked against a batch before that batch runs, so a run that
+// would go over is refused rather than stopped halfway. The one exception is
+// the sync mode's pruning of directories it just emptied, where the number is
+// not knowable in advance; see reserve and take.
+type deleteBudget struct {
+	mu    sync.Mutex
+	limit int // 0 means unlimited
+	spent int
+}
+
+func newDeleteBudget(cfg *config.Config) *deleteBudget {
+	return &deleteBudget{limit: cfg.Safety.MaxDeletes}
+}
+
+// reserve charges n removals whose count is known before any of them runs, and
+// refuses the run when they would take it past the limit.
+func (b *deleteBudget) reserve(n int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.limit > 0 && b.spent+n > b.limit {
+		if b.spent > 0 {
+			return fmt.Errorf("refusing to delete %d more remote entries (files and directories): %d were already deleted earlier in this run, which would take it past safety.max_deletes=%d (raise the limit in the config file, or run with dry-run to inspect the plan)", n, b.spent, b.limit)
+		}
+		return fmt.Errorf("refusing to delete %d remote entries (files and directories): exceeds safety.max_deletes=%d (raise the limit in the config file, or run with dry-run to inspect the plan)", n, b.limit)
 	}
+	b.spent += n
 	return nil
+}
+
+// take charges one removal that could not be counted in advance, reporting
+// whether the budget had room for it. It exists for the sync mode's prune of
+// directories the run itself emptied: those are discovered after the file
+// deletions they follow, so the honest answer to an exhausted budget is to
+// stop pruning, not to fail a run whose real work already succeeded.
+func (b *deleteBudget) take() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.limit > 0 && b.spent >= b.limit {
+		return false
+	}
+	b.spent++
+	return true
+}
+
+// refund gives back a charge from take whose removal did not happen. Most
+// prune candidates are directories that are still in use, and a budget spent
+// on directories that were never removed would quietly stop the prune far
+// short of the limit the user set.
+func (b *deleteBudget) refund() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.spent > 0 {
+		b.spent--
+	}
 }
 
 // listRemoteContents returns every regular file and directory under root

@@ -130,8 +130,8 @@ Inline mode uses a small, self-explanatory set of inputs:
 | `dry-run` | `false` | Log what would happen, change nothing. |
 | `log-level` | `normal` | `normal`, `verbose` (per-file lines) or `debug` (exclude decisions). |
 
-Outputs: `files-uploaded`, `files-deleted`, `files-skipped`, `bytes-uploaded`,
-`duration-ms`, plus a summary table in the job summary. If a transfer fails
+Outputs: `files-uploaded`, `files-deleted`, `dirs-deleted`, `files-skipped`,
+`bytes-uploaded`, `duration-ms`, plus a summary table in the job summary. If a transfer fails
 partway, the outputs contain the progress completed before the failure and the
 summary is marked as failed.
 
@@ -149,8 +149,8 @@ summary is marked as failed.
 `sync` is manifest-based: it only ever deletes files it uploaded itself, skips
 unchanged files by content hash, and only transfers what changed on re-deploys.
 Destructive modes are protected by [delete guards](docs/strategies.md#delete-guards):
-the remote root is always refused, and `max_deletes` caps how much a single run
-may delete. Preview anything with `dry-run: true`.
+the remote root is always refused, and `max_deletes` caps how many remote
+entries (files and directories) the whole run may delete. Preview anything with `dry-run: true`.
 
 ➡ Details, manifest semantics and guard rules: [docs/strategies.md](docs/strategies.md)
 

@@ -241,6 +241,12 @@ outputs:
   files-deleted:
     description: Number of remote files deleted by the clean/sync mode.
     value: ${{ steps.easysftp.outputs.files-deleted }}
+  dirs-deleted:
+    description: >-
+      Number of remote directories removed by the clean mode's sweep or the
+      sync mode's prune. Counted against safety.max_deletes together with
+      files-deleted.
+    value: ${{ steps.easysftp.outputs.dirs-deleted }}
   files-skipped:
     description: >-
       Number of unchanged files skipped (by the sync mode, or by overlay

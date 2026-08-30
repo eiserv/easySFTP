@@ -126,7 +126,7 @@
       "additionalProperties": false,
       "properties": {
         "max_deletes": {
-          "description": "Refuse a run that would delete more than this many files. 0 means unlimited. Deleting the remote root is always refused, regardless of this value.",
+          "description": "Refuse a run that would remove more than this many remote entries, files and directories together, across all of its deployments. 0 means unlimited. Deleting the remote root is always refused, regardless of this value.",
           "type": "integer",
           "minimum": 0
         }

@@ -164,9 +164,26 @@ Two safety nets apply before `sync` or `clean` delete anything:
   the expression is empty or has a component too many. No mode will ever wipe
   a server root or a login directory. A relative target that stays put, like
   `www/public_html`, is unaffected.
-- **`max_deletes`** aborts a run that would delete more files than the limit,
-  catching a misconfiguration before it does damage. `0` means unlimited. Set
-  it via `safety.max_deletes` in the [config file](configuration.md#sections).
+- **`max_deletes`** aborts a run that would remove more remote entries than
+  the limit, catching a misconfiguration before it does damage. `0` means
+  unlimited, and is the default. Set it via `safety.max_deletes` in the
+  [config file](configuration.md#sections).
+
+  Three details, because they are easy to guess wrong:
+
+  - **It counts directories too**, not just files. A `clean` run against a
+    tree of 10,000 empty directories is 10,000 removals as far as the guard is
+    concerned. The run reports the two apart, as the `files-deleted` and
+    `dirs-deleted` outputs, but they share one budget.
+  - **It is for the whole run**, not per deployment. A config file with eight
+    deployments and `max_deletes: 100` allows 100 removals in total, and the
+    deployment that would take the run past the limit is the one that is
+    refused.
+  - **A run that would go over is refused before it removes anything.** The
+    one exception is the `sync` mode's pruning of directories it has just
+    emptied: those are only known after the deletions they follow, so an
+    exhausted budget stops the pruning instead of failing a run whose real
+    work already succeeded.
 
 ## Dry runs
 
