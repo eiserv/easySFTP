@@ -16,6 +16,9 @@ jobs:
     name: Rebuild an existing exact release
     permissions:
       contents: write
+      # See release-please.yml: the attestation needs both (issue #146).
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/release-binaries.yml
     with:
       tag: ${{ inputs.tag }}

@@ -174,16 +174,47 @@ Apache (vhost or `.htaccess`):
 - Release refs download a verified prebuilt binary automatically. The launcher
   validates `.easysftp-version`, maps only the supported OS/architecture pairs,
   downloads only the matching binary and `checksums.txt` from
-  `eiserv/easySFTP`'s exact GitHub Release, and verifies SHA-256 before
+  `eiserv/easySFTP`'s exact GitHub Release, and checks SHA-256 before
   execution. Release downloads may follow GitHub's HTTPS redirect to its own
   release-asset CDN; no third-party download source is configured.
+- **The SHA-256 check is not what makes the binary trustworthy.**
+  `checksums.txt` is downloaded from the same GitHub Release as the binary, and
+  release assets are mutable: the release workflow uploads with `--clobber`,
+  and a repair workflow exists to re-run that upload for a tag that is already
+  published. Anyone able to write release assets could replace both files
+  together. On its own the checksum proves the download was not corrupted in
+  transit, and nothing more.
+- **Build provenance is what makes it trustworthy.** Every release binary
+  carries a [build provenance
+  attestation](https://docs.github.com/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds)
+  signed with the release workflow's OIDC identity and stored by GitHub, not as
+  a release asset. It binds the binary's exact digest to this repository, to
+  `.github/workflows/release-binaries.yml` and to the release commit. The
+  launcher verifies it with `gh attestation verify` before running the binary,
+  pinning both `--repo` and `--signer-workflow`, and **fails the run** if the
+  check runs and does not pass. You can run the same check yourself:
+
+  ```bash
+  gh attestation verify easysftp_linux_x64 --repo eiserv/easySFTP \
+    --signer-workflow eiserv/easySFTP/.github/workflows/release-binaries.yml
+  ```
+
+  If the check cannot run at all (no `gh` on the runner, no token, or a `gh`
+  older than the `attestation` command) the run warns and continues on the
+  checksum alone, so a runner without the tooling is not broken by it. The
+  warning names the escape hatch below.
 - Pin the action to a major tag for convenience (`eiserv/easySFTP@v3`) or to
   the full commit SHA of an exact release; both use the verified prebuilt
   binary. Any development ref (`@main`, a non-release commit SHA, or local
   `uses: ./`) builds the checked-out source from scratch instead, so a stale
-  release binary can never be substituted. The build mode is selected
+  release binary can never be substituted, and the executed artifact is
+  covered entirely by the ref you pinned. That source build is the escape
+  hatch for a policy that will not accept a run-time download at all; it costs
+  a Go build, roughly 30 to 60 seconds. The build mode is selected
   automatically from the ref; there is no `build-mode` input to get wrong.
-- Exact version tags (`v3.0.0`) are immutable once published; `v3` and `v3.0`
-  are rolling tags, see [RELEASING.md](RELEASING.md#tag-policy).
+- Exact version **tags** (`v3.0.0`) are immutable once published; `v3` and
+  `v3.0` are rolling tags, see [RELEASING.md](RELEASING.md#tag-policy). The
+  release **assets** behind an exact tag are a separate thing and are mutable,
+  which is why the attestation above exists.
 - Grant the deploy job only the permissions it needs
   (`permissions: contents: read` is enough for easySFTP itself).

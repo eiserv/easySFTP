@@ -284,6 +284,10 @@ runs:
         INPUT_BUILD_MODE: ${{ inputs.build-mode }}
         ACTION_PATH: ${{ github.action_path }}
         ACTION_REF: ${{ github.action_ref }}
+        # Read-only use: the attestation API of a public repository. A job
+        # that restricts or removes the token only loses the provenance
+        # check, which then warns instead of failing the deploy.
+        GH_TOKEN: ${{ github.token }}
 
     - name: Set up Go
       if: steps.prepare.outputs.build-mode == 'source'

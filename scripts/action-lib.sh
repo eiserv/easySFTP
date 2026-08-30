@@ -200,6 +200,70 @@ verify_release_checksum() {
   fi
 }
 
+# provenance_repo / provenance_workflow name what a release asset must have
+# been built by. They are constants rather than parameters so that a caller
+# cannot be talked into accepting an attestation from somewhere else.
+provenance_repo='eiserv/easySFTP'
+provenance_workflow='eiserv/easySFTP/.github/workflows/release-binaries.yml'
+
+# verify_release_provenance checks a downloaded release binary against the
+# build provenance attestation that release-binaries.yml recorded for it.
+#
+# It exists because the SHA-256 check on its own proves very little (issue
+# #146). checksums.txt is downloaded from the same GitHub release as the
+# binary, and release assets are mutable by design here: release-binaries.yml
+# uploads with --clobber and repair-release.yml exists to re-run that upload
+# for an already published tag. Anyone able to write release assets could
+# replace both files together and the checksum would still match. The
+# attestation is not an asset: it is signed with the workflow's OIDC identity
+# and stored by GitHub, so it says which repository, which workflow and which
+# commit produced this exact digest, and a replaced asset has no attestation
+# that matches it.
+#
+# A verification that runs and fails is fatal. A verification that cannot run
+# at all (no gh, no token, a gh too old for the command) warns and lets the
+# run continue on the checksum alone, which is what it had before this
+# existed. That asymmetry is deliberate: tampering fails closed, while a
+# runner without the tooling keeps working, and the warning names the escape
+# hatch that gives a hard guarantee (pin to a non-release commit and the
+# action builds from source, which is fully covered by the pin).
+verify_release_provenance() {
+  local binary=$1
+  local asset=$2
+  local version=$3
+  local token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+  local output=''
+
+  if ! command -v gh >/dev/null 2>&1; then
+    provenance_unavailable 'the GitHub CLI (gh) is not installed on this runner'
+    return 0
+  fi
+  if [[ -z "$token" ]]; then
+    provenance_unavailable 'no GitHub token was available to read the attestation'
+    return 0
+  fi
+  if ! gh attestation verify --help >/dev/null 2>&1; then
+    provenance_unavailable "this runner's gh is too old for 'gh attestation verify'"
+    return 0
+  fi
+
+  if ! output=$(GH_TOKEN="$token" gh attestation verify "$binary" \
+    --repo "$provenance_repo" \
+    --signer-workflow "$provenance_workflow" 2>&1); then
+    printf '%s\n' "$output" >&2
+    easysftp_error "build provenance verification failed for the $version release asset '$asset'; it was not built by $provenance_workflow. Do not use this run's result. Pin the action to a non-release commit to build from source instead."
+    return 1
+  fi
+  printf 'Verified build provenance for %s (%s, built by %s)\n' "$asset" "$version" "$provenance_workflow"
+}
+
+# provenance_unavailable reports that the provenance check could not run, and
+# says what the run is left with. A warning rather than an error; see
+# verify_release_provenance.
+provenance_unavailable() {
+  printf '::warning::easySFTP action: could not verify the build provenance of the release binary (%s). The SHA-256 check against checksums.txt still ran, but both files come from the same mutable release, so it proves transport integrity only. Pin the action to a non-release commit for a source build that is fully covered by the pin; see docs/security.md.\n' "$1"
+}
+
 download_release_file() {
   local version=$1
   local asset=$2

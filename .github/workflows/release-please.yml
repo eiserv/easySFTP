@@ -33,6 +33,10 @@ jobs:
       needs.release-please.outputs.release_created == 'true'
     permissions:
       contents: write
+      # Passed through to the upload job's attestation step (issue #146); a
+      # called workflow cannot grant itself more than its caller has.
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/release-binaries.yml
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
