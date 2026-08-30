@@ -42,6 +42,7 @@ type testServer struct {
 	stallAfter    int64 // if >0, stop reading (but stay connected) after this many bytes
 	refuseFirst   int32 // if >0, close this many first accepted connections immediately
 	maxConns      int32 // if >0, close every connection accepted beyond this many
+	hangAfter     int32 // if >0, accept but never serve connections beyond this many
 	accepted      int32 // total connections accepted, for asserting attempt counts
 
 	keepalives *int64 // if set, counts "keepalive@openssh.com" global requests received
@@ -204,6 +205,16 @@ func withRefuseFirstConns(n int32) serverOption { return func(s *testServer) { s
 // simulating a server that caps concurrent connections (sshd's MaxStartups,
 // or a per-account limit on shared hosting).
 func withMaxConns(n int32) serverOption { return func(s *testServer) { s.maxConns = n } }
+
+// withHangHandshakeAfter accepts connections beyond the first n but never
+// serves them, so the client hangs in the SSH handshake instead of failing.
+// That is what an overloaded or half-dead server looks like, and it is the one
+// shape a request-level fault (withStallOnRequest) cannot produce: the stall
+// happens before there is a session to send a request on. Close the sockets
+// with closeLiveConns to let the test finish.
+func withHangHandshakeAfter(n int32) serverOption {
+	return func(s *testServer) { s.hangAfter = n }
+}
 
 // withKeepaliveCounter makes the server tally every "keepalive@openssh.com"
 // global request it receives into c, instead of just discarding it.
@@ -838,6 +849,15 @@ func (s *testServer) acceptLoop() {
 		}
 		if s.maxConns > 0 && n-s.refuseFirst > s.maxConns {
 			conn.Close()
+			continue
+		}
+		if s.hangAfter > 0 && n > s.hangAfter {
+			// Accepted and then ignored: the client blocks in the SSH
+			// handshake with no deadline of its own. Kept in liveConns so
+			// closeLiveConns can end the test.
+			s.connMu.Lock()
+			s.liveConns = append(s.liveConns, conn)
+			s.connMu.Unlock()
 			continue
 		}
 		if s.dropAfter > 0 &&

@@ -18,12 +18,21 @@ import (
 	"github.com/eiserv/easySFTP/internal/metrics"
 )
 
-// conn is one live SSH/SFTP client pair.
+// conn is one live SSH/SFTP client pair. Every field is guarded by
+// session.mu, including while a redial of this connection is in flight: the
+// dial itself runs with the lock released (see reconnect), so the fields keep
+// describing the connection the rest of the run can still see.
 type conn struct {
 	ssh       *ssh.Client
 	sftp      *sftp.Client
 	closeJump func() // closes the jump-host transport; no-op for direct connections
 	gen       int    // bumped on every successful reconnect of this connection
+	// redialing is non-nil while this connection is being redialed, and is
+	// closed when that attempt finishes either way. It is what collapses the
+	// simultaneous redials of workers that all failed on the same connection
+	// into one, now that holding session.mu across the dial no longer does it;
+	// see reconnect and issue #224.
+	redialing chan struct{}
 }
 
 // session holds the run's connections and can transparently redial one when it
@@ -42,6 +51,12 @@ type session struct {
 	tune *tuning
 	log  Logger
 
+	// dialMu serializes the handshakes this session opens, so that at most one
+	// is in flight at a time. It is deliberately not mu: a handshake against an
+	// unhealthy server can take arbitrarily long, and nothing that only reads
+	// the session should wait for it. Never taken while holding mu.
+	dialMu sync.Mutex
+
 	mu    sync.Mutex
 	conns []*conn // slot 0 is dialed up front, the rest on first use
 	// spread is how many of those slots the current deployment hands files
@@ -59,6 +74,11 @@ type session struct {
 	// connection: the input is a run-wide budget, and a server that drops
 	// connections drops them faster with more of them open.
 	reconnects int
+	// dialing[slot] is non-nil while that slot's first dial is in flight and is
+	// closed when it finishes, so a second worker landing on the same slot
+	// waits for the result instead of opening a connection nobody asked for.
+	// Same role as conn.redialing, for the other dial path.
+	dialing []chan struct{}
 }
 
 // newSession dials the server and opens the initial SFTP session, retrying
@@ -90,12 +110,14 @@ func newSession(ctx context.Context, cfg *config.Config, tune *tuning, log Logge
 		if err == nil {
 			metrics.Count("connections_opened", 1)
 			metrics.Count("connections_used", 1) // slot 0, dialed up front
+			pool := poolCeiling(tune, log)
 			s := &session{
-				cfg:    cfg,
-				tune:   tune,
-				log:    log,
-				conns:  make([]*conn, poolCeiling(tune, log)),
-				spread: 1,
+				cfg:     cfg,
+				tune:    tune,
+				log:     log,
+				conns:   make([]*conn, pool),
+				dialing: make([]chan struct{}, pool),
+				spread:  1,
 			}
 			s.conns[0] = &conn{ssh: sshClient, sftp: sftpClient, closeJump: closeJump}
 			// Stage 2. The handshake is always recorded (it is what an extra
@@ -248,51 +270,103 @@ func isRetryableConnect(err error) bool {
 // more. Where the connection count was easySFTP's own choice the run also
 // pulls its spread back in, so the refusal is answered once instead of being
 // rediscovered slot by slot.
+// The handshake itself runs with s.mu released, so a slot whose dial hangs
+// against an unhealthy server cannot block the stall watchdog's closeSSH, the
+// keepalive loop or any worker on a healthy connection (issue #224). A second
+// worker landing on the same undialed slot waits on s.dialing[slot] instead,
+// which keeps the "one handshake per slot" property the lock used to give.
 func (s *session) acquire(index int) (*sftp.Client, *conn, int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	slot := index % max(s.spread, 1)
-	if s.conns[slot] == nil {
-		c, err := s.dialSlot(slot)
+	for {
+		s.mu.Lock()
+		if s.dialing == nil {
+			// A session built directly (a test that never went through
+			// newSession) has no dial slots; it does now.
+			s.dialing = make([]chan struct{}, len(s.conns))
+		}
+		slot := index % max(s.spread, 1)
+		if c := s.conns[slot]; c != nil {
+			client, gen := c.sftp, c.gen
+			s.mu.Unlock()
+			return client, c, gen
+		}
+		if wait := s.dialing[slot]; wait != nil {
+			s.mu.Unlock()
+			<-wait
+			continue
+		}
+		wait := make(chan struct{})
+		s.dialing[slot] = wait
+		s.mu.Unlock()
+
+		c, err := s.dialPooled()
+
+		s.mu.Lock()
+		s.dialing[slot] = nil
 		if err != nil {
+			s.noteDialFailure(slot, err)
 			c = s.conns[0]
+		} else {
+			metrics.Count("connections_opened", 1)
 		}
 		// Slots the run actually reached, however they resolved: a pool whose
 		// tail is never touched (fewer files than connections) is the other
 		// way a configured connection can end up unused.
 		metrics.Count("connections_used", 1)
 		s.conns[slot] = c
+		client, gen := c.sftp, c.gen
+		close(wait)
+		s.mu.Unlock()
+		return client, c, gen
 	}
-	c := s.conns[slot]
-	return c.sftp, c, c.gen
 }
 
-// dialSlot opens the connection for one pool slot, or reports why the run has
-// to carry on without it. Must be called with s.mu held.
-func (s *session) dialSlot(slot int) (*conn, error) {
-	if s.refused {
+// dialPooled opens one additional pooled connection with s.mu released, but
+// with at most one handshake in flight for the whole session. That second half
+// is what holding s.mu across the dial used to give and is worth keeping: a
+// run that is told "no more connections" then stops asking after one attempt
+// instead of after one per slot. What it no longer does is block anything that
+// only needs to read the session, the stall watchdog's closeSSH included.
+func (s *session) dialPooled() (*conn, error) {
+	s.dialMu.Lock()
+	defer s.dialMu.Unlock()
+	s.mu.Lock()
+	refused := s.refused
+	s.mu.Unlock()
+	if refused {
 		// Already told no once. Another handshake attempt would cost a
 		// round-trip to be told no again.
 		return nil, errPoolRefused
 	}
-	c, err := s.dial()
-	if err != nil {
-		metrics.Count("connections_refused", 1)
-		s.refused = true
-		if s.tune.autoConnections() {
-			// easySFTP picked the number, so easySFTP takes the answer: pull
-			// the spread back to what is open and say so once.
-			s.spread = s.openSlots()
-			s.log.Warningf("the server would not open more than %d SSH connection(s) (%v); easySFTP had chosen more and continues with %d",
-				s.spread, err, s.spread)
-			return nil, err
-		}
-		s.log.Warningf("could not open connection %d of %d (%v); this run continues on its first connection",
-			slot+1, len(s.conns), err)
-		return nil, err
+	return s.dial()
+}
+
+// noteDialFailure records that the server would not give this run another
+// connection and stops the pool asking again. A dial that was skipped because
+// the pool had already been refused one is not a new refusal and is silent.
+// Must be called with s.mu held.
+func (s *session) noteDialFailure(slot int, err error) {
+	if errors.Is(err, errPoolRefused) {
+		return
 	}
-	metrics.Count("connections_opened", 1)
-	return c, nil
+	metrics.Count("connections_refused", 1)
+	s.refused = true
+	if s.tune.autoConnections() {
+		// easySFTP picked the number, so easySFTP takes the answer: pull the
+		// spread back to what is open and say so once.
+		s.spread = s.openSlots()
+		s.log.Warningf("the server would not open more than %d SSH connection(s) (%v); easySFTP had chosen more and continues with %d",
+			s.spread, err, s.spread)
+		return
+	}
+	s.log.Warningf("could not open connection %d of %d (%v); this run continues on its first connection",
+		slot+1, len(s.conns), err)
+}
+
+// closeConn tears one connection's transports down.
+func closeConn(c *conn) {
+	c.sftp.Close()
+	c.ssh.Close()
+	c.closeJump()
 }
 
 // openSlots counts the leading slots that already hold their own connection,
@@ -314,9 +388,9 @@ func (s *session) openSlots() int {
 // first connection, exactly as it answers a real refusal.
 var errPoolRefused = errors.New("the server already refused an extra connection")
 
-// dial opens one additional pooled connection. Must be called with s.mu held,
-// which also serializes the handshakes of a starting run: the alternative is
-// several workers dialing the same slot at once.
+// dial opens one additional pooled connection. Callers reach it through
+// dialPooled, which is what serializes the handshakes of a starting run; s.mu
+// must not be held.
 //
 // Everything connect() logs is a property of the host and the configuration,
 // so an extra connection can only repeat what the first one already said (the
@@ -348,40 +422,97 @@ func (quietLogger) Warningf(string, ...any) {}
 // by the retries input (one budget for the whole pool); past that budget, or
 // when the redial itself fails, an error is returned and the caller gives up.
 //
-// The lock is held across the backoff and redial on purpose: workers that
-// fail in the meantime block in acquire()/reconnect() until the fresh client
-// is up, instead of hammering the dead one.
+// Workers that fail on the same connection in the meantime do not redial it
+// again: the first one publishes c.redialing and the others wait on it, which
+// is the collapse the mutex used to provide.
+//
+// The backoff and the handshake run with s.mu released. Holding it across them
+// was a liveness bug: the stall watchdog's kill path needs the same mutex, and
+// the case the watchdog exists for (an unhealthy server) is exactly the case
+// where the redial it was waiting behind hangs. With advanced.timeout at 0,
+// documented as the no-timeout escape hatch, connect() has no deadline of its
+// own and the watchdog could be prevented from ever firing (issue #224).
+//
+// What is left is that a handshake already in flight is not interrupted; a
+// kill that lands during one is honored when it returns, by closing the fresh
+// connection instead of installing it.
 func (s *session) reconnect(ctx context.Context, c *conn, gen int) (*sftp.Client, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if c.gen != gen {
-		return c.sftp, nil
-	}
-	if s.reconnects >= s.cfg.Retries {
-		return nil, fmt.Errorf("connection lost and the reconnect budget is spent (%d, from the retries input)", s.cfg.Retries)
-	}
-	s.reconnects++
-	metrics.Count("reconnects", 1)
-	// The op spans the backoff too: from the run's point of view that wait is
-	// exactly what a dropped connection costs.
-	doneReconnect := metrics.Op("reconnect")
-	backoff := time.Duration(1<<(s.reconnects-1)) * time.Second
-	s.log.Warningf("connection to the server was lost; reconnecting in %s (reconnect %d/%d)", backoff, s.reconnects, s.cfg.Retries)
-	if err := sleepCtx(ctx, backoff); err != nil {
+	for {
+		s.mu.Lock()
+		if c.gen != gen {
+			// Another worker already redialed this connection.
+			client := c.sftp
+			s.mu.Unlock()
+			return client, nil
+		}
+		if wait := c.redialing; wait != nil {
+			s.mu.Unlock()
+			select {
+			case <-wait:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			// Round again: a redial that succeeded bumped the generation, one
+			// that failed left it alone and this caller spends the next unit of
+			// the budget, exactly as it did when both waited on the mutex.
+			continue
+		}
+		if s.reconnects >= s.cfg.Retries {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("connection lost and the reconnect budget is spent (%d, from the retries input)", s.cfg.Retries)
+		}
+		s.reconnects++
+		attempt := s.reconnects
+		wait := make(chan struct{})
+		c.redialing = wait
+		dead := *c
+		s.mu.Unlock()
+
+		metrics.Count("reconnects", 1)
+		// The op spans the backoff too: from the run's point of view that wait
+		// is exactly what a dropped connection costs.
+		doneReconnect := metrics.Op("reconnect")
+		backoff := time.Duration(1<<(attempt-1)) * time.Second
+		s.log.Warningf("connection to the server was lost; reconnecting in %s (reconnect %d/%d)", backoff, attempt, s.cfg.Retries)
+		fresh, err := s.redial(ctx, backoff, &dead)
 		doneReconnect(err)
+
+		s.mu.Lock()
+		c.redialing = nil
+		if err != nil {
+			close(wait)
+			s.mu.Unlock()
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("reconnecting: %w", err)
+		}
+		c.ssh, c.sftp, c.closeJump = fresh.ssh, fresh.sftp, fresh.closeJump
+		c.gen++
+		client := c.sftp
+		close(wait)
+		s.mu.Unlock()
+		return client, nil
+	}
+}
+
+// redial waits out the backoff, drops the dead transports and opens a fresh
+// connection. It runs with s.mu released; the dial itself is serialized with
+// every other handshake this session opens (see dialPooled), which the backoff
+// deliberately is not: a wait nobody is served by should not stall another
+// slot's first connection.
+func (s *session) redial(ctx context.Context, backoff time.Duration, dead *conn) (*conn, error) {
+	if err := sleepCtx(ctx, backoff); err != nil {
 		return nil, err
 	}
-	c.sftp.Close()
-	c.ssh.Close()
-	c.closeJump()
+	closeConn(dead)
+	s.dialMu.Lock()
+	defer s.dialMu.Unlock()
 	sshClient, sftpClient, closeJump, err := connect(s.cfg, s.tune.requestConcurrency(), s.log)
-	doneReconnect(err)
 	if err != nil {
-		return nil, fmt.Errorf("reconnecting: %w", err)
+		return nil, err
 	}
-	c.ssh, c.sftp, c.closeJump = sshClient, sftpClient, closeJump
-	c.gen++
-	return c.sftp, nil
+	return &conn{ssh: sshClient, sftp: sftpClient, closeJump: closeJump}, nil
 }
 
 // eachConn calls fn once per opened connection, skipping slots that were never
@@ -413,8 +544,17 @@ func (s *session) liveSSH() []*ssh.Client {
 // server that stalls one transfer has stalled the run (all connections share
 // its answer time), and closing the transports is what unblocks the SFTP
 // operations stuck on it.
+// It must stay callable at any moment, which is why nothing in this package
+// holds s.mu across a network operation; see reconnect and dialPooled. What it
+// deliberately does not do is latch the session shut: writeRecoveryManifest
+// spends one reconnect after a stall to record partial progress (issue #115),
+// so a connection opened after the kill is a documented case, not a leak.
 func (s *session) closeSSH() {
-	for _, c := range s.liveSSH() {
+	s.mu.Lock()
+	var live []*ssh.Client
+	s.eachConn(func(c *conn) { live = append(live, c.ssh) })
+	s.mu.Unlock()
+	for _, c := range live {
 		c.Close()
 	}
 }
@@ -463,11 +603,7 @@ func (s *session) do(ctx context.Context, watch *stallWatchdog, op func(*sftp.Cl
 func (s *session) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.eachConn(func(c *conn) {
-		c.sftp.Close()
-		c.ssh.Close()
-		c.closeJump()
-	})
+	s.eachConn(closeConn)
 }
 
 // isConnError reports whether err looks like the connection itself died (as
