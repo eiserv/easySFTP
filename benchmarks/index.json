@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-08-30T20:55:27Z",
+  "generated_at": "2026-09-04T17:00:00Z",
   "generated_by": "cmd/easysftp-bench store",
   "documentation": "benchmarks/README.md",
   "layout": {
@@ -42,6 +42,8 @@
       "archived": false,
       "json": "matrix/matrix-20260830T205527Z-v3.8.0.json",
       "markdown": "matrix/matrix-20260830T205527Z-v3.8.0.md",
+      "repeats": 2,
+      "below_analysis_threshold": true,
       "median_ms": {},
       "best_ms": {
         "bulk": 14427,
@@ -156,6 +158,8 @@
       "archived": false,
       "json": "matrix/matrix-20260825T203337Z-v3.7.0.json",
       "markdown": "matrix/matrix-20260825T203337Z-v3.7.0.md",
+      "repeats": 2,
+      "below_analysis_threshold": true,
       "median_ms": {},
       "best_ms": {
         "bulk": 17231,
@@ -234,6 +238,8 @@
       "archived": false,
       "json": "matrix/matrix-20260821T123508Z-v3.6.0.json",
       "markdown": "matrix/matrix-20260821T123508Z-v3.6.0.md",
+      "repeats": 2,
+      "below_analysis_threshold": true,
       "median_ms": {},
       "best_ms": {
         "bulk": 16217,
@@ -312,6 +318,7 @@
       "archived": false,
       "json": "matrix/matrix-20260820T190710Z-main.json",
       "markdown": "matrix/matrix-20260820T190710Z-main.md",
+      "repeats": 3,
       "median_ms": {},
       "best_ms": {
         "bulk": 17828,
@@ -393,6 +400,7 @@
       "archived": false,
       "json": "matrix/matrix-20260816T125322Z-main.json",
       "markdown": "matrix/matrix-20260816T125322Z-main.md",
+      "repeats": 3,
       "median_ms": {},
       "best_ms": {
         "calib-100x64k": 7542,
@@ -431,6 +439,8 @@
       "archived": false,
       "json": "matrix/matrix-20260815T233553Z-main.json",
       "markdown": "matrix/matrix-20260815T233553Z-main.md",
+      "repeats": 1,
+      "below_analysis_threshold": true,
       "median_ms": {},
       "best_ms": {
         "bulk": 18975,
@@ -509,6 +519,8 @@
       "archived": true,
       "json": "archive/matrix/matrix-20260730T224549Z-main.json",
       "markdown": "archive/matrix/matrix-20260730T224549Z-main.md",
+      "repeats": 1,
+      "below_analysis_threshold": true,
       "median_ms": {},
       "best_ms": {
         "calib-100x64k": 7729,
@@ -545,6 +557,7 @@
       "archived": true,
       "json": "archive/matrix/matrix-20260728T121818Z-main.json",
       "markdown": "archive/matrix/matrix-20260728T121818Z-main.md",
+      "repeats": 3,
       "median_ms": {},
       "best_ms": {
         "large": 47884,
@@ -580,6 +593,8 @@
       "archived": true,
       "json": "archive/matrix/matrix-20260727T222956Z-main.json",
       "markdown": "archive/matrix/matrix-20260727T222956Z-main.md",
+      "repeats": 1,
+      "below_analysis_threshold": true,
       "median_ms": {},
       "best_ms": {
         "large": 47201,

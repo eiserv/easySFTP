@@ -63,11 +63,21 @@ func MedianOf(xs []float64) float64 {
 	return sorted[(len(sorted)-1)/2]
 }
 
+// MinRepeatsForAnalysis is the smallest per-cell sample count that can yield a
+// non-zero MAD under the lower-middle median used here. With two samples the
+// median is the faster run and MAD is structurally 0 for every cell, so a
+// sweep below this floor is a best-of-N, not a measurement the acceptance
+// tests or analysis tools should trust (issue #227). Analysis gating uses this
+// constant; Mad itself stays null only below two samples, matching stored data.
+const MinRepeatsForAnalysis = 3
+
 // Mad is the median absolute deviation, and null below two samples.
 //
 // It is the spread metric to compare a delta against: a single slow repeat,
 // which is the normal failure mode of a shared host, moves it far less than it
-// moves a standard deviation.
+// moves a standard deviation. With exactly two samples MAD is structurally 0;
+// require MinRepeatsForAnalysis rather than reading that zero as precision
+// (issue #227).
 func Mad(xs []float64) *float64 {
 	if len(xs) < 2 {
 		return nil

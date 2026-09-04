@@ -54,6 +54,15 @@ type IndexEntry struct {
 	Markdown string  `json:"markdown"`
 	CSV      *string `json:"csv,omitzero"`
 
+	// Repeats is the per-cell sample count of a matrix sweep. It is omitted for
+	// standard results, which answer a different question.
+	Repeats *int `json:"repeats,omitzero"`
+	// BelowAnalysisThreshold marks a matrix sweep whose repeats are too few for
+	// MAD or a median-of-best cell to be meaningful under the lower-middle
+	// median (issue #227). Stored results are never rewritten; the mark lives
+	// only in the regenerated index.
+	BelowAnalysisThreshold bool `json:"below_analysis_threshold,omitzero"`
+
 	MedianMS Ordered[float64] `json:"median_ms"`
 	BestMS   Ordered[float64] `json:"best_ms"`
 }

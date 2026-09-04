@@ -11,6 +11,7 @@ import (
 
 	"github.com/eiserv/easySFTP/internal/benchmark"
 	"github.com/eiserv/easySFTP/internal/benchmark/schema"
+	"github.com/eiserv/easySFTP/internal/benchmark/stats"
 )
 
 // stored is one entry on disk, decoded once so the index and trend.csv can both
@@ -312,6 +313,14 @@ func indexEntry(entry stored) (schema.IndexEntry, error) {
 		if m.Link != nil {
 			row.LinkProfiles = m.Link.Shaping.Requested
 			row.RTTP50MS = startRTT(m.Link.Probes)
+		}
+		repeats := m.Repeats
+		row.Repeats = &repeats
+		// A sweep below MinRepeatsForAnalysis reports mad_ms == 0 and a
+		// best-of-N as its median; the acceptance tests skip it for the same
+		// reason (issue #227). Mark it here so consumers need not open the file.
+		if repeats < stats.MinRepeatsForAnalysis {
+			row.BelowAnalysisThreshold = true
 		}
 		for _, s := range m.Scaling {
 			if s.Label == "candidate" {

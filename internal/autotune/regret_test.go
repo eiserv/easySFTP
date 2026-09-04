@@ -15,6 +15,7 @@ import (
 	"github.com/eiserv/easySFTP/internal/autotune"
 	"github.com/eiserv/easySFTP/internal/benchmark/scenario"
 	"github.com/eiserv/easySFTP/internal/benchmark/schema"
+	"github.com/eiserv/easySFTP/internal/benchmark/stats"
 )
 
 // This file is the acceptance test issue #209 asks for: replay the policy over
@@ -69,9 +70,9 @@ const (
 	// is around 9%, and the scenarios that land here are 1.3 second runs.
 	trivialGap = 300 * time.Millisecond
 
-	// minRepeats is the smallest number of repeats a sweep must have before
-	// its best cell is treated as a measurement rather than a sample.
-	minRepeats = 3
+	// minRepeats matches stats.MinRepeatsForAnalysis: below that, MAD is
+	// structurally zero and a best cell is a sample (issue #227).
+	minRepeats = stats.MinRepeatsForAnalysis
 )
 
 func TestPolicyRegretAgainstStoredSweeps(t *testing.T) {

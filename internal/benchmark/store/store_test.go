@@ -53,6 +53,7 @@ const matrixResult = `{
   "schema_version": 2,
   "benchmark_kind": "matrix",
   "candidate_ref": "test-ref",
+  "repeats": 1,
   "axes": { "connections": [1, 2], "concurrency": [1, 4] },
   "cells": [
     { "scenario": "small", "label": "candidate", "connections": 1, "concurrency": 1, "median_ms": 1400 },
@@ -267,6 +268,14 @@ func TestRetentionAndIndex(t *testing.T) {
 	if matrix.MedianMS.Len() != 0 {
 		t.Error("a matrix entry must not report median_ms")
 	}
+	// Issue #227: a one-repeat sweep is filed, but the index marks it below the
+	// analysis threshold so consumers (and the acceptance tests) can skip it.
+	if matrix.Repeats == nil || *matrix.Repeats != 1 {
+		t.Errorf("matrix repeats = %v, want 1", matrix.Repeats)
+	}
+	if !matrix.BelowAnalysisThreshold {
+		t.Error("a one-repeat matrix must be marked below_analysis_threshold")
+	}
 
 	// trend.csv: a header plus one row per candidate scenario and link profile
 	// of every stored non-matrix result.
@@ -358,6 +367,53 @@ func TestReindex(t *testing.T) {
 	}
 	if len(f.index().Entries) != 1 {
 		t.Error("the reindex did not rebuild the index from disk")
+	}
+}
+
+// Issue #227: storing a matrix with repeats below the analysis floor still
+// succeeds (stored results are never refused for being thin), but the index
+// marks the entry and a three-repeat sweep is not marked.
+func TestMatrixAnalysisThreshold(t *testing.T) {
+	f := setup(t)
+	f.mustStore(schema.KindMatrix, "thin", "2026-08-01T00:00:00Z")
+	thin := entryOfKind(t, f.index(), schema.BenchmarkMatrix)
+	if !thin.BelowAnalysisThreshold {
+		t.Fatal("repeats=1 must be below the analysis threshold")
+	}
+
+	thick := `{
+  "schema_version": 2,
+  "benchmark_kind": "matrix",
+  "candidate_ref": "test-ref",
+  "repeats": 3,
+  "axes": { "connections": [1], "concurrency": [1] },
+  "cells": [
+    { "scenario": "small", "label": "candidate", "connections": 1, "concurrency": 1, "median_ms": 800 }
+  ],
+  "scaling": [
+    { "scenario": "small", "label": "candidate", "best": { "connections": 1, "concurrency": 1, "median_ms": 800 } }
+  ]
+}`
+	if err := os.WriteFile(f.matrix, []byte(thick), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.mustStore(schema.KindMatrix, "thick", "2026-08-02T00:00:00Z")
+	index := f.index()
+	var found bool
+	for _, entry := range index.Entries {
+		if entry.BenchmarkKind != schema.BenchmarkMatrix || entry.Label == nil || *entry.Label != "thick" {
+			continue
+		}
+		found = true
+		if entry.Repeats == nil || *entry.Repeats != 3 {
+			t.Errorf("thick repeats = %v, want 3", entry.Repeats)
+		}
+		if entry.BelowAnalysisThreshold {
+			t.Error("repeats=3 must not be below the analysis threshold")
+		}
+	}
+	if !found {
+		t.Fatal("thick matrix entry missing from the index")
 	}
 }
 

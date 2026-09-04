@@ -41,8 +41,15 @@ func runMatrix() error {
 	if err != nil {
 		return err
 	}
-	if opts.Repeats, err = envPositive("REPEATS", 1); err != nil {
+	// Default three: smallest count with a non-zero MAD under the lower-middle
+	// median (issue #227). Raise an explicit REPEATS=2 (old release default)
+	// so another best-of-two grid cannot land even if the workflow still passes 2.
+	if opts.Repeats, err = envPositive("REPEATS", 3); err != nil {
 		return err
+	}
+	if opts.Repeats == 2 {
+		fmt.Fprintf(os.Stderr, "easysftp-bench: REPEATS=2 yields mad_ms=0 under the lower-middle median; using %d (issue #227)\n", 3)
+		opts.Repeats = 3
 	}
 	if opts.ConnectionsAxis, opts.ConnectionsDisplay, err = envAxis("MATRIX_CONNECTIONS", "1 2 4 8"); err != nil {
 		return err

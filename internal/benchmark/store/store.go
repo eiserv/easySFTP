@@ -35,6 +35,7 @@ import (
 
 	"github.com/eiserv/easySFTP/internal/benchmark"
 	"github.com/eiserv/easySFTP/internal/benchmark/schema"
+	"github.com/eiserv/easySFTP/internal/benchmark/stats"
 )
 
 // KindReindex rebuilds index.json, trend.csv and latest.* from what is already
@@ -238,6 +239,9 @@ func write(opts Options, entry newEntry) error {
 	if err := benchmark.WriteJSON(filepath.Join(dir, entry.stem+".json"), envelope); err != nil {
 		return err
 	}
+	if opts.Kind == schema.KindMatrix {
+		warnThinMatrix(measurement)
+	}
 
 	var page strings.Builder
 	fmt.Fprintf(&page, "# easySFTP benchmark: %s\n\n", entry.title)
@@ -271,6 +275,23 @@ func write(opts Options, entry newEntry) error {
 		return os.WriteFile(filepath.Join(dir, entry.stem+".csv"), data, 0o644)
 	}
 	return nil
+}
+
+// warnThinMatrix prints when a matrix sweep is stored with fewer repeats than
+// the acceptance tests will read. The file is still filed — store never
+// refuses a valid measurement — but the regenerated index marks it
+// below_analysis_threshold so consumers can skip it (issue #227).
+func warnThinMatrix(measurement []byte) {
+	var probe struct {
+		Repeats int `json:"repeats"`
+	}
+	if err := json.Unmarshal(measurement, &probe); err != nil {
+		return
+	}
+	if probe.Repeats > 0 && probe.Repeats < stats.MinRepeatsForAnalysis {
+		fmt.Printf("warning: matrix sweep stored with repeats=%d; below analysis threshold of %d (mad_ms is structurally 0 and acceptance tests will skip it; issue #227)\n",
+			probe.Repeats, stats.MinRepeatsForAnalysis)
+	}
 }
 
 func nullable(value string) *string {

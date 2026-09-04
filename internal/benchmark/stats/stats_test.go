@@ -57,6 +57,18 @@ func TestMadIsNullBelowTwoSamples(t *testing.T) {
 	}
 }
 
+func TestMadOfTwoSamplesIsStructurallyZero(t *testing.T) {
+	// Issue #227: with two samples the lower-middle median is the faster run,
+	// so MAD is 0 rather than null. Analysis requires MinRepeatsForAnalysis.
+	got := stats.Mad([]float64{10, 20})
+	if got == nil || *got != 0 {
+		t.Errorf("mad of two samples = %v, want 0", got)
+	}
+	if stats.MinRepeatsForAnalysis != 3 {
+		t.Errorf("MinRepeatsForAnalysis = %d, want 3", stats.MinRepeatsForAnalysis)
+	}
+}
+
 func TestMadIsTheMedianDeviation(t *testing.T) {
 	// Deviations from the median 20 are 10, 0, 10, 20; their lower-middle value
 	// is 10. A standard deviation would have been dragged up by the outlier,
