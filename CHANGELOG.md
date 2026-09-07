@@ -5,6 +5,14 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.1](https://github.com/eiserv/easySFTP/compare/v3.8.0...v3.8.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **benchmark:** require three repeats for meaningful matrix MAD ([#271](https://github.com/eiserv/easySFTP/issues/271)) ([519033c](https://github.com/eiserv/easySFTP/commit/519033cdab29e7fa034cfa798df3c839d4eb2014))
+* **deps:** update x/crypto to v0.56.0 and Go to 1.26.7 ([#272](https://github.com/eiserv/easySFTP/issues/272)) ([2113772](https://github.com/eiserv/easySFTP/commit/211377205adc244850c9304adb938ebf7c2e25c5))
+
 ## [3.8.0](https://github.com/eiserv/easySFTP/compare/v3.7.0...v3.8.0) (2026-08-30)
 
 
