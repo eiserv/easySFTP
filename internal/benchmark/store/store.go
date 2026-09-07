@@ -278,8 +278,8 @@ func write(opts Options, entry newEntry) error {
 }
 
 // warnThinMatrix prints when a matrix sweep is stored with fewer repeats than
-// the acceptance tests will read. The file is still filed — store never
-// refuses a valid measurement — but the regenerated index marks it
+// the acceptance tests will read. The store still accepts the measurement,
+// but the regenerated index marks it
 // below_analysis_threshold so consumers can skip it (issue #227).
 func warnThinMatrix(measurement []byte) {
 	var probe struct {
@@ -289,7 +289,7 @@ func warnThinMatrix(measurement []byte) {
 		return
 	}
 	if probe.Repeats > 0 && probe.Repeats < stats.MinRepeatsForAnalysis {
-		fmt.Printf("warning: matrix sweep stored with repeats=%d; below analysis threshold of %d (mad_ms is structurally 0 and acceptance tests will skip it; issue #227)\n",
+		fmt.Fprintf(os.Stderr, "warning: matrix sweep stored with repeats=%d; below analysis threshold of %d (MAD is null for one sample and zero for two; acceptance tests will skip it; issue #227)\n",
 			probe.Repeats, stats.MinRepeatsForAnalysis)
 	}
 }

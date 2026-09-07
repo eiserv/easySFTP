@@ -316,8 +316,8 @@ func indexEntry(entry stored) (schema.IndexEntry, error) {
 		}
 		repeats := m.Repeats
 		row.Repeats = &repeats
-		// A sweep below MinRepeatsForAnalysis reports mad_ms == 0 and a
-		// best-of-N as its median; the acceptance tests skip it for the same
+		// A sweep below MinRepeatsForAnalysis reports a null or zero MAD and
+		// its fastest sample as the median; acceptance tests skip it for the same
 		// reason (issue #227). Mark it here so consumers need not open the file.
 		if repeats < stats.MinRepeatsForAnalysis {
 			row.BelowAnalysisThreshold = true

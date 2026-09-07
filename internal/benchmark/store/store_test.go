@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -414,6 +415,39 @@ func TestMatrixAnalysisThreshold(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("thick matrix entry missing from the index")
+	}
+}
+
+func TestThinMatrixWarningGoesToStderr(t *testing.T) {
+	for _, repeats := range []int{1, 2, 3} {
+		t.Run(fmt.Sprint(repeats), func(t *testing.T) {
+			f := setup(t)
+			measurement := strings.Replace(matrixResult, `"repeats": 1`, fmt.Sprintf(`"repeats": %d`, repeats), 1)
+			if err := os.WriteFile(f.matrix, []byte(measurement), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			capture, err := os.CreateTemp(t.TempDir(), "stderr")
+			if err != nil {
+				t.Fatal(err)
+			}
+			previous := os.Stderr
+			os.Stderr = capture
+			t.Cleanup(func() { os.Stderr = previous; capture.Close() })
+			f.mustStore(schema.KindMatrix, "sweep", "2026-08-01T00:00:00Z")
+			os.Stderr = previous
+			output, err := os.ReadFile(capture.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			thin := repeats < 3
+			if strings.Contains(string(output), "warning: matrix sweep") != thin {
+				t.Errorf("repeats=%d: unexpected stderr %q", repeats, output)
+			}
+			entry := entryOfKind(t, f.index(), schema.BenchmarkMatrix)
+			if entry.Repeats == nil || *entry.Repeats != repeats || entry.BelowAnalysisThreshold != thin {
+				t.Errorf("repeats=%d: unexpected index entry %+v", repeats, entry)
+			}
+		})
 	}
 }
 

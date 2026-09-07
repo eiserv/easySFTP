@@ -418,6 +418,14 @@ over, the probed RTT p50 of its baseline profile, the paths of all its files, an
 the candidate's median milliseconds per scenario (or, for a matrix run, its
 best cell), so a reader does not have to open every file.
 
+Matrix entries also include `repeats` and set `below_analysis_threshold: true`
+when fewer than three repeats were requested. With the lower-middle median,
+one sample yields a null MAD and two always yield zero. Three is the minimum
+that can show dispersion, not a guarantee of sufficient data when repeats fail.
+The CLI and both matrix workflow entry points default to three repeats. Explicit
+smaller counts remain available for exploratory runs; storing them warns on
+stderr and marks the index. Historical result files stay unchanged.
+
 `trend.csv` is the same set flattened for plotting: one row per stored
 non-matrix result, scenario and link profile, carrying the timestamp, the
 version, the runner, the link the row was measured over, the duration statistics

@@ -71,7 +71,7 @@ const (
 	trivialGap = 300 * time.Millisecond
 
 	// minRepeats matches stats.MinRepeatsForAnalysis: below that, MAD is
-	// structurally zero and a best cell is a sample (issue #227).
+	// null or structurally zero and a best cell is a sample (issue #227).
 	minRepeats = stats.MinRepeatsForAnalysis
 )
 

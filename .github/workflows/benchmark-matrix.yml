@@ -93,9 +93,9 @@ on:
         default: ""
         type: string
       repeats:
-        description: "Measured repeats per cell; the median is reported."
+        description: "Measured repeats per cell; three is the smallest count that can yield a non-zero MAD. Use fewer only for exploratory sweeps."
         required: false
-        default: "1"
+        default: "3"
         type: string
       store:
         description: "Commit the result to benchmarks/matrix/ on main."
@@ -114,7 +114,7 @@ on:
         type: string
   # The release sweep. Its defaults are the "all use cases" grid: every
   # scenario the harness knows, over the axes each payload can actually use,
-  # measured twice. That is hours of runner time per release, which is what the
+  # measured three times. That is hours of runner time per release, which is what the
   # timeout below is for, and it is the reason the release still gets its cheap
   # three-scenario standard number from benchmark.yml as well.
   workflow_call:
@@ -154,9 +154,9 @@ on:
         default: ""
         type: string
       repeats:
-        description: "Measured repeats per cell; the median is reported. Two is the smallest number that still yields a MAD."
+        description: "Measured repeats per cell; three is the smallest count that can yield a non-zero MAD under the lower-middle median."
         required: false
-        default: "2"
+        default: "3"
         type: string
       store:
         description: "Commit the result to benchmarks/matrix/ on main."
@@ -295,7 +295,7 @@ jobs:
           CANDIDATE_REF: ${{ steps.build.outputs.candidate-ref }}
           BASELINE_BIN: ${{ steps.build.outputs.baseline-bin }}
           BASELINE_REF: ${{ steps.build.outputs.baseline-ref }}
-          REPEATS: ${{ inputs.repeats || '1' }}
+          REPEATS: ${{ inputs.repeats || '3' }}
           REMOTE_BASE: ${{ inputs.remote-base || '/easysftp-benchmark' }}
           MATRIX_CONNECTIONS: ${{ inputs.connections }}
           MATRIX_CONCURRENCY: ${{ inputs.concurrency }}
