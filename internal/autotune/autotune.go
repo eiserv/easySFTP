@@ -45,8 +45,8 @@
 // safety. Nothing about that needs measuring.
 //
 // A connection is not free. Every one past the first costs a full SSH
-// handshake (dialed on first use, and dialed under the session lock, so the
-// cost lands in the run's critical path), and it buys a second TCP flow, a
+// handshake (dialed on first use, outside the session lock, so the worker
+// opening it waits for the handshake), and it buys a second TCP flow, a
 // second cipher stream and a second sftp-server process on the far side. With
 // perfect scaling a run that takes W on one connection takes
 //
