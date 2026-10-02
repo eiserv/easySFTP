@@ -5,6 +5,21 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.2](https://github.com/eiserv/easySFTP/compare/v3.8.1...v3.8.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **hostkeys:** ask the server for the key types the known-hosts lines pin ([#294](https://github.com/eiserv/easySFTP/issues/294)) ([1513290](https://github.com/eiserv/easySFTP/commit/1513290c2e792dfdccf46af74ad74f8519159967)), closes [#282](https://github.com/eiserv/easySFTP/issues/282)
+* **uploader:** bound the whole connect path by advanced.timeout, not just the TCP dial ([#295](https://github.com/eiserv/easySFTP/issues/295)) ([95724ca](https://github.com/eiserv/easySFTP/commit/95724ca84ca30a9a1b6c9a8026efe75ae95a8313))
+* **uploader:** count granted connections, not touched pool slots ([#293](https://github.com/eiserv/easySFTP/issues/293)) ([1c1ff58](https://github.com/eiserv/easySFTP/commit/1c1ff589ba2b10346dad23e6bf8a749e92fb6091)), closes [#281](https://github.com/eiserv/easySFTP/issues/281)
+* **uploader:** refuse the root of a Windows drive in checkRemoteRoot ([765bd4d](https://github.com/eiserv/easySFTP/commit/765bd4db4401138beea61bb53f188d2cfd05e042)), closes [#285](https://github.com/eiserv/easySFTP/issues/285)
+
+
+### Documentation
+
+* **autotune:** correct handshake locking explanation ([#291](https://github.com/eiserv/easySFTP/issues/291)) ([13b2a90](https://github.com/eiserv/easySFTP/commit/13b2a90c305269a453ffa8d66cc57a9af0faed51))
+
 ## [3.8.1](https://github.com/eiserv/easySFTP/compare/v3.8.0...v3.8.1) (2026-09-07)
 
 
