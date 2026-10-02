@@ -53,12 +53,18 @@ defaults:
 
 # Named deployments. The names appear in logs and the job summary.
 deployments:
-  website:
+  # Deployments that differ in one or two fields are what YAML anchors and
+  # merge keys are for: define the shared shape once and override per site.
+  website: &website
     source: ./dist/
     target: /var/www/html/
     mode: sync
     exclude:
       - node_modules/
+
+  staging:
+    <<: *website
+    target: /var/www/staging/
 
   documentation:
     source: ./docs/build/

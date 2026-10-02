@@ -34,8 +34,11 @@
           "minLength": 1
         },
         "host_key": {
-          "description": "Expected SHA256 fingerprint(s) of the server's host key, one per line (format \"SHA256:...\"). Without host_key or known_hosts, the run fails unless allow_any_host_key is set.",
-          "type": "string"
+          "description": "Expected SHA256 fingerprint(s) of the server's host key (format \"SHA256:...\"): a block with one per line, or a list. Without host_key or known_hosts, the run fails unless allow_any_host_key is set.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+          ]
         },
         "known_hosts": {
           "description": "Expected host key(s) in OpenSSH known_hosts format (verbatim ssh-keyscan output). Alternative to host_key; a key matching either is accepted.",
@@ -79,8 +82,11 @@
               "minLength": 1
             },
             "host_key": {
-              "description": "SHA256 fingerprint(s) of the jump host's key, one per line. Host key verification applies to each hop independently.",
-              "type": "string"
+              "description": "SHA256 fingerprint(s) of the jump host's key: a block with one per line, or a list. Host key verification applies to each hop independently.",
+              "oneOf": [
+                { "type": "string" },
+                { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+              ]
             },
             "known_hosts": {
               "description": "Jump host key(s) in known_hosts format; alternative to host_key.",
@@ -154,14 +160,16 @@
           "minimum": 0
         },
         "timeout": {
-          "description": "Connection timeout in seconds. Defaults to 30; 0 disables the timeout.",
+          "description": "Connection timeout in seconds. Defaults to 30; 0 disables the timeout. Capped at a day (86400).",
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 86400
         },
         "stall_timeout": {
-          "description": "Abort the run when active remote operations make no progress for this many seconds. Defaults to 0 (off).",
+          "description": "Abort the run when active remote operations make no progress for this many seconds. Defaults to 0 (off). Capped at a day (86400).",
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 86400
         },
         "concurrency": {
           "description": "Maximum parallel file uploads and independent remote metadata requests, including directory setup, stale-temp cleanup, scans, and deletes. \"auto\" (the default) sizes it to the number of independent items the phase has, capped at 64.",

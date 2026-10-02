@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -31,7 +33,7 @@ type yamlConnection struct {
 	Host            string         `yaml:"host"`
 	Port            int            `yaml:"port"`
 	Username        string         `yaml:"username"`
-	HostKey         string         `yaml:"host_key"`
+	HostKey         fingerprints   `yaml:"host_key"`
 	KnownHosts      string         `yaml:"known_hosts"`
 	AllowAnyHostKey bool           `yaml:"allow_any_host_key"`
 	Algorithms      yamlAlgorithms `yaml:"algorithms"`
@@ -46,12 +48,34 @@ type yamlAlgorithms struct {
 }
 
 type yamlProxy struct {
-	Host            string `yaml:"host"`
-	Port            int    `yaml:"port"`
-	Username        string `yaml:"username"`
-	HostKey         string `yaml:"host_key"`
-	KnownHosts      string `yaml:"known_hosts"`
-	AllowAnyHostKey bool   `yaml:"allow_any_host_key"`
+	Host            string       `yaml:"host"`
+	Port            int          `yaml:"port"`
+	Username        string       `yaml:"username"`
+	HostKey         fingerprints `yaml:"host_key"`
+	KnownHosts      string       `yaml:"known_hosts"`
+	AllowAnyHostKey bool         `yaml:"allow_any_host_key"`
+}
+
+// fingerprints is a host_key value: either a block scalar with one
+// fingerprint per line (the documented spelling) or a YAML list of them
+// (the natural "one or more" spelling, and how exclude is written). Both
+// decode to the same newline-joined string that splitLines consumes.
+type fingerprints string
+
+func (f *fingerprints) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		*f = fingerprints(node.Value)
+	case yaml.SequenceNode:
+		var list []string
+		if err := node.Decode(&list); err != nil {
+			return fmt.Errorf("host_key must be a fingerprint or a list of fingerprints, one per entry")
+		}
+		*f = fingerprints(strings.Join(list, "\n"))
+	default:
+		return fmt.Errorf("host_key must be a fingerprint or a list of fingerprints, one per entry")
+	}
+	return nil
 }
 
 type yamlDefaults struct {
@@ -107,6 +131,12 @@ func (a *autoInt) UnmarshalYAML(node *yaml.Node) error {
 	if node.Value == "auto" {
 		return nil
 	}
+	// A float node decodes into an int without complaint (2.5 loads as 2),
+	// so require an integer node up front: the schema says integer and the
+	// parser should not silently truncate what the user wrote.
+	if node.Tag != "!!int" {
+		return fmt.Errorf("must be a number or \"auto\", got %q", node.Value)
+	}
 	if err := node.Decode(&a.v); err != nil {
 		return fmt.Errorf("must be a number or \"auto\", got %q", node.Value)
 	}
@@ -147,20 +177,75 @@ var allowedKeys = map[string][]string{
 // checkKeys validates every mapping key in the file against allowedKeys and
 // reports the first unknown one with its location and, when a known key is
 // close enough, a "did you mean" suggestion.
+//
+// A "<<" merge key is not an option: yaml.v3 resolves merge keys when decoding
+// into a struct, so the keys that matter are the ones in the aliased mapping.
+// Walk those instead of reporting "<<" as unknown, and keep walking when the
+// merge value is a sequence of aliases, which YAML also allows.
 func checkKeys(node *yaml.Node, section, location string) error {
+	return checkKeysVisited(node, section, location, map[*yaml.Node]bool{})
+}
+
+// checkKeysVisited is checkKeys carrying the set of alias targets already
+// walked, so a self-referential merge key (a: &a with <<: *a inside it)
+// fails with a cyclic-merge error instead of recursing until the stack
+// overflows. yaml.v3 itself resolves such loops only when decoding, and the
+// walk here predates that, so the guard belongs here.
+func checkKeysVisited(node *yaml.Node, section, location string, visited map[*yaml.Node]bool) error {
 	if node.Kind != yaml.MappingNode {
 		return nil
 	}
 	allowed := allowedKeys[section]
 	for i := 0; i+1 < len(node.Content); i += 2 {
-		key, value := node.Content[i].Value, node.Content[i+1]
-		at := key
+		key, value := node.Content[i], node.Content[i+1]
+		at := key.Value
 		if location != "" {
-			at = location + "." + key
+			at = location + "." + key.Value
 		}
-		if !contains(allowed, key) {
-			msg := fmt.Sprintf("unknown option %q at %q", key, at)
-			if s := closestKey(key, allowed); s != "" {
+		if key.Value == "<<" {
+			// A merge key's value is an alias node or a sequence of alias
+			// nodes; each alias target is a mapping whose keys must be
+			// checked like the enclosing section's own keys.
+			targets := []*yaml.Node{}
+			if value.Kind == yaml.AliasNode {
+				targets = append(targets, value.Alias)
+			} else if value.Kind == yaml.MappingNode {
+				// An inline mapping merges just like an alias target, so
+				// its keys need the same check - a typo inside it is
+				// otherwise a silent no-op, the class of bug this walk
+				// exists to close.
+				targets = append(targets, value)
+			} else if value.Kind == yaml.SequenceNode {
+				for _, item := range value.Content {
+					if item.Kind == yaml.AliasNode {
+						targets = append(targets, item.Alias)
+					} else if item.Kind == yaml.MappingNode {
+						targets = append(targets, item)
+					}
+				}
+			}
+			for _, target := range targets {
+				if visited[target] {
+					return fmt.Errorf("cyclic merge at %q: a merge key refers back to the mapping that contains it", at)
+				}
+				visited[target] = true
+				err := checkKeysVisited(target, section, location, visited)
+				// Back-track: the mark means "on this merge chain", not
+				// "ever seen". A shared anchor referenced by two siblings
+				// is a diamond, not a cycle - the one-base-many-targets
+				// pattern the example config itself demonstrates - while
+				// a real self-cycle still fails, because its mark stays
+				// set for as long as the chain containing it is walked.
+				delete(visited, target)
+				if err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if !contains(allowed, key.Value) {
+			msg := fmt.Sprintf("unknown option %q at %q", key.Value, at)
+			if s := closestKey(key.Value, allowed); s != "" {
 				msg += fmt.Sprintf("; did you mean %q?", s)
 			}
 			return fmt.Errorf("%s", msg)
@@ -168,19 +253,19 @@ func checkKeys(node *yaml.Node, section, location string) error {
 		// Recurse into the sections that have their own key set.
 		sub := section
 		if section == "" {
-			sub = key
+			sub = key.Value
 		} else {
-			sub = section + "." + key
+			sub = section + "." + key.Value
 		}
 		if _, ok := allowedKeys[sub]; ok {
-			if err := checkKeys(value, sub, at); err != nil {
+			if err := checkKeysVisited(value, sub, at, visited); err != nil {
 				return err
 			}
 		}
-		if (section == "" && key == "deployments") && value.Kind == yaml.MappingNode {
+		if (section == "" && key.Value == "deployments") && value.Kind == yaml.MappingNode {
 			for j := 0; j+1 < len(value.Content); j += 2 {
 				name, dep := value.Content[j].Value, value.Content[j+1]
-				if err := checkKeys(dep, "deployments.*", "deployments."+name); err != nil {
+				if err := checkKeysVisited(dep, "deployments.*", "deployments."+name, visited); err != nil {
 					return err
 				}
 			}
@@ -241,6 +326,27 @@ func minInt(vals ...int) int {
 	return m
 }
 
+// maxConfiguredSeconds caps timeout and stall_timeout at a day: a value
+// beyond that overflows neither the int nor the duration in any harmful way,
+// but the error-free run should not carry a value the user did not write
+// because YAML's int parsed something enormous.
+const maxConfiguredSeconds = 24 * 60 * 60
+
+// isEmptySecondDocument reports whether a decoded second document carries
+// no content: a document node whose single scalar is null (a trailing ---
+// or one followed by comments only). Files ending that way loaded fine
+// before the decoder swap and must keep loading.
+func isEmptySecondDocument(node *yaml.Node) bool {
+	if len(node.Content) != 1 {
+		return false
+	}
+	doc := node.Content[0]
+	if doc.Kind != yaml.ScalarNode || doc.Tag != "!!null" {
+		return false
+	}
+	return doc.Value == ""
+}
+
 // loadConfigFile reads, parses and applies the v3 YAML config file onto cfg.
 func loadConfigFile(cfg *Config, path string) error {
 	data, err := os.ReadFile(path)
@@ -252,9 +358,31 @@ func loadConfigFile(cfg *Config, path string) error {
 		return fmt.Errorf("config %q: %w", path, err)
 	}
 
+	// A decoder, not yaml.Unmarshal: Unmarshal reads the first document and
+	// silently drops the rest, so a user who pasted one config under another
+	// (a "---" separator between them) gets a run that uses half of what
+	// they wrote. Reading a second document is the error to name.
 	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&root); err != nil && err != io.EOF {
 		return fail(err)
+	}
+	var second yaml.Node
+	if err := dec.Decode(&second); err != io.EOF {
+		if err != nil {
+			return fail(err)
+		}
+		// A lone '---' at the end of a file is a document node holding
+		// a single null scalar. Nothing was pasted under it, so the file
+		// is what it always was; refuse only a second document with
+		// content, naming the line it starts on.
+		if !isEmptySecondDocument(&second) {
+			line := 0
+			if len(second.Content) > 0 {
+				line = second.Content[0].Line
+			}
+			return fail(fmt.Errorf("the file contains more than one YAML document (document 2 starts at line %d); easySFTP reads a single configuration, so combine the documents into one", line))
+		}
 	}
 	if len(root.Content) > 0 {
 		if err := checkKeys(root.Content[0], "", ""); err != nil {
@@ -285,7 +413,7 @@ func applyYAML(cfg *Config, yc *yamlConfig) error {
 	if conn.Port != 0 {
 		cfg.Port = conn.Port
 	}
-	cfg.HostKeyFingerprints = splitLines(conn.HostKey)
+	cfg.HostKeyFingerprints = splitLines(string(conn.HostKey))
 	cfg.KnownHosts = strings.TrimSpace(conn.KnownHosts)
 	cfg.AllowAnyHostKey = conn.AllowAnyHostKey
 	var err error
@@ -297,7 +425,7 @@ func applyYAML(cfg *Config, yc *yamlConfig) error {
 			Server:              strings.TrimSpace(p.Host),
 			Port:                22,
 			Username:            strings.TrimSpace(p.Username),
-			HostKeyFingerprints: splitLines(p.HostKey),
+			HostKeyFingerprints: splitLines(string(p.HostKey)),
 			KnownHosts:          strings.TrimSpace(p.KnownHosts),
 			AllowAnyHostKey:     p.AllowAnyHostKey,
 		}
@@ -330,6 +458,9 @@ func applyYAML(cfg *Config, yc *yamlConfig) error {
 	seen := map[string]bool{}
 	for i := 0; i+1 < len(deps.Content); i += 2 {
 		name := deps.Content[i].Value
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("deployment names must not be empty or whitespace; the inline deployment is the one configured without a config file, so a named file needs a name for every entry")
+		}
 		if seen[name] {
 			return fmt.Errorf("deployment %q is defined twice", name)
 		}
@@ -363,9 +494,15 @@ func applyYAML(cfg *Config, yc *yamlConfig) error {
 		cfg.Retries = *yc.Advanced.Retries
 	}
 	if yc.Advanced.Timeout != nil {
+		if *yc.Advanced.Timeout > maxConfiguredSeconds {
+			return fmt.Errorf("'advanced.timeout' must be at most %d seconds (a day); a connection that outlives that is not a timeout anymore, got %d", maxConfiguredSeconds, *yc.Advanced.Timeout)
+		}
 		cfg.Timeout = time.Duration(*yc.Advanced.Timeout) * time.Second
 	}
 	if yc.Advanced.StallTimeout != nil {
+		if *yc.Advanced.StallTimeout > maxConfiguredSeconds {
+			return fmt.Errorf("'advanced.stall_timeout' must be at most %d seconds (a day); got %d", maxConfiguredSeconds, *yc.Advanced.StallTimeout)
+		}
 		cfg.StallTimeout = time.Duration(*yc.Advanced.StallTimeout) * time.Second
 	}
 	cfg.Concurrency = yc.Advanced.Concurrency.or(defaultConcurrency)

@@ -127,7 +127,7 @@ connection:
   host: sftp.example.com
   port: 22                     # optional
   username: deploy
-  host_key: |
+  host_key: |                      # a list of fingerprints works too:
     SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8
   # known_hosts: |             # alternative to host_key
   #   sftp.example.com ssh-ed25519 AAAA...
@@ -203,7 +203,7 @@ sync:
 | `host` | ✅ | - | Hostname or IP of the SFTP server. |
 | `port` | | `22` | SSH port. |
 | `username` | ✅ | - | Username for authentication. |
-| `host_key` | ³ | - | SHA256 fingerprint(s), one per line. |
+| `host_key` | ³ | - | SHA256 fingerprint(s): one per line, or as a YAML list. |
 | `known_hosts` | ³ | - | `known_hosts`-format host key(s); alternative to `host_key`. |
 | `allow_any_host_key` | ³ | `false` | Explicit opt-out of host key verification. |
 | `algorithms` | | - | Add legacy `key_exchanges`, `ciphers`, `macs`, or `host_key_algorithms` to the SSH negotiation policy for both the target and proxy hop. Unknown names fail; insecure additions warn and appear in the job summary. |
@@ -231,8 +231,8 @@ upgrading the server, and enable only the one algorithm the server needs.
 | Field | Default | Description |
 |---|---|---|
 | `retries` | `2` | Retries per file on transient errors, and the reconnect budget for dropped connections. Failures the server reports with a permanent status code are never retried; see [which upload failures are retried](troubleshooting.md#which-upload-failures-easysftp-retries). `0` disables. |
-| `timeout` | `30` | Connection timeout in seconds. `0` disables. |
-| `stall_timeout` | `0` (off) | Abort when active remote operations make no progress for this many seconds. |
+| `timeout` | `30` | Connection timeout in seconds. `0` disables. Capped at `86400` (a day). |
+| `stall_timeout` | `0` (off) | Abort when active remote operations make no progress for this many seconds. Capped at `86400` (a day). |
 | `concurrency` | `auto` | Files uploaded in parallel, and independent remote metadata requests such as directory setup, stale-temp cleanup, scans and deletes. `auto` sizes it to the work (see [transfer tuning](tuning.md)). Sync hashing uses the runner's available Go CPU parallelism independently. |
 | `request_concurrency` | `auto` | Max in-flight SFTP requests per file (pipelining within one transfer). `auto` sizes it to the largest file and to what the whole set costs to hold in flight (see [transfer tuning](tuning.md)). |
 | `connections` | `auto` | SSH connections the parallel uploads spread over. Never more than `concurrency`. `auto` opens another one only while it would save more time than its handshake costs. See below. |

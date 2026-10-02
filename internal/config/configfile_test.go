@@ -240,3 +240,284 @@ deployments:
 		t.Errorf("a typo next to auto_cache was not suggested against: %v", err)
 	}
 }
+
+// TestConfigFileParserGaps covers the six config-file parser gaps from
+// issue #286: a valid YAML idiom failing as an unknown option, a natural
+// spelling failing with the decoder's raw error, and four silent no-ops.
+func TestConfigFileParserGaps(t *testing.T) {
+	const base = `version: 3
+connection:
+  host: h
+  username: u
+`
+	t.Run("merge keys load", func(t *testing.T) {
+		cfg, err := loadFile(t, base+`deployments:
+  site: &base
+    source: dist
+    target: /var/www/site
+  staging:
+    <<: *base
+    target: /var/www/staging
+`)
+		if err != nil {
+			t.Fatalf("a merge key was rejected as an option: %v", err)
+		}
+		if len(cfg.Uploads) != 2 {
+			t.Fatalf("expected two deployments, got %d", len(cfg.Uploads))
+		}
+		if cfg.Uploads[0].Local != "dist" || cfg.Uploads[1].Local != "dist" {
+			t.Fatalf("merged source did not resolve through the anchor: %+v", cfg.Uploads)
+		}
+		if cfg.Uploads[1].Remote != "/var/www/staging" {
+			t.Fatalf("the overriding target did not win: %q", cfg.Uploads[1].Remote)
+		}
+	})
+	t.Run("merge sequence of aliases loads", func(t *testing.T) {
+		_, err := loadFile(t, base+`defaults: &d
+  mode: overlay
+deployments:
+  site: &s
+    source: dist
+    target: /a
+  staging:
+    <<: [*d, *s]
+    target: /b
+`)
+		if err != nil {
+			t.Fatalf("a merge sequence was rejected: %v", err)
+		}
+	})
+	t.Run("a typo inside an inline merge mapping is caught", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  web:
+    <<: {source: dist, taget: /var/www/html}
+    mode: overlay
+`)
+		if err == nil || !strings.Contains(err.Error(), `unknown option "taget"`) {
+			t.Fatalf("expected the typo inside the inline merge value to be caught, got %v", err)
+		}
+	})
+	t.Run("a trailing document separator still loads", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  web:
+    source: dist
+    target: /b
+---
+`)
+		if err != nil {
+			t.Fatalf("a lone trailing --- must not fail the file: %v", err)
+		}
+	})
+	t.Run("a second document with content is still refused", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  web:
+    source: a
+    target: /b
+---
+version: 3
+`)
+		if err == nil || !strings.Contains(err.Error(), "more than one YAML document") {
+			t.Fatalf("expected the second document to be refused, got %v", err)
+		}
+	})
+	t.Run("a shared anchor referenced by two siblings is not a cycle", func(t *testing.T) {
+		// The diamond: one base, several deployments overriding a field.
+		// This is the pattern docs/easysftp.example.yml demonstrates;
+		// the cycle guard must not reject it.
+		cfg, err := loadFile(t, base+`deployments:
+  base: &base
+    source: dist
+    target: /var/www/base
+  website:
+    <<: *base
+    target: /var/www/html
+  staging:
+    <<: *base
+    target: /var/www/staging
+`)
+		if err != nil {
+			t.Fatalf("a shared anchor across sibling deployments was rejected as cyclic: %v", err)
+		}
+		if len(cfg.Uploads) != 3 {
+			t.Fatalf("expected three deployments, got %d", len(cfg.Uploads))
+		}
+		for i, want := range []string{"/var/www/base", "/var/www/html", "/var/www/staging"} {
+			if cfg.Uploads[i].Remote != want {
+				t.Errorf("deployment %d target = %q, want %q", i, cfg.Uploads[i].Remote, want)
+			}
+		}
+	})
+	t.Run("cyclic merge key fails cleanly instead of overflowing", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  site: &site
+    <<: *site
+    source: dist
+    target: /a
+`)
+		if err == nil {
+			t.Fatal("a cyclic merge key was accepted")
+		}
+		if !strings.Contains(err.Error(), "cyclic merge") {
+			t.Fatalf("expected a cyclic-merge error, got %v", err)
+		}
+	})
+	// Direct self-merge through a mapping value, the shape the maintainer
+	// flagged: a: &a with <<: *a inside it.
+	t.Run("self-referential merge key fails cleanly instead of overflowing", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  site: &site
+    <<: *site
+    source: dist
+    target: /a
+  staging:
+    <<: *site
+    target: /b
+`)
+		if err == nil {
+			t.Fatal("a self-referential merge key was accepted")
+		}
+		if !strings.Contains(err.Error(), "cyclic merge") {
+			t.Fatalf("expected a cyclic-merge error, got %v", err)
+		}
+	})
+	t.Run("a typo inside an anchored mapping is still caught", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  site: &base
+    source: dist
+    target: /a
+    taget: /typo
+  staging:
+    <<: *base
+`)
+		if err == nil || !strings.Contains(err.Error(), `unknown option "taget"`) {
+			t.Fatalf("expected the typo in the anchor to be caught, got %v", err)
+		}
+	})
+	t.Run("host_key list loads like a block scalar", func(t *testing.T) {
+		cfg, err := loadFile(t, `version: 3
+connection:
+  host: h
+  username: u
+  host_key:
+    - SHA256:first
+    - SHA256:second
+deployments:
+  web:
+    source: a
+    target: /b
+`)
+		if err != nil {
+			t.Fatalf("a host_key list failed to load: %v", err)
+		}
+		if len(cfg.HostKeyFingerprints) != 2 {
+			t.Fatalf("expected both fingerprints, got %v", cfg.HostKeyFingerprints)
+		}
+		if cfg.HostKeyFingerprints[0] != "SHA256:first" || cfg.HostKeyFingerprints[1] != "SHA256:second" {
+			t.Fatalf("fingerprints not preserved in order: %v", cfg.HostKeyFingerprints)
+		}
+	})
+	t.Run("proxy host_key list loads too", func(t *testing.T) {
+		cfg, err := loadFile(t, `version: 3
+connection:
+  host: h
+  username: u
+  proxy:
+    host: jump
+    host_key:
+      - SHA256:jump
+deployments:
+  web:
+    source: a
+    target: /b
+`)
+		if err != nil {
+			t.Fatalf("a proxy host_key list failed to load: %v", err)
+		}
+		if len(cfg.Proxy.HostKeyFingerprints) != 1 || cfg.Proxy.HostKeyFingerprints[0] != "SHA256:jump" {
+			t.Fatalf("proxy fingerprint not preserved: %v", cfg.Proxy.HostKeyFingerprints)
+		}
+	})
+	t.Run("host_key mapping fails clearly", func(t *testing.T) {
+		_, err := loadFile(t, base+`  host_key:
+    first: SHA256:x
+    second: SHA256:y
+deployments:
+  web:
+    source: a
+    target: /b
+`)
+		if err == nil || !strings.Contains(err.Error(), "host_key must be a fingerprint or a list of fingerprints") {
+			t.Fatalf("expected a clear host_key error, got %v", err)
+		}
+	})
+	t.Run("fractional concurrency is rejected", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  web:
+    source: a
+    target: /b
+advanced:
+  concurrency: 2.5
+`)
+		if err == nil || !strings.Contains(err.Error(), `must be a number or "auto", got "2.5"`) {
+			t.Fatalf("a fractional concurrency was silently truncated: %v", err)
+		}
+	})
+	t.Run("empty deployment name is rejected", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  "":
+    source: a
+    target: /b
+`)
+		if err == nil || !strings.Contains(err.Error(), "deployment names must not be empty") {
+			t.Fatalf("an empty deployment name was accepted: %v", err)
+		}
+	})
+	t.Run("second YAML document is rejected with its line", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  web:
+    source: a
+    target: /b
+---
+version: 3
+`)
+		if err == nil || !strings.Contains(err.Error(), "more than one YAML document") {
+			t.Fatalf("a second document was silently dropped: %v", err)
+		}
+	})
+	t.Run("timeout above a day is rejected", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  web:
+    source: a
+    target: /b
+advanced:
+  timeout: 99999999999
+`)
+		if err == nil || !strings.Contains(err.Error(), "'advanced.timeout' must be at most") {
+			t.Fatalf("a giant timeout was silently accepted: %v", err)
+		}
+	})
+	t.Run("stall_timeout above a day is rejected", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  web:
+    source: a
+    target: /b
+advanced:
+  stall_timeout: 86401
+`)
+		if err == nil || !strings.Contains(err.Error(), "'advanced.stall_timeout' must be at most") {
+			t.Fatalf("a giant stall_timeout was silently accepted: %v", err)
+		}
+	})
+	t.Run("a day is still allowed", func(t *testing.T) {
+		_, err := loadFile(t, base+`deployments:
+  web:
+    source: a
+    target: /b
+advanced:
+  timeout: 86400
+`)
+		if err != nil {
+			t.Fatalf("a one-day timeout should load, got %v", err)
+		}
+	})
+}
