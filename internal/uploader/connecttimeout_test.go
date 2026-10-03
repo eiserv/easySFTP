@@ -136,7 +136,7 @@ func TestConnectTimeoutBoundsARedial(t *testing.T) {
 	c.ssh.Close() // the drop a worker would react to
 
 	start := time.Now()
-	_, err = sess.reconnect(context.Background(), c, c.gen)
+	_, err = sess.reconnect(context.Background(), c, c.gen, nil)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected the redial to fail against a server that no longer handshakes")

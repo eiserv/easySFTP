@@ -204,6 +204,68 @@ func TestSingleDeploymentStatsAreRecorded(t *testing.T) {
 	}
 }
 
+// A clean deployment that removes directories must not read as "deleted 0":
+// the per-deployment stats carry the removed-directory count next to the
+// deleted-files count, and the one-line summary names it (issue #287, item 6).
+func TestCleanDeploymentStatsRecordRemovedDirectories(t *testing.T) {
+	srv := startTestServer(t)
+
+	// Pre-populate the target with stale content in two directories.
+	client := srv.verifyClient(t)
+	for _, d := range []string{"/www/old", "/www/other"} {
+		if err := client.MkdirAll(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range []string{"/www/stale.html", "/www/old/stale.js", "/www/other/stale.css"} {
+		f, err := client.Create(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte("stale")); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"index.html": "fresh"})
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{{Name: "website", Local: local, Remote: "/www", Strategy: config.StrategyClean}}
+
+	log := &recordingLogger{testLogger: testLogger{t}}
+	stats, err := Run(context.Background(), cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(stats.Deployments) != 1 {
+		t.Fatalf("expected 1 deployment entry, got %d", len(stats.Deployments))
+	}
+	ds := stats.Deployments[0]
+	if ds.FilesDeleted != 3 {
+		t.Errorf("expected 3 deleted files in the deployment stats, got %d", ds.FilesDeleted)
+	}
+	if ds.DirsDeleted != 2 {
+		t.Errorf("expected 2 removed directories in the deployment stats, got %d", ds.DirsDeleted)
+	}
+	if stats.DirsDeleted != ds.DirsDeleted {
+		t.Errorf("deployment DirsDeleted %d must add up to the run total %d", ds.DirsDeleted, stats.DirsDeleted)
+	}
+	// The one-line summary must name the removed directories, not fold them
+	// into "deleted 0".
+	found := false
+	for _, line := range log.infos {
+		if strings.Contains(line, "removed 2 director(y/ies)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the one-line summary to name the removed directories, got %v", log.infos)
+	}
+}
+
 func TestUploadDirectoryFailsWhenRemoteDirIsFile(t *testing.T) {
 	srv := startTestServer(t)
 	client := srv.verifyClient(t)

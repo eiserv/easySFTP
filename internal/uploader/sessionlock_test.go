@@ -2,6 +2,7 @@ package uploader
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func TestCloseSSHRunsDuringAnInFlightReconnect(t *testing.T) {
 	go func() {
 		defer close(reconnectDone)
 		// Hangs in the handshake until the test closes the socket.
-		_, _ = sess.reconnect(context.Background(), c, c.gen)
+		_, _ = sess.reconnect(context.Background(), c, c.gen, nil)
 	}()
 	waitFor(t, "the redial to reach the server", func() bool {
 		return atomic.LoadInt32(&srv.accepted) > 1
@@ -129,7 +130,7 @@ func TestConcurrentReconnectsCollapseIntoOne(t *testing.T) {
 	done := make(chan error, workers)
 	for range workers {
 		go func() {
-			_, err := sess.reconnect(context.Background(), c, gen)
+			_, err := sess.reconnect(context.Background(), c, gen, nil)
 			done <- err
 		}()
 	}
@@ -147,5 +148,52 @@ func TestConcurrentReconnectsCollapseIntoOne(t *testing.T) {
 	}
 	if newGen != gen+1 {
 		t.Errorf("connection generation = %d, want %d", newGen, gen+1)
+	}
+}
+
+// TestKillDuringAnInFlightRedialClosesTheFreshConnection pins the honouring
+// half of what reconnect documents: a kill that lands while a redial is in
+// flight is honored when the handshake returns, by closing the fresh
+// connection instead of installing it (issue #287, item 2). Installing it
+// would give the rest of the run a connection the spent watchdog no longer
+// protects.
+//
+// The watchdog is latched before the redial is launched. What the install-time
+// check sees is the same latched flag whether the kill landed before the dial
+// or during the handshake, and latching up front keeps the test deterministic
+// (no race against the backoff); the redial below still dials a healthy
+// server and completes, which is what makes the refusal observable.
+func TestKillDuringAnInFlightRedialClosesTheFreshConnection(t *testing.T) {
+	srv := startTestServer(t)
+	cfg := baseConfig(srv)
+	cfg.Retries = 3
+
+	sess, err := newSession(context.Background(), cfg, newTuning(cfg), testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.close()
+
+	c := sess.conns[0]
+	gen := c.gen
+	c.ssh.Close() // the drop a worker would react to
+
+	watch := &stallWatchdog{done: make(chan struct{})}
+	defer watch.stop()
+	watch.fired.Store(true) // the kill lands while the redial is in flight
+
+	_, err = sess.reconnect(context.Background(), c, gen, watch)
+	if err == nil {
+		t.Fatal("a redial that completes after the watchdog fired must not install the connection")
+	}
+	if !strings.Contains(err.Error(), "stall watchdog fired during the redial") {
+		t.Errorf("the error must say the watchdog fired, got %v", err)
+	}
+
+	sess.mu.Lock()
+	newGen := c.gen
+	sess.mu.Unlock()
+	if newGen != gen {
+		t.Errorf("the killed redial bumped the connection generation from %d to %d; the fresh connection must not be installed", gen, newGen)
 	}
 }

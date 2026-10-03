@@ -81,6 +81,17 @@ func TestReconnectResumesAfterMidRunDrop(t *testing.T) {
 	if !reconnected {
 		t.Errorf("expected a reconnect warning, got %v", log.warnings)
 	}
+	// The drop leaves each in-flight worker's temp file behind on the server,
+	// but removing it on the dead connection cannot work: the retry path
+	// removes that temp file itself, on the fresh connection, before the next
+	// attempt. A warning per worker about the dead connection's refused Remove
+	// would report a non-problem right before the line that matters (issue
+	// #287), so cleanupTmp stays quiet for connection-class failures.
+	for _, w := range log.warnings {
+		if strings.Contains(w, "could not remove temporary file") {
+			t.Errorf("the drop produced a temp-file warning the retry path makes redundant: %s", w)
+		}
+	}
 }
 
 // When every connection keeps dying, the reconnect budget (the retries input)

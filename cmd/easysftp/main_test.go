@@ -190,7 +190,7 @@ func TestReportStatsMultiDeploymentBreakdown(t *testing.T) {
 		BytesUploaded: 17_825_792,
 		Duration:      2*time.Minute + 13*time.Second,
 		Deployments: []uploader.DeploymentStats{
-			{Name: "website", Local: "./dist/", Remote: "/var/www/html/", Strategy: "sync", FilesUploaded: 12, FilesDeleted: 3, FilesSkipped: 1988, BytesUploaded: 4_297_523, Duration: time.Second},
+			{Name: "website", Local: "./dist/", Remote: "/var/www/html/", Strategy: "sync", FilesUploaded: 12, FilesDeleted: 3, DirsDeleted: 2, FilesSkipped: 1988, BytesUploaded: 4_297_523, Duration: time.Second},
 			{Name: "documentation", Local: "./docs/", Remote: "/var/www/docs/", Strategy: "clean", FilesUploaded: 240, FilesDeleted: 214, FilesSkipped: 0, BytesUploaded: 13_528_269, Duration: 2 * time.Second},
 		},
 	}
@@ -204,10 +204,10 @@ func TestReportStatsMultiDeploymentBreakdown(t *testing.T) {
 	for _, want := range []string{
 		"| Configuration | `.github/easysftp.yml` (version 3) |",
 		"#### Deployments",
-		"| Deployment | Source | Target | Mode | Uploaded | Deleted | Skipped | Size | Duration |",
-		"| website | `./dist/` | `/var/www/html/` | sync | 12 | 3 | 1988 | 4.1 MiB | 1s |",
-		"| documentation | `./docs/` | `/var/www/docs/` | clean | 240 | 214 | 0 | 12.9 MiB | 2s |",
-		"| **Total** | | | | **252** | **217** | **1988** | **17.0 MiB** | |",
+		"| Deployment | Source | Target | Mode | Uploaded | Deleted | Dirs removed | Skipped | Size | Duration |",
+		"| website | `./dist/` | `/var/www/html/` | sync | 12 | 3 | 2 | 1988 | 4.1 MiB | 1s |",
+		"| documentation | `./docs/` | `/var/www/docs/` | clean | 240 | 214 | 0 | 0 | 12.9 MiB | 2s |",
+		"| **Total** | | | | **252** | **217** | **2** | **1988** | **17.0 MiB** | |",
 	} {
 		if !strings.Contains(string(summary), want) {
 			t.Errorf("summary does not contain %q:\n%s", want, summary)
@@ -253,8 +253,39 @@ func TestReportStatsSingleNamedDeploymentGetsBreakdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(summary), "| website | `./dist/` | `/www/` | sync | 3 | 0 | 0 | 2.0 KiB | 0s |") {
+	if !strings.Contains(string(summary), "| website | `./dist/` | `/www/` | sync | 3 | 0 | 0 | 0 | 2.0 KiB | 0s |") {
 		t.Errorf("expected the named deployment row in the summary:\n%s", summary)
+	}
+}
+
+// A deployment name or path containing a pipe or a backtick must not break the
+// job summary table: a pipe splits the row, a backtick inside the code span
+// ends it. Both are legal in the user's own configuration (issue #287).
+func TestReportStatsEscapesBreaksTableCharacters(t *testing.T) {
+	summaryPath := filepath.Join(t.TempDir(), "summary")
+	t.Setenv("GITHUB_OUTPUT", filepath.Join(t.TempDir(), "output"))
+	t.Setenv("GITHUB_STEP_SUMMARY", summaryPath)
+
+	stats := &uploader.Stats{
+		FilesUploaded: 1, BytesUploaded: 1024, Duration: time.Second,
+		Deployments: []uploader.DeploymentStats{
+			{Name: "a|b", Local: "./dist|x/", Remote: "/www/`y`/", Strategy: "overlay", FilesUploaded: 1, BytesUploaded: 1024},
+			{Name: "other", Local: "./src/", Remote: "/src/", Strategy: "overlay", FilesUploaded: 0, BytesUploaded: 0},
+		},
+	}
+	reportStats(&config.Config{ConfigPath: "x.yml", KnownHosts: "line"}, stats, "uploaded", nil)
+
+	summary, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"| a\\|b | `./dist\\|x/` | `/www/'y'/` | overlay |",
+		"| other | `./src/` | `/src/` | overlay |",
+	} {
+		if !strings.Contains(string(summary), want) {
+			t.Errorf("summary does not contain %q:\n%s", want, summary)
+		}
 	}
 }
 

@@ -1,6 +1,8 @@
 package autotune_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -244,5 +246,38 @@ func TestExplainNamesWhatWasNotChosen(t *testing.T) {
 	unsettled.Unknown = true
 	if line := autotune.Explain(unsettled, house, autotune.Fixed{}, autotune.Settings{}); !strings.Contains(line, "not known yet") {
 		t.Errorf("an unsettled upload set must say so:\n%s", line)
+	}
+}
+
+// docSampleLink is the line the debug sample in docs/tuning.md is printed
+// against: the measured line the stored sweeps were taken over (13 ms
+// round-trip, ~360-384 ms handshake, per benchmarks/README.md).
+var docSampleLink = autotune.Link{RTT: 13 * time.Millisecond, Handshake: 384 * time.Millisecond}
+
+// TestExplainMatchesDocumentedSample regenerates the debug line docs/tuning.md
+// shows from the same inputs the page names, so the next prior refit fails a
+// test instead of leaving the page behind (issue #287, item 4). A reader
+// comparing their own debug output against the documented example must see the
+// same assumption the page prints, which only holds if the sample is the
+// function's real output rather than a number somebody once typed.
+func TestExplainMatchesDocumentedSample(t *testing.T) {
+	// The workload from the documented sample: 2000 four-KiB files, the
+	// "spread across connections" case the surrounding section walks through.
+	w := autotune.Workload{
+		Uploads:       2000,
+		UploadBytes:   2000 * 4 * KiB,
+		LargestUpload: 4 * KiB,
+		P50Upload:     4 * KiB,
+		P90Upload:     4 * KiB,
+		SmallUploads:  2000,
+	}
+	line := "auto tuning: " + autotune.Explain(w, docSampleLink, autotune.Fixed{}, autotune.Plan(w, docSampleLink, autotune.Fixed{}))
+
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "tuning.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), line) {
+		t.Errorf("docs/tuning.md's sample debug line no longer matches what the code prints.\ngot:  %s\nwant a line in docs/tuning.md equal to it (the next prior refit must update the page, not just the code)", line)
 	}
 }

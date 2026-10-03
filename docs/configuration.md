@@ -215,7 +215,7 @@ current `golang.org/x/crypto/ssh` version classifies as supported and adds the
 named values. Categories you omit keep the library defaults exactly. Prefer
 upgrading the server, and enable only the one algorithm the server needs.
 
-³ As in inline mode, exactly one of `host_key`/`known_hosts`/`allow_any_host_key` is required, per hop.
+³ As in inline mode, at least one of `host_key`/`known_hosts` is required per hop, or you must explicitly opt out with `allow_any_host_key: true`; setting both `host_key` and `known_hosts` is allowed, and a key matching either is accepted.
 
 #### `deployments.<name>`
 

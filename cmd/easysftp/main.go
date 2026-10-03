@@ -206,27 +206,41 @@ func deploymentBreakdown(deployments []uploader.DeploymentStats) string {
 	var b strings.Builder
 	// The per-deployment rows use the compact size only: the exact byte count
 	// belongs in the totals above, and repeating it in every row would make
-	// the table unreadably wide.
-	b.WriteString("\n#### Deployments\n\n| Deployment | Source | Target | Mode | Uploaded | Deleted | Skipped | Size | Duration |\n|---|---|---|---|---|---|---|---|---|\n")
+	// the table unreadably wide. Deleted counts files only, like the run
+	// totals' "Files deleted" row; removed directories get their own column so
+	// a clean deployment that only removed directories does not read as
+	// "deleted 0", and the per-deployment rows add up to what the run
+	// reports (issue #287).
+	b.WriteString("\n#### Deployments\n\n| Deployment | Source | Target | Mode | Uploaded | Deleted | Dirs removed | Skipped | Size | Duration |\n|---|---|---|---|---|---|---|---|---|---|\n")
 
-	var totalUploaded, totalDeleted, totalSkipped int
+	var totalUploaded, totalDeleted, totalDirs, totalSkipped int
 	var totalBytes int64
 	for _, d := range deployments {
 		name := d.Name
 		if name == "" {
 			name = "(inline)"
 		}
-		fmt.Fprintf(&b, "| %s | `%s` | `%s` | %s | %d | %d | %d | %s | %s |\n",
-			name, d.Local, d.Remote, d.Strategy, d.FilesUploaded, d.FilesDeleted, d.FilesSkipped,
+		fmt.Fprintf(&b, "| %s | `%s` | `%s` | %s | %d | %d | %d | %d | %s | %s |\n",
+			mdEscape(name), mdEscape(d.Local), mdEscape(d.Remote), d.Strategy, d.FilesUploaded, d.FilesDeleted, d.DirsDeleted, d.FilesSkipped,
 			uploader.HumanSize(d.BytesUploaded), d.Duration.Round(time.Millisecond))
 		totalUploaded += d.FilesUploaded
 		totalDeleted += d.FilesDeleted
+		totalDirs += d.DirsDeleted
 		totalSkipped += d.FilesSkipped
 		totalBytes += d.BytesUploaded
 	}
 	if len(deployments) > 1 {
-		fmt.Fprintf(&b, "| **Total** | | | | **%d** | **%d** | **%d** | **%s** | |\n",
-			totalUploaded, totalDeleted, totalSkipped, uploader.HumanSize(totalBytes))
+		fmt.Fprintf(&b, "| **Total** | | | | **%d** | **%d** | **%d** | **%d** | **%s** | |\n",
+			totalUploaded, totalDeleted, totalDirs, totalSkipped, uploader.HumanSize(totalBytes))
 	}
 	return b.String()
+}
+
+// mdEscape keeps one deployment's own fields from breaking the summary table
+// (issue #287): a `|` in a name or path would split the row, and a backtick
+// inside a code span ends it. The values are the user's own configuration, but
+// a path with a pipe in it is legal, so escape both.
+func mdEscape(s string) string {
+	r := strings.NewReplacer("|", "\\|", "`", "'")
+	return r.Replace(s)
 }

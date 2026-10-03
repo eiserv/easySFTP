@@ -420,8 +420,13 @@ func posixRenameUnsupported(err error, announced bool) bool {
 
 // cleanupTmp best-effort removes a leftover temp file, warning (but not
 // failing) if the server refuses, so an orphan is at least visible in the log.
+// A connection-class failure stays quiet on purpose: the retry path removes
+// that temp file itself on the fresh connection (retry.go), and a later run's
+// stale-temp sweep covers the case where there is no next attempt, so the
+// warning would only report a non-problem, once per in-flight worker, right
+// before the line that matters.
 func cleanupTmp(client *sftp.Client, tmpPath string, log Logger) {
-	if err := client.Remove(tmpPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := client.Remove(tmpPath); err != nil && !errors.Is(err, os.ErrNotExist) && !isConnError(err) {
 		log.Warningf("could not remove temporary file %s: %v", tmpPath, err)
 	}
 }
@@ -608,7 +613,7 @@ func (c *ctxReader) Read(p []byte) (int, error) {
 // the moment a request lands on it) stalled the run without ever firing the
 // watchdog: no transfer had started, so there was nothing "active" to watch.
 // A connection-class failure is retried against a fresh connection like any
-// other, instead of being read as "the file changed" — which uploaded files
+// other, instead of being read as "the file changed", which uploaded files
 // that may not have changed, and reported them as "would upload" in a dry run.
 func remoteSameSize(ctx context.Context, env *transferEnv, f fileItem, index int) (bool, error) {
 	sess, watch := env.sess, env.watch
@@ -638,7 +643,7 @@ func remoteSameSize(ctx context.Context, env *transferEnv, f fileItem, index int
 		if watch != nil && watch.fired.Load() {
 			return false, err
 		}
-		if _, rerr := sess.reconnect(ctx, c, gen); rerr != nil {
+		if _, rerr := sess.reconnect(ctx, c, gen, watch); rerr != nil {
 			return false, fmt.Errorf("stat %s: %w (%v)", f.remotePath, err, rerr)
 		}
 	}

@@ -58,6 +58,10 @@ type DeploymentStats struct {
 	Strategy      config.Strategy
 	FilesUploaded int
 	FilesDeleted  int
+	// DirsDeleted counts remote directories removed by the clean mode's sweep
+	// and the sync mode's prune, mirroring the run totals' own field so the
+	// per-deployment rows add up to what the run reports (issue #287).
+	DirsDeleted   int
 	FilesSkipped  int
 	BytesUploaded int64
 	Duration      time.Duration
@@ -186,6 +190,7 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 			Strategy:      p.strategy,
 			FilesUploaded: stats.FilesUploaded - before.FilesUploaded,
 			FilesDeleted:  stats.FilesDeleted - before.FilesDeleted,
+			DirsDeleted:   stats.DirsDeleted - before.DirsDeleted,
 			FilesSkipped:  stats.FilesSkipped - before.FilesSkipped,
 			BytesUploaded: stats.BytesUploaded - before.BytesUploaded,
 			Duration:      time.Since(planStart),
@@ -211,6 +216,15 @@ func logDeploymentSummary(cfg *config.Config, pair config.UploadPair, ds Deploym
 	if cfg.DryRun {
 		log.Infof("deployment %s: %d file(s) to upload (%s), %d to delete, %d unchanged (dry-run)",
 			pair.Label(), ds.FilesUploaded, HumanSize(ds.BytesUploaded), ds.FilesDeleted, ds.FilesSkipped)
+		return
+	}
+	// The deleted count is files only, like the run summary; removed
+	// directories are named when there were any, so a clean deployment that
+	// only removed directories no longer reads as "deleted 0" (issue #287).
+	if ds.DirsDeleted > 0 {
+		log.Infof("deployment %s: uploaded %d file(s) (%s), deleted %d, removed %d director(y/ies), skipped %d unchanged, took %s",
+			pair.Label(), ds.FilesUploaded, HumanSize(ds.BytesUploaded), ds.FilesDeleted, ds.DirsDeleted, ds.FilesSkipped,
+			ds.Duration.Round(time.Millisecond))
 		return
 	}
 	log.Infof("deployment %s: uploaded %d file(s) (%s), deleted %d, skipped %d unchanged, took %s",

@@ -334,7 +334,7 @@ auto tuning: 1.1 MiB/s is no better than the 1.1 MiB/s before the spread grew to
 With `log-level: debug` every decision is printed in full, inputs first:
 
 ```text
-auto tuning: files=2000 bytes=7.8 MiB p50=4.0 KiB p90=4.0 KiB small=2000 largest=4.0 KiB probes=0 rtt=13ms handshake=384ms throughput=assumed 1.0 MiB/s bdp=13.3 KiB -> connections=8 concurrency=64 request_concurrency=16
+auto tuning: files=2000 bytes=7.8 MiB p50=4.0 KiB p90=4.0 KiB small=2000 largest=4.0 KiB probes=0 rtt=13ms handshake=384ms throughput=assumed 360.0 KiB/s bdp=4.7 KiB -> connections=8 concurrency=64 request_concurrency=16
 ```
 
 If the server will not open as many connections as easySFTP asked for, you get

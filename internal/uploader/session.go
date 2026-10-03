@@ -458,8 +458,11 @@ func (quietLogger) Warningf(string, ...any) {}
 //
 // What is left is that a handshake already in flight is not interrupted; a
 // kill that lands during one is honored when it returns, by closing the fresh
-// connection instead of installing it.
-func (s *session) reconnect(ctx context.Context, c *conn, gen int) (*sftp.Client, error) {
+// connection instead of installing it (the fired check below). The one
+// exception is the recovery manifest: writeRecoveryManifest passes a nil
+// watchdog, because its redial is the documented post-kill connection that
+// records a failing run's partial progress (issue #115).
+func (s *session) reconnect(ctx context.Context, c *conn, gen int, watch *stallWatchdog) (*sftp.Client, error) {
 	for {
 		s.mu.Lock()
 		if c.gen != gen {
@@ -509,6 +512,17 @@ func (s *session) reconnect(ctx context.Context, c *conn, gen int) (*sftp.Client
 				return nil, err
 			}
 			return nil, fmt.Errorf("reconnecting: %w", err)
+		}
+		if watch != nil && watch.fired.Load() {
+			// The watchdog killed the run's connections while this handshake
+			// was in flight. Installing the fresh one would give the rest of
+			// the run a connection the spent watchdog no longer protects, and
+			// redialing a server that just stalled would only stall again, so
+			// close it and report the drop the callers already treat as fatal.
+			close(wait)
+			s.mu.Unlock()
+			closeConn(fresh)
+			return nil, errors.New("connection lost and the stall watchdog fired during the redial")
 		}
 		c.ssh, c.sftp, c.closeJump = fresh.ssh, fresh.sftp, fresh.closeJump
 		c.gen++
@@ -616,7 +630,7 @@ func (s *session) do(ctx context.Context, watch *stallWatchdog, op func(*sftp.Cl
 		if watch != nil && watch.fired.Load() {
 			return err
 		}
-		if _, rerr := s.reconnect(ctx, c, gen); rerr != nil {
+		if _, rerr := s.reconnect(ctx, c, gen, watch); rerr != nil {
 			return fmt.Errorf("%w (%v)", err, rerr)
 		}
 	}

@@ -66,7 +66,7 @@ func uploadFileWithRetry(ctx context.Context, env *transferEnv, f fileItem, inde
 			break
 		}
 		if isConnError(err) && attempt < retries {
-			if _, rerr := sess.reconnect(ctx, c, gen); rerr != nil {
+			if _, rerr := sess.reconnect(ctx, c, gen, watch); rerr != nil {
 				return 0, fmt.Errorf("uploading %q to %q: %w (%v)", f.localPath, f.remotePath, lastErr, rerr)
 			}
 		}
