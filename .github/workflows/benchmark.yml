@@ -49,6 +49,22 @@ name: SFTP benchmark
 # The runner also holds nothing sensitive by design: secrets are passed per
 # run, not stored on it.
 #
+# Those three layers govern who may *start* a run. What a run is *given* once
+# it has started is the other half of the posture (issue #283), and every
+# piece of it is deliberate:
+#   - The measuring job holds a read-only token (contents: read), so the
+#     candidate binary -- which may be a pull request's code -- runs next to
+#     nothing that could push to main, replace release assets or move the
+#     rolling tags.
+#   - None of its checkouts persist the token on disk
+#     (persist-credentials: false), so no git credential file outlives the
+#     job on the self-hosted machine.
+#   - The only write token lives in the "store" job below, which is
+#     GitHub-hosted and runs a harness built from main, never the candidate.
+#   - The candidate environment is an allowlist (runner.childEnv), not the
+#     job's whole environment: it gets the SFTP credentials it must have and
+#     nothing else the step exports.
+#
 # Required repository secrets:
 #   BENCHMARK_SFTP_HOST         host name of the benchmark server
 #   BENCHMARK_SFTP_USERNAME     SFTP user name
@@ -141,6 +157,14 @@ jobs:
     # The one job in this repo on the self-hosted runner. Everything else stays
     # on GitHub-hosted runners; see the "Self-hosted runner" note in the header.
     runs-on: [self-hosted, Linux, X64]
+    # What the storing job needs to file the result: the label and the time
+    # this run resolved, and the commit the candidate was built from. The
+    # measurement itself travels as the artifact, never as a job output.
+    outputs:
+      label: ${{ steps.resolve.outputs.label }}
+      recorded-at: ${{ steps.resolve.outputs.recorded-at }}
+      candidate-sha: ${{ steps.build.outputs.candidate-sha }}
+      kind: ${{ inputs.release-version != '' && 'release' || 'manual' }}
     # Six hours, not the one hour this used to have. A standard run of the
     # three fixed scenarios takes minutes, but the timeout is what decides
     # whether a heavier scenario set, more repeats or a second link profile can
@@ -154,13 +178,19 @@ jobs:
     # repair run of a release stays behind the approval like any other one.
     environment: ${{ github.event_name == 'push' && 'benchmark-release' || 'benchmark' }}
     permissions:
-      # Only the release run pushes, but the token is scoped per job.
-      contents: write
+      # Read only (issue #283): the candidate this job builds and runs may be
+      # a pull request's code, so it gets no token that could push to main,
+      # replace release assets or move the rolling tags. The storing job
+      # below is the only one that writes, and it runs on a GitHub-hosted
+      # runner with the harness built from main, never the candidate.
+      contents: read
     steps:
       # The workflow's own checkout, for cmd/easysftp-bench. It runs first:
       # a root checkout cleans the workspace and would remove the build
       # checkouts below.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Resolve what to benchmark
         id: resolve
@@ -213,6 +243,9 @@ jobs:
         with:
           ref: ${{ steps.resolve.outputs.ref }}
           path: builds/candidate
+          # Nothing below this point pushes, so the token has no business
+          # staying on the self-hosted machine's disk (issue #283).
+          persist-credentials: false
 
       - name: Check out the baseline
         if: inputs.baseline-ref != ''
@@ -220,6 +253,7 @@ jobs:
         with:
           ref: ${{ inputs.baseline-ref }}
           path: builds/baseline
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -299,40 +333,78 @@ jobs:
           path: ${{ runner.temp }}/benchmark-results
           if-no-files-found: ignore
 
-      # Everything below stores the result in benchmarks/ on main. A release PR
-      # run (pull_request) stops here: nothing has been released yet.
-      - name: Check out main for storing
-        if: github.event_name != 'pull_request'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A release PR run (pull_request) stops here: nothing has been released
+      # yet, and the storing job below drops out on its "if:". The measurement
+      # itself is already on its way as the artifact uploaded above.
+
+  # The storing half of the split (issue #283): everything a run writes to
+  # main happens here, on a GitHub-hosted runner, with a token that never
+  # touched the self-hosted machine and a harness built from main -- not from
+  # whatever ref or pull request was measured. It needs the measuring job only
+  # for the artifact and the facts the result records (label, recorded time,
+  # candidate commit), which is what the job outputs above carry.
+  #
+  # The concurrency group at the top of this workflow still covers both jobs:
+  # two storing jobs racing for a push to main would be the same bug whether
+  # or not they shared a machine, and they cannot -- one run at a time.
+  store:
+    name: Store the result on main
+    needs: benchmark
+    # The same gate the storing steps used before the split: a release PR run
+    # stores nothing, and a failed measurement (which fails "needs") is no
+    # reason to file a half-written result set.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: benchmark-${{ github.run_id }}
+          path: results
+
+      # main, not the measured ref: the storing code decides what a stored
+      # document looks like, and that must not depend on which ref was
+      # measured (the same rule the harness build above already follows).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          path: store-main
-          # Full history: the commit below rebases onto whatever landed on main
-          # while the benchmark was running, which a shallow clone cannot do.
+          # Full history: the commit below rebases onto whatever landed on
+          # main while the benchmark was running, which a shallow clone
+          # cannot do. This checkout pushes, so it keeps its credentials.
           fetch-depth: 0
 
-      - name: Store the result
-        if: github.event_name != 'pull_request'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build the harness from main
         env:
-          BENCH_DIR: store-main/benchmarks
-          RESULTS_JSON: ${{ runner.temp }}/benchmark-results/results.json
-          SUMMARY_MD: ${{ runner.temp }}/benchmark-results/summary.md
-          RESULTS_CSV: ${{ runner.temp }}/benchmark-results/results.csv
-          KIND: ${{ inputs.release-version != '' && 'release' || 'manual' }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/easysftp-bench" ./cmd/easysftp-bench
+
+      - name: Store the result
+        env:
+          BENCH_DIR: benchmarks
+          RESULTS_JSON: results/results.json
+          SUMMARY_MD: results/summary.md
+          RESULTS_CSV: results/results.csv
+          KIND: ${{ needs.benchmark.outputs.kind }}
           VERSION: ${{ inputs.release-version }}
-          LABEL: ${{ steps.resolve.outputs.label }}
-          RECORDED_AT: ${{ steps.resolve.outputs.recorded-at }}
-          COMMIT: ${{ steps.build.outputs.candidate-sha }}
+          LABEL: ${{ needs.benchmark.outputs.label }}
+          RECORDED_AT: ${{ needs.benchmark.outputs.recorded-at }}
+          COMMIT: ${{ needs.benchmark.outputs.candidate-sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           "$RUNNER_TEMP/bin/easysftp-bench" store
 
       - name: Commit the result to main
-        if: github.event_name != 'pull_request'
-        working-directory: store-main
         env:
-          KIND: ${{ inputs.release-version != '' && 'release' || 'manual' }}
-          NAME: ${{ steps.resolve.outputs.label }}
+          KIND: ${{ needs.benchmark.outputs.kind }}
+          NAME: ${{ needs.benchmark.outputs.label }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -351,11 +423,11 @@ jobs:
   # A release's numbers belong on its release page, next to the binaries. This
   # is a separate job on a GitHub-hosted runner: it needs nothing but "gh" and
   # a checkout, and the self-hosted runner stays reserved for the measurement.
-  # It reads the files from main, which the job above pushed there, so it can
-  # only run once that finished.
+  # It reads the files from main, which the store job above pushed there, so it
+  # can only run once that finished.
   attach:
     name: Attach the result to the release
-    needs: benchmark
+    needs: [benchmark, store]
     if: inputs.release-version != ''
     runs-on: ubuntu-latest
     permissions:
@@ -364,6 +436,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
+          persist-credentials: false
 
       - name: Upload the benchmark as a release asset
         env:

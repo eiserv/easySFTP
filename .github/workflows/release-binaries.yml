@@ -20,10 +20,13 @@ jobs:
     outputs:
       commit: ${{ steps.release.outputs.commit }}
     steps:
+      # Reads tags and the version file; the token has no business staying on
+      # disk beyond the checkout (issue #283).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify tag, version, release, and ancestry
         id: release
@@ -60,9 +63,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Runs "go test" on the release source; nothing here pushes (issue #283).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -100,9 +105,11 @@ jobs:
             goarch: arm64
             asset: easysftp_windows_arm64.exe
     steps:
+      # Cross-compiles the release source; nothing here pushes (issue #283).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

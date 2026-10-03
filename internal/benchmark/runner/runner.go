@@ -81,10 +81,7 @@ func (r *Runner) Do(run Run) (int, error) {
 		return 0, err
 	}
 
-	env := append(os.Environ(),
-		"GITHUB_OUTPUT="+run.Outputs,
-		"EASYSFTP_PASSWORD="+r.Server.Password,
-	)
+	env := r.childEnv(run)
 	if run.Metrics != "" {
 		if err := os.Remove(run.Metrics); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return 0, err
@@ -128,6 +125,83 @@ func (r *Runner) Do(run Run) (int, error) {
 		return 0, fmt.Errorf("running %s: %w", run.Binary, err)
 	}
 	return 0, nil
+}
+
+// childAllowlist is every parent variable a measured build still receives
+// (issue #283). The build under test may be a candidate pull request, so the
+// benchmark job's own variables -- the server's credentials, the workspace
+// paths, whatever else the step exports -- are none of its business: the child
+// gets what a deploy needs and nothing else.
+//
+// Why each name is here:
+//
+//   - PATH and HOME: a binary is allowed to exec helpers, and those look in
+//     PATH the way any other command does.
+//   - TMPDIR, TEMP, TMP: a helper that wants scratch space should get the same
+//     temporary directory every other process on the runner uses. TEMP and TMP
+//     are the Windows spellings.
+//   - SYSTEMROOT, SYSTEMDRIVE, COMSPEC, PATHEXT, USERPROFILE: the Windows
+//     minimum. A Go child runs without them, but the system libraries a static
+//     binary still calls into do not, and the test suite runs on windows-latest
+//     too.
+//   - every EASYSFTP_* variable of this process, by prefix: the harness passes
+//     its own settings through that namespace, and so do the driver tests,
+//     whose stub marker (EASYSFTP_BENCH_STUB) must reach the re-executed test
+//     binary or the child would run the whole test suite again.
+var childAllowlist = []string{
+	"PATH", "HOME", "TMPDIR", "TEMP", "TMP",
+	"SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "PATHEXT", "USERPROFILE",
+	"EASYSFTP_",
+}
+
+// childEnv is the environment one measured run starts with: the allowlisted
+// variables of this process, minus any name the Runner itself sets below, so
+// that no parent value can shadow a harness-provided one and no entry appears
+// twice.
+func (r *Runner) childEnv(run Run) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if !allowedChildVar(name) || r.providesChildVar(name) {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env,
+		"GITHUB_OUTPUT="+run.Outputs,
+		"EASYSFTP_PASSWORD="+r.Server.Password,
+	)
+}
+
+// allowedChildVar reports whether a parent variable reaches the measured run.
+func allowedChildVar(name string) bool {
+	for _, allowed := range childAllowlist {
+		if strings.HasSuffix(allowed, "_") {
+			if strings.HasPrefix(name, allowed) {
+				return true
+			}
+			continue
+		}
+		if name == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// providesChildVar reports whether the Runner owns this name for the run, in
+// which case the parent's value (if any) must not reach the child: the
+// harness-provided value wins, the variable appears once, and -- for the
+// inline names on a config-file run -- no leftover parent export can turn the
+// run into the env-plus-config combination easySFTP refuses on purpose.
+func (r *Runner) providesChildVar(name string) bool {
+	switch name {
+	case "GITHUB_OUTPUT", "EASYSFTP_PASSWORD", "EASYSFTP_METRICS_FILE", "EASYSFTP_CONFIG",
+		"EASYSFTP_HOST", "EASYSFTP_PORT", "EASYSFTP_USERNAME", "EASYSFTP_KNOWN_HOSTS",
+		"EASYSFTP_SOURCE", "EASYSFTP_TARGET", "EASYSFTP_MODE":
+		return true
+	}
+	return false
 }
 
 // configFile is the v3 config a run with an advanced block goes through. It

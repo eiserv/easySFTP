@@ -193,15 +193,27 @@ jobs:
     # grid grew (the stored 2026-08-16 run measured for 11h25m). A timeout that
     # cuts a sweep in half throws away the whole run, not half of it.
     timeout-minutes: 1440
+    # What the storing job needs to file the sweep: the label and the time this
+    # run resolved, and the commit the candidate was built from. The sweep
+    # itself travels as the artifact, never as a job output.
+    outputs:
+      label: ${{ steps.resolve.outputs.label }}
+      recorded-at: ${{ steps.resolve.outputs.recorded-at }}
+      candidate-sha: ${{ steps.build.outputs.candidate-sha }}
     # Same gate as benchmark.yml: a manual sweep waits for a maintainer, the
     # automatic post-release one must not, or every release stalls on a click.
     environment: ${{ github.event_name == 'push' && 'benchmark-release' || 'benchmark' }}
     permissions:
-      contents: write
+      # Read only (issue #283), for the same reason as benchmark.yml's
+      # measuring job: the candidate swept here may be a pull request's code,
+      # and the storing job below does the writing instead.
+      contents: read
     steps:
       # The workflow's own checkout, for cmd/easysftp-bench. It runs first: a
       # root checkout cleans the workspace and would remove the build checkouts.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Resolve what to benchmark
         id: resolve
@@ -241,6 +253,9 @@ jobs:
         with:
           ref: ${{ steps.resolve.outputs.ref }}
           path: builds/candidate
+          # Nothing below this point pushes, so the token has no business
+          # staying on the self-hosted machine's disk (issue #283).
+          persist-credentials: false
 
       - name: Check out the baseline
         if: inputs.baseline-ref != ''
@@ -248,6 +263,7 @@ jobs:
         with:
           ref: ${{ inputs.baseline-ref }}
           path: builds/baseline
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -329,36 +345,70 @@ jobs:
           path: ${{ runner.temp }}/matrix-results
           if-no-files-found: ignore
 
-      - name: Check out main for storing
-        if: inputs.store
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A sweep asked not to store (inputs.store = false) stops here, and the
+      # storing job below drops out on its "if:". The sweep itself is already
+      # on its way as the artifact uploaded above.
+
+  # The storing half of the split (issue #283), the same shape as the "store"
+  # job of benchmark.yml: everything a sweep writes to main happens here, on a
+  # GitHub-hosted runner, with a token that never touched the self-hosted
+  # machine and a harness built from main -- never from the swept ref.
+  store:
+    name: Store the sweep on main
+    needs: matrix
+    # The same gate the storing steps used before the split: "store" is the
+    # sweep's own input, and a failed measurement (which fails "needs") is no
+    # reason to file a half-written grid.
+    if: inputs.store
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: benchmark-matrix-${{ github.run_id }}
+          path: results
+
+      # main, not the swept ref: the storing code decides what a stored
+      # document looks like, and that must not depend on which ref was
+      # measured (the same rule the harness build above already follows).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          path: store-main
-          # Full history: the commit below rebases onto whatever landed on main
-          # while the sweep was running, which a shallow clone cannot do.
+          # Full history: the commit below rebases onto whatever landed on
+          # main while the sweep was running, which a shallow clone cannot
+          # do. This checkout pushes, so it keeps its credentials.
           fetch-depth: 0
 
-      - name: Store the result
-        if: inputs.store
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build the harness from main
         env:
-          BENCH_DIR: store-main/benchmarks
-          RESULTS_JSON: ${{ runner.temp }}/matrix-results/matrix.json
-          SUMMARY_MD: ${{ runner.temp }}/matrix-results/matrix.md
-          RESULTS_CSV: ${{ runner.temp }}/matrix-results/matrix.csv
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/bin/easysftp-bench" ./cmd/easysftp-bench
+
+      - name: Store the sweep
+        env:
+          BENCH_DIR: benchmarks
+          RESULTS_JSON: results/matrix.json
+          SUMMARY_MD: results/matrix.md
+          RESULTS_CSV: results/matrix.csv
           KIND: matrix
-          LABEL: ${{ steps.resolve.outputs.label }}
-          RECORDED_AT: ${{ steps.resolve.outputs.recorded-at }}
-          COMMIT: ${{ steps.build.outputs.candidate-sha }}
+          LABEL: ${{ needs.matrix.outputs.label }}
+          RECORDED_AT: ${{ needs.matrix.outputs.recorded-at }}
+          COMMIT: ${{ needs.matrix.outputs.candidate-sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           "$RUNNER_TEMP/bin/easysftp-bench" store
 
-      - name: Commit the result to main
-        if: inputs.store
-        working-directory: store-main
+      - name: Commit the sweep to main
         env:
-          NAME: ${{ steps.resolve.outputs.label }}
+          NAME: ${{ needs.matrix.outputs.label }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"

@@ -3,11 +3,36 @@ package runner_test
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/eiserv/easySFTP/internal/benchmark/runner"
 )
+
+// TestMain is two binaries in one (the same trick the driver tests use): with
+// EASYSFTP_RUNNER_DUMP set, this process is the "measured build" the tests
+// below start, and it answers by writing the environment it received to the
+// file the variable names and exiting. Without it, the test suite runs.
+//
+// The dump marker travels through the childEnv allowlist like any other
+// EASYSFTP_* variable, which is itself part of what the tests assert.
+func TestMain(m *testing.M) {
+	if dump := os.Getenv("EASYSFTP_RUNNER_DUMP"); dump != "" {
+		var b strings.Builder
+		env := os.Environ()
+		sort.Strings(env)
+		for _, kv := range env {
+			b.WriteString(kv)
+			b.WriteByte('\n')
+		}
+		if err := os.WriteFile(dump, []byte(b.String()), 0o644); err != nil {
+			panic("dumping the child environment: " + err.Error())
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 func write(t *testing.T, dir, name, content string) string {
 	t.Helper()
@@ -143,5 +168,152 @@ func TestConfigFileIsWrittenToTheLogDir(t *testing.T) {
 		if !strings.Contains(config, needle) {
 			t.Errorf("the config file is missing %q:\n%s", needle, config)
 		}
+	}
+}
+
+// childEnvOf runs one build of this very test binary and returns the
+// environment it received, as a map. The build exits through TestMain before
+// any test runs, so this measures exactly what runner.Do hands a candidate.
+func childEnvOf(t *testing.T, r *runner.Runner, run runner.Run) map[string]string {
+	t.Helper()
+	dump := filepath.Join(t.TempDir(), "child-env.txt")
+	t.Setenv("EASYSFTP_RUNNER_DUMP", dump)
+
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locating the test binary: %v", err)
+	}
+	run.Binary = binary
+
+	if _, err := r.Do(run); err != nil {
+		t.Fatalf("running the child: %v", err)
+	}
+	data, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("the child wrote no environment dump: %v", err)
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		name, value, _ := strings.Cut(line, "=")
+		if _, dup := env[name]; dup {
+			t.Errorf("the child received %s twice", name)
+		}
+		env[name] = value
+	}
+	return env
+}
+
+// The measured build may be a candidate pull request, so it gets an
+// allowlisted environment, not this process's: the benchmark job's own
+// variables (the server's credentials, the sweep axes, whatever else the step
+// exports) must stay with the parent (issue #283).
+func TestChildEnvironmentIsAnAllowlist(t *testing.T) {
+	// Parent variables a build has no business seeing.
+	t.Setenv("BENCH_HOST", "bench.example.invalid")
+	t.Setenv("BENCH_USERNAME", "bench-user")
+	t.Setenv("BENCH_PASSWORD", "bench-password")
+	t.Setenv("MATRIX_SCENARIOS", "small large")
+	t.Setenv("REMOTE_BASE", "/easysftp-benchmark")
+	t.Setenv("RUNNER_TEMP", "/tmp/runner")
+
+	dir := t.TempDir()
+	r := &runner.Runner{
+		LogDir: dir,
+		Server: runner.Server{
+			Host: "sftp.example.invalid", Port: 2222, Username: "deployer",
+			Password: "secret", KnownHosts: "sftp.example.invalid ssh-ed25519 AAAA",
+		},
+	}
+	env := childEnvOf(t, r, runner.Run{
+		Source:  "/payload",
+		Remote:  "/target",
+		Mode:    "overlay",
+		Log:     filepath.Join(dir, "run.log"),
+		Outputs: filepath.Join(dir, "run.out"),
+	})
+
+	for _, name := range []string{
+		"BENCH_HOST", "BENCH_USERNAME", "BENCH_PASSWORD",
+		"MATRIX_SCENARIOS", "REMOTE_BASE", "RUNNER_TEMP",
+	} {
+		if _, leaked := env[name]; leaked {
+			t.Errorf("the benchmark's own %s reached the measured build", name)
+		}
+	}
+
+	// What a build does get: the inline inputs the Runner set, and
+	// GITHUB_OUTPUT pointing at the file its step outputs belong in.
+	for name, want := range map[string]string{
+		"EASYSFTP_HOST":        "sftp.example.invalid",
+		"EASYSFTP_PORT":        "2222",
+		"EASYSFTP_USERNAME":    "deployer",
+		"EASYSFTP_PASSWORD":    "secret",
+		"EASYSFTP_KNOWN_HOSTS": "sftp.example.invalid ssh-ed25519 AAAA",
+		"EASYSFTP_SOURCE":      "/payload",
+		"EASYSFTP_TARGET":      "/target",
+		"EASYSFTP_MODE":        "overlay",
+		"GITHUB_OUTPUT":        filepath.Join(dir, "run.out"),
+	} {
+		if env[name] != want {
+			t.Errorf("%s = %q, want %q", name, env[name], want)
+		}
+	}
+
+	// The dump marker is an EASYSFTP_* variable of the parent, so its arrival
+	// proves the prefix passes through the allowlist at all -- which is what
+	// keeps the driver tests' stub re-execution working.
+	if env["EASYSFTP_RUNNER_DUMP"] == "" {
+		t.Error("the EASYSFTP_* prefix did not pass through to the child")
+	}
+}
+
+// The allowlist passes every EASYSFTP_* of the parent through, because the
+// driver tests' stub marker travels that way -- but the Runner owns the
+// deploy's own names: a hostile parent export of EASYSFTP_SOURCE can neither
+// shadow the harness-provided value on an inline run nor turn a config-file
+// run into the env-plus-config combination easySFTP refuses on purpose.
+func TestTheHarnessOwnsTheDeployVariables(t *testing.T) {
+	t.Setenv("EASYSFTP_SOURCE", "/hostile-parent-source")
+	t.Setenv("EASYSFTP_HOST", "hostile-parent-host.example.invalid")
+
+	// An inline run: the Runner's values win.
+	dir := t.TempDir()
+	r := &runner.Runner{
+		LogDir: dir,
+		Server: runner.Server{Host: "sftp.example.invalid", Port: 22, Username: "u", Password: "p", KnownHosts: "k"},
+	}
+	env := childEnvOf(t, r, runner.Run{
+		Source:  "/payload",
+		Remote:  "/target",
+		Mode:    "overlay",
+		Log:     filepath.Join(dir, "run.log"),
+		Outputs: filepath.Join(dir, "run.out"),
+	})
+	if env["EASYSFTP_SOURCE"] != "/payload" {
+		t.Errorf("EASYSFTP_SOURCE = %q, want the harness-provided /payload", env["EASYSFTP_SOURCE"])
+	}
+	if env["EASYSFTP_HOST"] != "sftp.example.invalid" {
+		t.Errorf("EASYSFTP_HOST = %q, want the harness-provided host", env["EASYSFTP_HOST"])
+	}
+
+	// A config-file run: the inline names are absent entirely, not stale.
+	env = childEnvOf(t, r, runner.Run{
+		Source:   "/payload",
+		Remote:   "/target",
+		Mode:     "overlay",
+		Log:      filepath.Join(dir, "advanced.log"),
+		Outputs:  filepath.Join(dir, "advanced.out"),
+		Advanced: "connections: 2\nconcurrency: 8",
+	})
+	for _, name := range []string{"EASYSFTP_SOURCE", "EASYSFTP_HOST", "EASYSFTP_TARGET", "EASYSFTP_MODE"} {
+		if _, present := env[name]; present {
+			t.Errorf("%s reached a config-file run (value %q)", name, env[name])
+		}
+	}
+	if env["EASYSFTP_CONFIG"] == "" {
+		t.Error("the config-file run received no EASYSFTP_CONFIG")
 	}
 }

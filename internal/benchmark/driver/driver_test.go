@@ -58,9 +58,10 @@ func TestMain(m *testing.M) {
 func options(t *testing.T) driver.Options {
 	t.Helper()
 	work := t.TempDir()
-	// The driver passes its own environment on to every build it starts, which
-	// is how the stub learns both that it is the stub and where to keep its
-	// stand-in for the remote server.
+	// The runner starts every build with an allowlisted environment (issue
+	// #283), and the EASYSFTP_* namespace is on the list, which is how the
+	// stub learns both that it is the stub and where to keep its stand-in for
+	// the remote server.
 	t.Setenv(stubMarker, "1")
 	t.Setenv("EASYSFTP_STUB_STATE", filepath.Join(work, "remote"))
 	return driver.Options{

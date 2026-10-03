@@ -26,7 +26,11 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Reads the site and the docs, pushes nothing; the Pages deployment
+      # below uses its own OIDC token, not the checkout's (issue #283).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Assemble site
         # The site renders the repo's own markdown; copy it in so the
         # published docs always match the checked-out revision.

@@ -360,6 +360,15 @@ for a workload feature), not merely when it changes what the policy decides.
   runs inside the caller's run, which is why the release sweep takes a
   concurrency group of its own instead of queueing behind a group that same run
   already holds.
+- The benchmark jobs that measure on the self-hosted runner hold `contents:
+  read` only, persist no checkout credentials, and never push (issue #283):
+  the candidate they build and run may be a pull request's code, and a write
+  token next to it is a token that can move the rolling `v3` tags. Writing to
+  `main` is the separate, GitHub-hosted `store` job of the same workflows,
+  which builds the harness from `main` and downloads the measurement as an
+  artifact. `internal/benchmark/workflow_posture_test.go` pins this; a
+  checkout that re-adds persisted credentials or a write token to a
+  self-hosted job fails `go test ./internal/benchmark`.
 - The self-test job in `.github/workflows/ci.yml` is the only place a real
   OpenSSH server is exercised, and the only place `action.yml`'s composite
   wiring runs end to end. Unit tests set `EASYSFTP_*` directly and never see
