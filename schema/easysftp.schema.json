@@ -104,7 +104,7 @@
       }
     },
     "deployments": {
-      "description": "Named deployments. Each name appears in logs and the job summary.",
+      "description": "Named deployments. Each name appears in logs and the job summary. Two sync deployments must not share one target: they would read and write the same sync manifest and delete each other's files; the configuration is refused.",
       "type": "object",
       "minProperties": 1,
       "additionalProperties": {

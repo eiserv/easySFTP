@@ -364,9 +364,12 @@ func listRemoteContents(ctx context.Context, sess *session, root string, watch *
 	return files, dirs, nil
 }
 
-// normalizeRemote converts a remote path to a clean slash path.
+// normalizeRemote converts a remote path to a clean slash path. It delegates
+// to config.NormalizeRemote so that this package's path comparisons and the
+// configuration's target comparisons agree on what "the same path" means
+// (issue #278); the thin wrapper keeps the call sites reading short.
 func normalizeRemote(remote string) string {
-	return path.Clean(strings.ReplaceAll(remote, "\\", "/"))
+	return config.NormalizeRemote(remote)
 }
 
 // parentDirs returns all ancestor directories of a remote file path,

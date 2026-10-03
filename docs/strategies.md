@@ -76,6 +76,17 @@ Notes:
 - The first sync into a directory uploads everything and creates the manifest.
 - A missing or corrupt manifest degrades safely to "upload everything, delete
   nothing" (with a warning).
+- **Two sync deployments must not share one target.** The manifest file is
+  named by the run-wide `sync.manifest` setting and lives in the target, so
+  two sync deployments into the same directory read and write one manifest
+  and delete each other's files, in a run that finishes green. The
+  configuration is refused before anything is uploaded. To deploy several
+  sources into one place, merge them into one directory in the build step
+  and sync that, or give each deployment its own subdirectory of the target
+  (both stay plain `sync` deployments). A sync target overlapped by another
+  deployment's `clean` target is *not* refused: `clean` is documented to
+  wipe everything under its target. The run still warns about it, because
+  what the sync keeps is then decided by run order.
 - The manifest trusts itself: a file changed *on the server* out of band is not
   re-detected until its local content changes. Run `clean` once to reset.
 - Directories left empty by deletions are pruned automatically.

@@ -71,6 +71,9 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	if len(cfg.Algorithms.Insecure) > 0 {
 		log.Warningf("connection.algorithms explicitly enables insecure SSH algorithm(s): %s; use these only when a server cannot negotiate modern algorithms", strings.Join(cfg.Algorithms.Insecure, ", "))
 	}
+	for _, warning := range cfg.SyncTargetWarnings() {
+		log.Warningf("%s", warning)
+	}
 
 	// One budget for the whole run: safety.max_deletes lives under a run-wide
 	// safety: section and is enforced like one (issue #237).

@@ -332,3 +332,13 @@ Convert your `version: 1` file following the
 
 `sync` and `clean` reconcile a directory tree; for single files use `overlay`
 (the default).
+
+### `deployments "<a>" and "<b>" both run 'mode: sync' into target "<t>"`
+
+Two deployments in `sync` mode share one target. The sync manifest is named
+by the run-wide `sync.manifest` setting and lives in the target, so both
+deployments read and write the same manifest and delete each other's files
+in a run that finishes green. To deploy several sources into one place,
+merge them into one directory in the build step and sync that, or give each
+deployment its own subdirectory of the target (both stay plain `sync`
+deployments). See [strategies](strategies.md#sync).

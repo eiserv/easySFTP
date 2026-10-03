@@ -190,7 +190,7 @@ sync:
 | `version` | ✅ | Must be `3`. |
 | `connection` | ✅ | Where and as whom to connect. Credentials are **not** here; they stay inputs. |
 | `defaults` | | `mode` and `exclude` defaults applied to every deployment. |
-| `deployments` | ✅ | A **map** of named deployments (at least one). The name appears in logs and the job summary. |
+| `deployments` | ✅ | A **map** of named deployments (at least one). The name appears in logs and the job summary. Two `mode: sync` deployments must not share one target: they would read and write the same sync manifest and delete each other's files, so that configuration is refused; see [strategies](strategies.md#sync). |
 | `safety` | | `max_deletes`: the most remote entries, **files and directories together**, the **whole run** may remove (0 = unlimited, the default); see [delete guards](strategies.md#delete-guards). |
 | `advanced` | | Transfer tuning; the defaults suit most deploys. |
 | `permissions` | | Remote file/dir modes and `preserve_times` (all best-effort). |
