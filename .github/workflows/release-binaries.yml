@@ -31,6 +31,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
+          RUN_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -39,6 +40,17 @@ jobs:
           fi
           git show-ref --verify --quiet "refs/tags/$TAG"
           commit=$(git rev-parse "$TAG^{}")
+          # The attestation below signs this run's own commit (github.sha) as
+          # the build source, and every job after this one builds from the
+          # tag's commit. The two agree on the release path, where the push
+          # that starts the run is the release commit itself, but a
+          # workflow_dispatch defaults to a branch (usually main), where they
+          # differ and the attestation would name a commit the binaries were
+          # not built from (issue #284). Stop here, before anything is built.
+          if [[ "$RUN_SHA" != "$commit" ]]; then
+            echo "::error::This run started from $RUN_SHA, but tag $TAG points at $commit. Start the repair from the tag itself (Run workflow: Use workflow from, then pick the tag) so the attestation names the commit the binaries are built from; see docs/RELEASING.md."
+            exit 1
+          fi
           git fetch --no-tags origin main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "$commit" origin/main; then
             echo "::error::Release tag $TAG is not reachable from main"

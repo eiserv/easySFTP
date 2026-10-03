@@ -158,9 +158,23 @@ if [[ "${GIT_TERMINAL_PROMPT:-}" != '0' ]] ||
   printf 'mock git: resolve_release_commit must bound ls-remote with GIT_TERMINAL_PROMPT and the low-speed pair (issue #236)\n' >&2
   exit 1
 fi
-printf '%s\t%s\n' \
-  '1111111111111111111111111111111111111111' 'refs/tags/v1.2.3' \
-  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'refs/tags/v1.2.3^{}'
+# Answer with the refs actually asked for (issue #284): resolve_release_commit
+# runs for tag refs too now, so the mock has to serve the version the action
+# resolves, not only v1.2.3. The direct resolution test below still asks for
+# v1.2.3 and still gets it. The peeled commit is fixed so tests can compare
+# against $release_sha.
+for arg in "$@"; do
+  case "$arg" in
+    refs/tags/*'^{}')
+      printf '%s\t%s\n' \
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$arg"
+      ;;
+    refs/tags/*)
+      printf '%s\t%s\n' \
+        '1111111111111111111111111111111111111111' "$arg"
+      ;;
+  esac
+done
 MOCK_GIT
 chmod +x "$tmp/bin/git"
 
@@ -293,6 +307,77 @@ no_gh_warning=$(PATH="$tmp/nogh" \
   verify_release_provenance "$provenance_asset" easysftp_linux_x64 v1.2.3)
 no_token_warning=$(PATH="$tmp/ghbin:$PATH" GH_TOKEN='' GITHUB_TOKEN='' \
   verify_release_provenance "$provenance_asset" easysftp_linux_x64 v1.2.3)
+# A tag ref must get the same source-digest pin as a full-SHA ref (issue
+# #284). The mock gh fails when EXPECTED_SOURCE_DIGEST is set but the digest
+# was not passed, so this only passes if the launcher resolved the exact
+# release commit for the rolling major tag and handed it to the verification.
+tag_ver=${release_version#v}
+tag_ref="v${tag_ver%%.*}"
+tag_output="$tmp/tag-prebuilt-output"
+tag_status=0
+PATH="$tmp/bin:$tmp/ghbin:$PATH" \
+MOCK_ASSET_DIR="$tmp/assets" \
+GH_TOKEN=mock-token \
+EXPECTED_SOURCE_DIGEST="$release_sha" \
+ACTION_PATH="$tmp/action" \
+ACTION_REF="$tag_ref" \
+RUNNER_OS=Linux \
+RUNNER_ARCH=X64 \
+RUNNER_TEMP="$tmp/runner" \
+GITHUB_OUTPUT="$tag_output" \
+  bash "$repo_root/scripts/prepare-action.sh" >"$tmp/tag-run.log" 2>&1 || tag_status=$?
+expect_equal 'a tag ref resolves and pins the release commit' 0 "$tag_status"
+tag_binary=$(sed -n 's/^binary=//p' "$tag_output")
+expect_equal 'tag ref prebuilt execution' 'prebuilt-ok' "$("$tag_binary")"
+expect_equal 'tag ref still reports the source commit' \
+  "$release_version, built by eiserv/easySFTP/.github/workflows/release-binaries.yml from source commit $release_sha" \
+  "$(sed -n 's/^Verified build provenance for easysftp_linux_x64 (\(.*\))$/\1/p' "$tmp/tag-run.log")"
+expect_equal 'a resolved tag ref does not warn' 0 \
+  "$(grep -c 'could not resolve the exact' "$tmp/tag-run.log")"
+
+# And the degradation the issue asks to keep: a tag ref whose release commit
+# cannot be resolved (network hiccup, missing tag) still deploys the release
+# binary, warns that the provenance check lost its source-digest pin, and the
+# check itself runs and passes on the repository and workflow alone.
+mkdir -p "$tmp/nogit"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$tmp/nogit/git"
+chmod +x "$tmp/nogit/git"
+unresolved_output="$tmp/unresolved-prebuilt-output"
+unresolved_status=0
+PATH="$tmp/nogit:$tmp/bin:$tmp/ghbin:$PATH" \
+MOCK_ASSET_DIR="$tmp/assets" \
+GH_TOKEN=mock-token \
+ACTION_PATH="$tmp/action" \
+ACTION_REF="$tag_ref" \
+RUNNER_OS=Linux \
+RUNNER_ARCH=X64 \
+RUNNER_TEMP="$tmp/runner" \
+GITHUB_OUTPUT="$unresolved_output" \
+  bash "$repo_root/scripts/prepare-action.sh" >"$tmp/unresolved-run.log" 2>&1 || unresolved_status=$?
+expect_equal 'an unresolvable tag ref still deploys prebuilt' 0 "$unresolved_status"
+unresolved_binary=$(sed -n 's/^binary=//p' "$unresolved_output")
+expect_equal 'unresolved tag ref prebuilt execution' 'prebuilt-ok' "$("$unresolved_binary")"
+case "$(cat "$tmp/unresolved-run.log")" in
+  *'could not resolve the exact '"$release_version"' release commit'*)
+    echo 'PASS: an unresolved tag ref warns about the missing digest pin'
+    ;;
+  *)
+    echo "FAIL: an unresolved tag ref should warn about the missing digest pin" >&2
+    failures=$((failures + 1))
+    ;;
+esac
+expect_equal 'the unresolved tag ref verified without a pin' 1 \
+  "$(grep -c 'Verified build provenance for easysftp_linux_x64 ('"$release_version"', built by eiserv/easySFTP/.github/workflows/release-binaries.yml)' "$tmp/unresolved-run.log")"
+
+# is_release_tag_ref is the half of detect_build_mode's case arm that decides
+# whether a tag ref resolves its release commit. Pin both sides of it.
+expect_equal 'major tag is a release tag ref' 'yes' "$(is_release_tag_ref v1 v1.2.3 && echo yes)"
+expect_equal 'minor tag is a release tag ref' 'yes' "$(is_release_tag_ref v1.2 v1.2.3 && echo yes)"
+expect_equal 'exact tag is a release tag ref' 'yes' "$(is_release_tag_ref v1.2.3 v1.2.3 && echo yes)"
+expect_equal 'full SHA is not a tag ref' '' "$(is_release_tag_ref aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa v1.2.3 && echo yes)"
+expect_equal 'unrelated tag is not a release tag ref' '' "$(is_release_tag_ref v2 v1.2.3 && echo yes)"
+expect_equal 'branch is not a release tag ref' '' "$(is_release_tag_ref main v1.2.3 && echo yes)"
+
 for warning in "$no_gh_warning" "$no_token_warning"; do
   case "$warning" in
     '::warning::easySFTP action: could not verify the build provenance'*)

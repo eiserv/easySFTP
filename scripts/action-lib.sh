@@ -78,6 +78,30 @@ detect_build_mode() {
   esac
 }
 
+# is_release_tag_ref succeeds when the action ref is one of the three tag
+# spellings that select the prebuilt binary for this version (the same case
+# arm as in detect_build_mode). It answers that question one stage earlier,
+# so the launcher can resolve the release commit for a tag ref before it
+# decides the build mode. The two case arms must stay identical: a ref that
+# answers yes here but no there resolves a release commit that is then
+# unused, and a ref that answers no here but yes there downloads a release
+# binary with no source-digest pin on the provenance check (issue #284).
+is_release_tag_ref() {
+  local action_ref=$1
+  local version=$2
+  local major minor patch
+
+  IFS=. read -r major minor patch <<< "${version#v}"
+  case "$action_ref" in
+    "v$major" | "v$major.$minor" | "v$major.$minor.$patch")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 read_release_version() {
   local version_file=$1
   local -a lines=()

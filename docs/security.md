@@ -211,10 +211,15 @@ Apache (vhost or `.htaccess`):
   `.github/workflows/release-binaries.yml` and to the release commit. The
   launcher verifies it with `gh attestation verify` before running the binary,
   pinning both `--repo` and `--signer-workflow`, and **fails the run** if the
-  check runs and does not pass. When the action ref is a full commit SHA, the
-  launcher also pins `--source-digest` to that exact SHA. This prevents a
-  mutable release asset from being replaced with a validly attested binary
-  built by the same workflow from a different commit. You can run the same
+  check runs and does not pass. For every release ref, tag or full commit SHA
+  alike, the launcher resolves the exact release commit and also pins
+  `--source-digest` to it. This prevents a mutable release asset from being
+  replaced with a validly attested binary built by the same workflow from a
+  different commit: the rollback of shipping an older release's genuine binary
+  as the newest one fails the check, for tag-pinned users too. If the tag
+  cannot be resolved (a network hiccup, or a tag not yet visible to the
+  runner), the run warns and continues on the repository and workflow check
+  alone, so a resolution failure does not break a deploy. You can run the same
   check yourself:
 
   ```bash

@@ -98,6 +98,16 @@ exact tag such as `v1.2.3`. The workflow never creates or chooses a version. It
 fails unless the tag is an exact SemVer release reachable from `main`, the
 GitHub Release already exists, and `.easysftp-version` matches it.
 
+**Start the run from the tag, not from `main`.** In the *Use workflow from*
+dropdown pick the tag being repaired; the dialog opens with `main` selected,
+which is the wrong choice here. The
+attestation signs the run's own commit as the build source, and the binaries
+are built from the tag's commit. Those are the same on the release path and
+on a repair started from the tag, but a repair started from `main` would
+attest `main`'s head, a commit the binaries were not built from, and every
+SHA-pinned user would fail verification of a correct release. The validate
+job rejects that mismatch before anything is built.
+
 The repair rebuilds and tests the binaries from the exact tagged commit,
 replaces the known assets with `gh release upload --clobber`, regenerates
 checksums, and moves rolling tags only after success. Do not use PR artifacts
