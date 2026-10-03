@@ -143,6 +143,51 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		}
 	}
 
+	// A stale entry whose path type now conflicts with the plan (a file where
+	// the plan creates a directory, or an entry under a path the plan turns
+	// into a file) must go before the upload, or the upload fails on it every
+	// run and the delete that would have made room never executes (issue
+	// #280). Only those entries move: the rest keep the upload-first order,
+	// which is what keeps a site serving old files until the new ones are in
+	// place. The removals charge the reservation above, which already
+	// counted all of toDelete.
+	colliding, toDelete := collidingDeletes(toDelete, p.files)
+	var preDeleted []string
+	if len(colliding) > 0 {
+		collidePaths := make([]string, len(colliding))
+		for i, rel := range colliding {
+			// Cannot fail: every entry passed safeJoin when toDelete was built.
+			collidePaths[i], _ = safeJoin(base, rel)
+		}
+		endCollide := metrics.Phase("collide_delete")
+		results, cerr := deleteRemoteFiles(ctx, cfg, sess, collidePaths, watch, log)
+		endCollide()
+		for i, ok := range results {
+			if ok {
+				preDeleted = append(preDeleted, colliding[i])
+			}
+		}
+		stats.FilesDeleted += len(preDeleted)
+		recovery := func() {
+			writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, make([]bool, len(upload)), preDeleted), log)
+		}
+		if cerr != nil {
+			recovery()
+			return fmt.Errorf("removing the manifest entries the upload must replace: %w", cerr)
+		}
+		// A collision under a path the plan turns into a file leaves the
+		// directory itself in the way: empty ones go now (dry-run counts them
+		// as planned, like every other dry-run number), and one that still
+		// holds entries this deployment does not own fails with the reason
+		// rather than the bare "is a directory" the rename would answer.
+		dirs, derr := clearCollideParents(ctx, cfg, sess, watch, base, colliding, p.files, budget)
+		stats.DirsDeleted += dirs
+		if derr != nil {
+			recovery()
+			return derr
+		}
+	}
+
 	// Directories are derived from the files actually being uploaded, so an
 	// unchanged (or barely changed) sync pays no directory round-trips for
 	// the untouched parts of the tree. With dir-mode set, the full plan's
@@ -159,7 +204,7 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	// file; see uploadFiles and issue #186.
 	completed, err := uploadFiles(ctx, cfg, sess, upload, p.files, dirs, p.remoteDirs, base, stats, verb, watch, false, log)
 	if err != nil {
-		writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, nil), log)
+		writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, preDeleted), log)
 		return err
 	}
 
@@ -179,7 +224,8 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	stats.FilesDeleted += len(deleted)
 	endSweep()
 	if deleteErr != nil {
-		writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, deleted), log)
+		allDeleted := append(append([]string{}, preDeleted...), deleted...)
+		writeRecoveryManifest(ctx, cfg, sess, watch, base, mergedManifest(old, upload, completed, allDeleted), log)
 		return deleteErr
 	}
 	stats.FilesSkipped += len(p.files) - len(upload)
@@ -206,6 +252,166 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		return fmt.Errorf("writing sync manifest in %q: %w", base, err)
 	}
 	return nil
+}
+
+func collidingDeletes(toDelete []string, plan []fileItem) (colliding, rest []string) {
+	stale := make(map[string]bool, len(toDelete))
+	for _, rel := range toDelete {
+		stale[rel] = true
+	}
+	plannedFile := make(map[string]bool, len(plan))
+	for _, f := range plan {
+		plannedFile[f.rel] = true
+	}
+	conflict := make(map[string]bool)
+
+	// A stale file sitting where the plan creates a directory: some planned
+	// file has the stale entry as a path ancestor, so the upload would have
+	// to MkdirAll over the file the manifest lists. Every ancestor of
+	// every planned file is checked, so a manifest holding two stale
+	// entries in one chain (the hand-edited case; the server itself can
+	// hold only one real file in that chain) loses both, not just the
+	// deepest one blocking the tree.
+	for _, f := range plan {
+		for dir := f.rel; dir != "." && dir != "/" && dir != ""; dir = path.Dir(dir) {
+			if stale[dir] {
+				conflict[dir] = true
+			}
+		}
+	}
+
+	// A stale entry sitting under a path the plan turns into a file: some
+	// planned file is a strict ancestor of the stale entry, so the upload
+	// would have to rename a temp file over its parent directory.
+	for _, rel := range toDelete {
+		if conflict[rel] {
+			continue
+		}
+		for dir := path.Dir(rel); dir != "." && dir != "/" && dir != ""; dir = path.Dir(dir) {
+			if plannedFile[dir] {
+				conflict[rel] = true
+				break
+			}
+		}
+	}
+
+	// Partition in the incoming (ascending) order, so the delete sweep and
+	// the recovery manifest keep the ordering the rest of the run expects.
+	for _, rel := range toDelete {
+		if conflict[rel] {
+			colliding = append(colliding, rel)
+		} else {
+			rest = append(rest, rel)
+		}
+	}
+	return colliding, rest
+}
+
+// clearCollideParents removes the directories the plan turns into files:
+// after the colliding manifest entries are gone, each such path is either
+// an empty directory that must not block the upload, or a directory that
+// still holds entries this deployment does not own, which sync refuses to
+// delete on purpose; that one fails with the reason instead of the bare
+// "is a directory" the rename would answer (issue #280). It returns how many
+// directories it removed. Only directories that are ancestors of a
+// colliding entry and also planned file paths are considered, deepest
+// first, so an emptied tree goes in one pass.
+func clearCollideParents(ctx context.Context, cfg *config.Config, sess *session, watch *stallWatchdog, base string, colliding []string, plan []fileItem, budget *deleteBudget) (int, error) {
+	plannedFile := make(map[string]bool, len(plan))
+	for _, f := range plan {
+		plannedFile[f.rel] = true
+	}
+	var dirs []string
+	seen := map[string]bool{}
+	for _, rel := range colliding {
+		// Every ancestor up to and including the planned file path is a
+		// directory the type change takes out, and the manifest never
+		// lists the ones between (it tracks files, not directories): a
+		// deeper tree like about/sub/page.html under the planned file
+		// "about" leaves about/sub behind unless it is pruned too. The
+		// deepest-first removal below empties them one level at a time;
+		// ancestors above the planned file path are not this change.
+		for dir := path.Dir(rel); dir != "." && dir != "/" && dir != ""; dir = path.Dir(dir) {
+			if seen[dir] {
+				break
+			}
+			seen[dir] = true
+			dirs = append(dirs, dir)
+			if plannedFile[dir] {
+				break // the planned file path is the top of this collision
+			}
+		}
+	}
+	if len(dirs) == 0 {
+		return 0, nil
+	}
+	if cfg.DryRun {
+		return len(dirs), nil
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
+	removed := 0
+	for _, dir := range dirs {
+		full, err := safeJoin(base, dir)
+		if err != nil {
+			return removed, err
+		}
+		// Charge before the attempt, like removeRemoteDirs: the file removals
+		// were reserved in advance, but the directories they empty could not
+		// be, because the count is only known once the files are gone. A spent
+		// budget refuses here, with the reason, rather than letting the upload
+		// fail on the un-removed directory with a bare rename error.
+		if !budget.take() {
+			return removed, fmt.Errorf("refusing to remove the emptied directory %q: it would take this run past safety.max_deletes; raise the limit in the config file, or run with dry-run to inspect the plan", full)
+		}
+		var rmErr error
+		err = sess.do(ctx, watch, func(client *sftp.Client) error {
+			done := metrics.Op("sftp_rmdir")
+			rmErr = client.RemoveDirectory(full)
+			done(rmErr)
+			watch.tick()
+			return nil
+		})
+		if err != nil {
+			return removed, err
+		}
+		if rmErr == nil || errors.Is(rmErr, os.ErrNotExist) {
+			if rmErr == nil {
+				removed++
+			} else {
+				// Already gone, like an already-gone file in the delete
+				// sweep: the charge comes back, exactly as removeRemoteDirs
+				// refunds a removal that did not happen.
+				budget.refund()
+			}
+			continue
+		}
+		// Not removed: either the directory holds entries this deployment
+		// does not own, or the server refuses. Ask what is left in it before
+		// deciding which failure to report.
+		var leftover []string
+		err = sess.do(ctx, watch, func(client *sftp.Client) error {
+			entries, lerr := client.ReadDir(full)
+			if lerr != nil && !errors.Is(lerr, os.ErrNotExist) {
+				return lerr
+			}
+			for _, e := range entries {
+				leftover = append(leftover, e.Name())
+			}
+			return nil
+		})
+		if err != nil {
+			return removed, err
+		}
+		if len(leftover) == 0 {
+			return removed, fmt.Errorf("removing remote directory %q: %w", full, rmErr)
+		}
+		entries := "entries"
+		if len(leftover) == 1 {
+			entries = "entry"
+		}
+		return removed, fmt.Errorf("cannot turn the directory %q into the file the plan uploads: it holds %d %s this deployment did not upload (first: %q), so sync will not remove them; delete them on the server, or run mode: clean once to take the directory out", full, len(leftover), entries, leftover[0])
+	}
+	return removed, nil
 }
 
 // mergedManifest builds the manifest a partially failed run leaves behind:

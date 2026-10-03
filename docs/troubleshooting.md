@@ -276,6 +276,18 @@ hashes) the last sync uploaded. Leave it in place. Without it, the next sync
 re-uploads everything and deletes nothing. It is excluded from uploads and
 never deleted by `sync` itself.
 
+### `cannot turn the directory "<path>" into the file the plan uploads`
+
+A path that was a directory on the server is now a single file in your build,
+and the directory still holds files easySFTP did not upload. `sync` removed
+what it owned and then refused to remove the rest, because the manifest only
+ever lists files this deployment uploaded.
+
+Delete the remaining files on the server yourself, or run `mode: clean` once
+to take the whole directory out, then continue with `sync`. The bare
+`is a directory` from the rename is gone: this message names what is in the
+way and what to do.
+
 ### `refusing a destructive mode on remote root`
 
 `sync` and `clean` refuse a remote target that resolves to `/`, `.`, `~` or
@@ -300,6 +312,12 @@ Two things count towards the limit that its name does not spell out:
 each one on its own. A variant of the message that says "N more remote
 entries: M were already deleted earlier in this run" is the second case: an
 earlier deployment used part of the budget.
+
+A `sync` type change (a directory becoming a file) can also hit the limit
+after the files are gone: `refusing to remove the emptied directory
+"<path>"` names a directory the run must take out to let the upload through,
+which the earlier reservation could not count because its turn only came
+once the stale files inside it were deleted.
 
 ## Configuration errors
 
