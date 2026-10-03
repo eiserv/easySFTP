@@ -251,6 +251,12 @@ Symlinks, sockets and other non-regular files are skipped by design. SFTP
 uploads regular file content. If your build output contains symlinks (e.g.
 pnpm's `node_modules`), upload a bundled/dereferenced build instead.
 
+That applies to entries *inside* the source tree. A `source` that is itself
+a symlink to a directory (a nix `result`, a `bazel-bin`, or a Windows
+junction) is followed and the directory it points at is uploaded. A
+junction whose target cannot be resolved fails the run with an explicit
+error instead of reporting a green, empty deployment.
+
 When a deployment has any non-regular files, the log shows one aggregated
 warning per deployment (not one per file), e.g.:
 

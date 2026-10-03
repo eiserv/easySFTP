@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -1001,5 +1002,158 @@ func BenchmarkBuildPlanIgnoredTree(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// A source that is itself a symlink (or, on Windows, a junction) to a
+// directory must be walked through, not skipped: os.Stat sees a directory
+// but WalkDir starts from os.Lstat and saw only the link, so the plan was
+// empty and clean/sync reconciled the target against nothing - wiping it
+// while a green run uploaded zero files (issue #279).
+func TestSymlinkedSourceDirectoryIsWalkedThrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating a symlink needs a privilege the CI runner does not grant; junctions are covered by the plan test below")
+	}
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{
+		"index.html":       "x",
+		"assets/app.js":    "y",
+		"assets/style.css": "z",
+	})
+
+	link := filepath.Join(t.TempDir(), "result")
+	if err := os.Symlink(local, link); err != nil {
+		t.Skipf("cannot create a symlink on this machine: %v", err)
+	}
+
+	matcher := ignore.CompileIgnoreLines()
+	p, err := buildPlan(config.UploadPair{Local: link, Remote: "/www"}, config.StrategyClean, planOptions{matcher: matcher, pruneDirs: true, manifestName: manifestName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.files) != 3 {
+		t.Fatalf("expected the 3 files behind the symlink in the plan, got %d (%+v)", len(p.files), p.files)
+	}
+	if p.skippedNonRegular != 0 {
+		t.Errorf("the linked root itself was counted as skipped non-regular: %d", p.skippedNonRegular)
+	}
+	got := map[string]bool{}
+	for _, f := range p.files {
+		got[f.rel] = true
+	}
+	for _, want := range []string{"index.html", "assets/app.js", "assets/style.css"} {
+		if !got[want] {
+			t.Errorf("file %s missing from the plan of a linked source", want)
+		}
+	}
+}
+
+// The end-to-end consequence of the plan bug: with a linked source the
+// plan was empty, so clean deleted the remote files and uploaded nothing,
+// all green. A correct run uploads the file behind the link and deletes
+// the remote-only file, which is clean's documented reconciliation.
+func TestCleanWithSymlinkedSourceDeploysTheTargetDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs a privilege the CI runner does not grant")
+	}
+	srv := startTestServer(t)
+	real := t.TempDir()
+	writeTree(t, real, map[string]string{"index.html": "new content"})
+
+	link := filepath.Join(t.TempDir(), "result")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("cannot create a symlink on this machine: %v", err)
+	}
+
+	client := srv.verifyClient(t)
+	if err := client.MkdirAll("/www"); err != nil {
+		t.Fatal(err)
+	}
+	// A remote-only file: clean's documented semantics delete it. The bug
+	// this test pins is the other direction - the plan behind the link
+	// coming back empty, so index.html was never uploaded.
+	writeRemoteFile(t, client, "/www/old.html", "stale")
+
+	cfg := baseConfig(srv)
+	cfg.Uploads = []config.UploadPair{{Local: link, Remote: "/www", Strategy: config.StrategyClean}}
+	res, err := Run(context.Background(), cfg, testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FilesUploaded != 1 {
+		t.Fatalf("expected the file behind the link to be uploaded, got FilesUploaded=%d (FilesDeleted=%d)", res.FilesUploaded, res.FilesDeleted)
+	}
+	if !remoteExists(t, srv, "/www/index.html") {
+		t.Fatal("the uploaded file is missing from the target - the plan behind the link was empty")
+	}
+	if remoteExists(t, srv, "/www/old.html") {
+		t.Fatal("clean did not remove the remote-only file")
+	}
+}
+
+// Windows junction reached through an 8.3 short path: EvalSymlinks returns
+// the long form of the junction without resolving it (a different string),
+// so string-comparison logic pointed the walk back at the junction and
+// the plan came back empty - the exact CI failure the review found, since
+// GitHub Windows runners put TEMP under RUNNER~1.
+func TestShortNamedJunctionIsWalkedThrough(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("junctions and 8.3 names are Windows concepts")
+	}
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"index.html": "x", "app.js": "y"})
+
+	link := filepath.Join(t.TempDir(), "junction")
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, local).CombinedOutput(); err != nil {
+		t.Skipf("cannot create a junction on this machine: %v (%s)", err, out)
+	}
+	shortParent, err := exec.Command("powershell", "-NoProfile", "-c",
+		"(New-Object -ComObject Scripting.FileSystemObject).GetFolder('"+
+			filepath.Dir(link)+"').ShortPath").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(shortParent)) == "" {
+		t.Skipf("cannot determine the 8.3 short path on this machine: %v (%s)", err, shortParent)
+	}
+	shortLink := filepath.Join(strings.TrimSpace(string(shortParent)), filepath.Base(link))
+	if shortLink == link {
+		t.Skip("the temp path has no short form on this machine")
+	}
+
+	matcher := ignore.CompileIgnoreLines()
+	p, err := buildPlan(config.UploadPair{Local: shortLink, Remote: "/www"}, config.StrategyOverlay, planOptions{matcher: matcher, pruneDirs: true, manifestName: manifestName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.files) != 2 {
+		t.Fatalf("expected the 2 files behind the short-named junction, got %d (%+v)", len(p.files), p.files)
+	}
+	if p.skippedNonRegular != 0 {
+		t.Errorf("the junction root itself was counted as skipped non-regular: %d", p.skippedNonRegular)
+	}
+}
+
+// Windows junction variant: same Stat/Lstat disagreement, same empty plan.
+func TestJunctionedSourceDirectoryIsWalkedThrough(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("junctions are a Windows concept")
+	}
+	local := t.TempDir()
+	writeTree(t, local, map[string]string{"index.html": "x", "app.js": "y"})
+
+	link := filepath.Join(t.TempDir(), "result")
+	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, local).CombinedOutput()
+	if err != nil {
+		t.Skipf("cannot create a junction on this machine: %v (%s)", err, out)
+	}
+
+	matcher := ignore.CompileIgnoreLines()
+	p, err := buildPlan(config.UploadPair{Local: link, Remote: "/www"}, config.StrategyOverlay, planOptions{matcher: matcher, pruneDirs: true, manifestName: manifestName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.files) != 2 {
+		t.Fatalf("expected the 2 files behind the junction in the plan, got %d (%+v)", len(p.files), p.files)
+	}
+	if p.skippedNonRegular != 0 {
+		t.Errorf("the junction root itself was counted as skipped non-regular: %d", p.skippedNonRegular)
 	}
 }

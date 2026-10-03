@@ -368,7 +368,11 @@ destination:
   `/`, which means "into this directory" keeping the original file name.
 - Single files only support the `overlay` mode (`sync`/`clean` reconcile a
   directory tree and are rejected for single-file targets).
-- Symlinks, sockets and other non-regular files are skipped.
+- Symlinks, sockets and other non-regular files *inside* the source tree are
+  skipped. A `source` that is itself a symlink to a directory (or, on
+  Windows, a junction) is followed: the directory it points at is uploaded.
+  A junction whose target cannot be resolved fails the run rather than
+  deploying an empty plan.
 
 ```yaml
     source: ./config/prod.json
