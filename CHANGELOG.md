@@ -5,6 +5,27 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.2](https://github.com/eiserv/easySFTP/compare/v3.8.1...v3.8.2) (2026-10-04)
+
+
+### Bug Fixes
+
+* **config:** refuse two sync deployments into one target ([#296](https://github.com/eiserv/easySFTP/issues/296)) ([5c8eaab](https://github.com/eiserv/easySFTP/commit/5c8eaab95ced367c74253cbace37590372658342))
+* **hostkeys:** accept the ssh-keygen -lf lines the quick start tells users to store ([#304](https://github.com/eiserv/easySFTP/issues/304)) ([22cad70](https://github.com/eiserv/easySFTP/commit/22cad70f0e2d8579d203886f9845c29dc807380a))
+* **hostkeys:** ask the server for the key types the known-hosts lines pin ([#294](https://github.com/eiserv/easySFTP/issues/294)) ([1513290](https://github.com/eiserv/easySFTP/commit/1513290c2e792dfdccf46af74ad74f8519159967)), closes [#282](https://github.com/eiserv/easySFTP/issues/282)
+* **security:** pin the attested source commit for tag refs too ([#299](https://github.com/eiserv/easySFTP/issues/299)) ([e288f18](https://github.com/eiserv/easySFTP/commit/e288f18e1e5200f38657b92b205eb8f5b813d8c8))
+* **security:** split the benchmark jobs that measure from the jobs that write ([#300](https://github.com/eiserv/easySFTP/issues/300)) ([2ed0861](https://github.com/eiserv/easySFTP/commit/2ed08618ec2f06957678be0d15e122a1aac01c23))
+* **uploader:** bound the whole connect path by advanced.timeout, not just the TCP dial ([#295](https://github.com/eiserv/easySFTP/issues/295)) ([95724ca](https://github.com/eiserv/easySFTP/commit/95724ca84ca30a9a1b6c9a8026efe75ae95a8313))
+* **uploader:** count granted connections, not touched pool slots ([#293](https://github.com/eiserv/easySFTP/issues/293)) ([1c1ff58](https://github.com/eiserv/easySFTP/commit/1c1ff589ba2b10346dad23e6bf8a749e92fb6091)), closes [#281](https://github.com/eiserv/easySFTP/issues/281)
+* **uploader:** delete the entries a sync type change collides with, before the upload ([#297](https://github.com/eiserv/easySFTP/issues/297)) ([4c8f2c5](https://github.com/eiserv/easySFTP/commit/4c8f2c578e24f0935dfe5d910f8d3d22716a1b09))
+* **uploader:** refuse the root of a Windows drive in checkRemoteRoot ([765bd4d](https://github.com/eiserv/easySFTP/commit/765bd4db4401138beea61bb53f188d2cfd05e042)), closes [#285](https://github.com/eiserv/easySFTP/issues/285)
+* **uploader:** walk through a source that is a symlink or a junction ([#292](https://github.com/eiserv/easySFTP/issues/292)) ([bd0d409](https://github.com/eiserv/easySFTP/commit/bd0d409944f79f7b409d51204c274e9ecec483ba))
+
+
+### Documentation
+
+* **autotune:** correct handshake locking explanation ([#291](https://github.com/eiserv/easySFTP/issues/291)) ([13b2a90](https://github.com/eiserv/easySFTP/commit/13b2a90c305269a453ffa8d66cc57a9af0faed51))
+
 ## [3.8.1](https://github.com/eiserv/easySFTP/compare/v3.8.0...v3.8.1) (2026-09-07)
 
 
