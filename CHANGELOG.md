@@ -5,6 +5,15 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.3](https://github.com/eiserv/easySFTP/compare/v3.8.2...v3.8.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* **autocache:** poll a lock create that Windows denies while the sidecar is delete-pending ([#305](https://github.com/eiserv/easySFTP/issues/305)) ([4bfe293](https://github.com/eiserv/easySFTP/commit/4bfe293b54b56197d9a6e2405cbde8da899f232c))
+* **uploader:** honor a watchdog kill during a redial, six reporting cleanups, and a docs-sample guard test ([#298](https://github.com/eiserv/easySFTP/issues/298)) ([39b0f14](https://github.com/eiserv/easySFTP/commit/39b0f1409318a7dee0b1aad6c9f3261e964646c3))
+* **uploader:** pipeline file writes at request_concurrency, not one packet per round-trip ([#301](https://github.com/eiserv/easySFTP/issues/301)) ([18dd3d4](https://github.com/eiserv/easySFTP/commit/18dd3d469d26535d672019bc4456e48a98d74a19))
+
 ## [3.8.2](https://github.com/eiserv/easySFTP/compare/v3.8.1...v3.8.2) (2026-10-04)
 
 
