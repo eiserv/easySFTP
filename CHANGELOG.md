@@ -5,6 +5,19 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.4](https://github.com/eiserv/easySFTP/compare/v3.8.3...v3.8.4) (2026-10-08)
+
+
+### Bug Fixes
+
+* **benchmarks:** stop recording the runner's instance name, un-ignore the gallery by name, keep the tagline inside what the corpus measured ([#310](https://github.com/eiserv/easySFTP/issues/310)) ([af5ec49](https://github.com/eiserv/easySFTP/commit/af5ec49c6fbd85052fcd344a48af771b2d6a3f86)), closes [#245](https://github.com/eiserv/easySFTP/issues/245)
+* **config:** accept merge keys and host_key lists, reject silent parser no-ops ([#290](https://github.com/eiserv/easySFTP/issues/290)) ([f2b0629](https://github.com/eiserv/easySFTP/commit/f2b06293c3d20f5aa89d6ea8b0fe2bb3adc82dc7))
+
+
+### Documentation
+
+* **contributing:** make the local-run example v3-valid and the layout map complete ([#307](https://github.com/eiserv/easySFTP/issues/307)) ([d2da43d](https://github.com/eiserv/easySFTP/commit/d2da43d84e34b636fb970c46fede9bcb1f3be69d)), closes [#232](https://github.com/eiserv/easySFTP/issues/232)
+
 ## [3.8.3](https://github.com/eiserv/easySFTP/compare/v3.8.2...v3.8.3) (2026-10-06)
 
 
