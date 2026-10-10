@@ -1219,3 +1219,67 @@ func TestJunctionedSourceDirectoryIsWalkedThrough(t *testing.T) {
 		t.Errorf("the junction root itself was counted as skipped non-regular: %d", p.skippedNonRegular)
 	}
 }
+
+// A destructive deployment whose plan is empty removes the remote target's
+// contents and finishes green; the (0 local files) in the group header is
+// too quiet to catch, so clean and sync both warn explicitly before they
+// delete (issue #317, the log line #279 item 3 proposed).
+func TestEmptyPlanWarnsBeforeDestructiveDelete(t *testing.T) {
+	srv := startTestServer(t)
+
+	client := srv.verifyClient(t)
+	if err := client.MkdirAll("/www"); err != nil {
+		t.Fatal(err)
+	}
+	writeRemoteFile(t, client, "/www/index.html", "live content")
+
+	// An empty local source: the common cause is a build that produced
+	// nothing (misconfigured output path, exclude matching everything).
+	emptyLocal := t.TempDir()
+
+	cases := []struct {
+		name     string
+		strategy config.Strategy
+	}{
+		{"clean", config.StrategyClean},
+		{"sync", config.StrategySync},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &recordingLogger{testLogger: testLogger{t}}
+			cfg := baseConfig(srv)
+			cfg.Uploads = []config.UploadPair{{Local: emptyLocal, Remote: "/www", Strategy: tc.strategy}}
+			_, err := Run(context.Background(), cfg, log)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			found := false
+			for _, w := range log.warnings {
+				if strings.Contains(w, "planned 0 files") && strings.Contains(w, "upload nothing") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected a planned-0-files warning before the %s delete, got warnings %v", tc.strategy, log.warnings)
+			}
+		})
+	}
+
+	// And the overlay mode with an empty plan is a no-op: no deletes, so
+	// no warning is warranted.
+	t.Run("overlay empty plan does not warn", func(t *testing.T) {
+		log := &recordingLogger{testLogger: testLogger{t}}
+		cfg := baseConfig(srv)
+		cfg.Uploads = []config.UploadPair{{Local: t.TempDir(), Remote: "/www", Strategy: config.StrategyOverlay}}
+		_, err := Run(context.Background(), cfg, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range log.warnings {
+			if strings.Contains(w, "planned 0 files") {
+				t.Errorf("overlay must not warn: %s", w)
+			}
+		}
+	})
+}

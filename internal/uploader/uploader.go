@@ -264,6 +264,18 @@ func executeOverlayOrClean(ctx context.Context, cfg *config.Config, sess *sessio
 		if err := checkRemoteRoot(p.pair.Remote); err != nil {
 			return err
 		}
+		// An empty plan under clean means the sweep is about to remove the
+		// whole target and upload nothing. That is usually not what anyone
+		// meant: a build step that produced an empty dist/ (misconfigured
+		// output path, a framework that moved it, an exclude that matches
+		// everything) reads as a green run while it wipes production. The
+		// (0 local files) in the group header is too quiet, so say it as a
+		// warning with the count before anything is deleted (issue #317,
+		// the line #279 item 3 proposed).
+		if len(p.files) == 0 {
+			log.Warningf("deployment %s planned 0 files from %s; mode: clean will remove remote entries under %s and upload nothing",
+				p.pair.Label(), p.pair.Local, base)
+		}
 		endRemoteScan := metrics.Phase("remote_scan")
 		files, dirs, err := listRemoteContents(ctx, sess, base, watch, log)
 		endRemoteScan()

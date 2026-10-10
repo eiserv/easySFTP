@@ -110,6 +110,13 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 		}
 	}
 
+	// The mirror of the clean warning: an empty plan under sync deletes
+	// every manifest entry and uploads nothing, on a green run (issue #317).
+	if len(p.files) == 0 {
+		log.Warningf("deployment %s planned 0 files from %s; mode: sync will delete %d previously synced file(s) under %s and upload nothing",
+			p.pair.Label(), p.pair.Local, len(old.Files), base)
+	}
+
 	var toDelete []string // paths relative to base, ascending
 	for rel := range old.Files {
 		if _, ok := local[rel]; ok {
