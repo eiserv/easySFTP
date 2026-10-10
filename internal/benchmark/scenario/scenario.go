@@ -238,6 +238,62 @@ func SweepsRequests(name string) (bool, error) {
 	return max >= RequestAxisMinKiB, nil
 }
 
+// RequestPacketKiB is the write packet size pkg/sftp pipelines a large file
+// over: 32 KiB (internal/uploader/connection.go, MaxConcurrentRequestsPerFile
+// chooses how many of those packets of *one* file may be in flight).
+//
+// It is what bounds the request axis the same way the file count bounds the
+// other two: pkg/sftp sizes the pipeline at fileSize/maxPacket + 1 and clamps
+// it at the setting, so a value above the packet count is the same pipeline
+// under another name, and measuring it spends a cell on a duplicate
+// configuration (issue #240).
+const RequestPacketKiB = 32
+
+// RequestsFor is AxisFor for the request axis: the requested values that can
+// actually differ for this payload, in the order they were given.
+//
+// A value above what the largest file can keep in flight is clamped to that
+// packet count and deduplicated, which keeps a longer axis from re-measuring
+// one configuration twice. The cap is the payload's, not an opinion about the
+// code: it is derived the same way pkg/sftp derives its own pipeline depth,
+// fileSize/32KiB + 1, so a scenario whose files are smaller than the largest
+// swept value is measured once, at the depth its packets can fill.
+func RequestsFor(name string, values []*int) ([]*int, error) {
+	maxKiB, err := MaxKiB(name)
+	if err != nil {
+		return nil, err
+	}
+	if maxKiB < RequestAxisMinKiB {
+		// The same rule SweepsRequests applies: below 1 MiB the setting has
+		// nothing to pipeline, so the axis is the one pass that sets nothing.
+		return []*int{nil}, nil
+	}
+	// fileSize/maxPacket + 1, the formula pkg/sftp itself uses to size the
+	// pipeline, so the cap is the largest depth the file can actually use.
+	inFlight := maxKiB/RequestPacketKiB + 1
+	seen := make(map[int]bool, len(values))
+	out := make([]*int, 0, len(values))
+	for _, value := range values {
+		if value != nil && *value > inFlight {
+			v := inFlight
+			value = &v
+		}
+		if value == nil {
+			if seen[-1] {
+				continue
+			}
+			seen[-1] = true
+		} else {
+			if seen[*value] {
+				continue
+			}
+			seen[*value] = true
+		}
+		out = append(out, value)
+	}
+	return out, nil
+}
+
 // AxisFor is the requested axis values that can actually differ for this
 // payload, in the order they were given.
 //

@@ -492,9 +492,16 @@ opinions about the code: a value above the file count measures the same
 configuration twice (the stored `single` sweeps are 30 cells of one number).
 `axes` keeps what was requested and `axes.per_scenario` what was measured; do
 not collapse the two. That reduction is what pays for the `concurrency` axis
-running to 64, and the point of running it that far is that
+running to 128, and the point of running it that far is that
 `scaling[].best_at_axis_max` should come out empty: a best cell on the largest
-swept value is a cut-off, not an optimum.
+swept value is a cut-off, not an optimum. The `request_concurrency` axis is
+clamped the same way, at the packet count of the largest file
+(`scenario.RequestsFor`, fileSize/32KiB + 1), because pkg/sftp sizes its
+per-file pipeline at exactly that and a value above it is one configuration
+under another name. An axis clamped by the payload is not a cut-off the way an
+ordinary edge is: nothing distinct exists past it, and `matrix.md` names it as
+the payload's own bound rather than telling the reader to extend it
+(issue #240).
 
 Every sweep also measures `auto` (the settings easySFTP picks for itself) once
 per scenario and profile, and reports the regret against the best cell. It is

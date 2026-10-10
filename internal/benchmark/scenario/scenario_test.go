@@ -194,3 +194,80 @@ func equal(a, b []int) bool {
 	}
 	return true
 }
+
+// TestRequestsFor is AxisFor's rule applied to the request axis (issue #240):
+// a value above the packet count of the scenario's largest file is the same
+// pipeline under another name, because pkg/sftp sizes its per-file pipeline at
+// fileSize/32KiB + 1 and clamps it at the setting. Such values fold down onto
+// the cap, duplicates drop, and a payload below the 1 MiB threshold keeps the
+// one pass that sets nothing.
+func TestRequestsFor(t *testing.T) {
+	intp := func(v int) *int { return &v }
+
+	for _, tc := range []struct {
+		name    string
+		request []*int
+		want    []int // 0 stands for the nil pass
+	}{
+		{
+			// A 32 MiB file holds 1025 in-flight requests by pkg/sftp's own
+			// formula, so the widest axis anyone sweeps today measures
+			// distinct configurations all the way up.
+			name: "single", request: []*int{intp(1), intp(16), intp(64), intp(128)},
+			want: []int{1, 16, 64, 128},
+		},
+		{
+			// The largest file is 16 MiB: 512 packets, 513 in flight. The
+			// value above the cap folds onto it rather than measuring the
+			// same pipeline twice.
+			name: "large", request: []*int{intp(1), intp(512), intp(513), intp(1024)},
+			want: []int{1, 512, 513},
+		},
+		{
+			// The largest file is 2 MiB: 64 packets, 65 in flight. The 64
+			// stays (it is below the cap); the 128 folds onto 65 rather than
+			// measuring the same pipeline twice.
+			name: "mixed", request: []*int{intp(16), intp(64), intp(128)},
+			want: []int{16, 64, 65},
+		},
+		{
+			// Below the 1 MiB threshold there is nothing to pipeline, so the
+			// axis is the one pass that sets nothing, whatever was asked.
+			name: "small", request: []*int{intp(1), intp(16), intp(64)},
+			want: []int{0},
+		},
+	} {
+		got, err := scenario.RequestsFor(tc.name, tc.request)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s: %d values, want %d", tc.name, len(got), len(tc.want))
+		}
+		for i := range tc.want {
+			if tc.want[i] == 0 && got[i] != nil {
+				t.Errorf("%s: value %d is %v, want the nil pass that sets nothing", tc.name, i, *got[i])
+			}
+			if tc.want[i] != 0 {
+				if got[i] == nil || *got[i] != tc.want[i] {
+					t.Errorf("%s: value %d is %v, want %d", tc.name, i, got[i], tc.want[i])
+				}
+			}
+		}
+	}
+
+	// The token that sets nothing survives a cap above it.
+	got, err := scenario.RequestsFor("large", []*int{nil, intp(1), intp(2048)})
+	if err != nil {
+		t.Fatalf("large with a nil pass: %v", err)
+	}
+	if len(got) != 3 || got[0] != nil {
+		t.Errorf("large with a nil pass: %v, want [nil 1 513]", got)
+	}
+	if got[1] == nil || *got[1] != 1 {
+		t.Errorf("large with a nil pass: value 1 moved, got %v", got[1])
+	}
+	if got[2] == nil || *got[2] != 513 {
+		t.Errorf("large with a nil pass: 2048 did not fold onto the 513-request cap, got %v", got[2])
+	}
+}

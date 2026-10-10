@@ -39,6 +39,15 @@ name: SFTP benchmark matrix
 # scenario; the job's timeout is generous for that reason, and the inputs exist
 # so a quick look can be a quick look.
 #
+# The defaults above the old cap (connections 16, concurrency 128,
+# request_concurrency 128) exist because the stored sweeps kept reporting the
+# best cell on the largest swept value (issue #240): every v3.8.3 scenario whose
+# optimum was not already payload-bound sat on an edge, so the honest fix is to
+# sweep further rather than to keep fitting against an edge. The request axis is
+# clamped to the packet count of the scenario's largest file, the same rule the
+# file count applies to the other two axes, so the wider values cost nothing on
+# a payload that cannot use them.
+#
 # Each sweep also measures the settings easySFTP picks for itself, once per
 # scenario and profile, and reports the gap to the best cell as the policy's
 # regret. That number is what the auto-config work of #156 has to beat.
@@ -65,17 +74,17 @@ on:
       connections:
         description: "advanced.connections values to sweep, space separated."
         required: false
-        default: "1 2 4 8"
+        default: "1 2 4 8 16"
         type: string
       concurrency:
         description: "advanced.concurrency values to sweep, space separated. Each scenario is swept over the values its file count can use, so a large value costs nothing on a small payload."
         required: false
-        default: "1 2 4 8 16 32 64"
+        default: "1 2 4 8 16 32 64 128"
         type: string
       request-concurrency:
         description: "Third axis (advanced.request_concurrency), space separated. Applied only to scenarios whose files are at least 1 MiB, since the setting is per file. The token 'default' is a pass that sets nothing, so 'default' alone gives a two-dimensional grid."
         required: false
-        default: "1 16 64"
+        default: "1 16 64 128"
         type: string
       scenarios:
         description: "Scenarios to sweep: small, mixed, large, single, plus the deploy shapes redeploy, sync, deep, bulk and the calibration family calib-<count>x<size> (for example calib-100x64k). redeploy and sync deploy their tree twice per cell, only the second one measured."
@@ -131,17 +140,17 @@ on:
       connections:
         description: "advanced.connections values to sweep, space separated."
         required: false
-        default: "1 2 4 8"
+        default: "1 2 4 8 16"
         type: string
       concurrency:
         description: "advanced.concurrency values to sweep, space separated. Each scenario is swept over the values its file count can use."
         required: false
-        default: "1 2 4 8 16 32 64"
+        default: "1 2 4 8 16 32 64 128"
         type: string
       request-concurrency:
         description: "Third axis (advanced.request_concurrency), space separated. The token 'default' is a pass that sets nothing."
         required: false
-        default: "1 16 64"
+        default: "1 16 64 128"
         type: string
       link-profiles:
         description: "Optional network axis, space separated. Empty = the real line only. Every profile multiplies the whole grid, and shaping needs tc plus NET_ADMIN on the runner."

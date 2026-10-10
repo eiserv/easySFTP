@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -190,6 +191,59 @@ func (m Matrix) cellText(scenario, label, profile string, conns, conc int, reque
 	return "-"
 }
 
+// cappedAxes names the axes of this scaling group whose requested values were
+// clamped down to what the payload could use, derived from the two axis lists
+// every stored sweep already carries: axes (what the run asked to sweep) against
+// axes.per_scenario (what this scenario actually measured). A requested value
+// above the largest measured one was folded onto it rather than measured, so
+// that axis's edge is the payload's own bound and "extend that axis" is not
+// advice for it the way it is for an ordinary cut-off.
+//
+// Sweeps stored before the per-scenario axes existed carry no per_scenario and
+// cap nothing, which reads the old corpus the way it was measured.
+func (m Matrix) cappedAxes(s schema.Scaling) []string {
+	measured, ok := m.Result.Axes.PerScenario[s.Scenario]
+	if !ok {
+		return nil
+	}
+	requested := m.Result.Axes
+	var out []string
+	if maxInt(requested.Connections) > maxInt(measured.Connections) {
+		out = append(out, "connections")
+	}
+	if maxInt(requested.Concurrency) > maxInt(measured.Concurrency) {
+		out = append(out, "concurrency")
+	}
+	if maxIntPtr(requested.RequestConcurrency) > maxIntPtr(measured.RequestConcurrency) {
+		out = append(out, "request_concurrency")
+	}
+	return out
+}
+
+// maxInt is the largest value of an axis list, zero when the list is empty:
+// nothing requested above zero means nothing was clamped.
+func maxInt(values []int) int {
+	max := 0
+	for _, v := range values {
+		if v > max {
+			max = v
+		}
+	}
+	return max
+}
+
+// maxIntPtr is maxInt for the request axis, whose null coordinate sets nothing
+// and is not a value the payload could clamp.
+func maxIntPtr(values []*int) int {
+	max := 0
+	for _, v := range values {
+		if v != nil && *v > max {
+			max = *v
+		}
+	}
+	return max
+}
+
 func (m Matrix) bestCells(b *buf) {
 	b.line("### Best cell per scenario, build and link profile")
 	b.line("")
@@ -198,7 +252,24 @@ func (m Matrix) bestCells(b *buf) {
 	for _, s := range m.Result.Scaling {
 		edge := "no"
 		if len(s.BestAtAxisMax) > 0 {
-			edge = strings.Join(s.BestAtAxisMax, ", ")
+			// The edge column speaks only about the best cell's own edges:
+			// an axis clamped elsewhere in the grid did not cut this group's
+			// optimum off, and naming it here would say this row's optimum
+			// is bounded when it is interior. A clamped axis the best cell
+			// does sit on is named for what it is, the payload's own bound
+			// rather than a place the sweep stopped, because a reader who
+			// extended it would re-measure the configuration they are
+			// looking at (issue #240).
+			clamped := m.cappedAxes(s)
+			named := make([]string, 0, len(s.BestAtAxisMax))
+			for _, axis := range s.BestAtAxisMax {
+				if slices.Contains(clamped, axis) {
+					named = append(named, axis+" (at the payload's bound)")
+					continue
+				}
+				named = append(named, axis)
+			}
+			edge = strings.Join(named, ", ")
 		}
 		b.line("| %s | %s | %s | %d | %d | %s | %s ms | %s | %s | %s |",
 			s.Scenario, s.Label, s.LinkProfile, s.Best.Connections, s.Best.Concurrency,
@@ -211,16 +282,44 @@ func (m Matrix) bestCells(b *buf) {
 	// largest value of an axis is a cut-off, not an optimum, and anything fitted
 	// to it extrapolates. Only the upper edge is reported; the lower one is 1
 	// and there is nothing below it to sweep.
+	//
+	// An axis the payload clamped is not that: its largest swept value is the
+	// payload's own bound, and everything beyond it is the same configuration
+	// under another name, so extending it is not an answer and the axis is
+	// named separately rather than as a cut-off (issue #240).
 	var cutoff []string
+	var capped []string
 	for _, s := range m.Result.Scaling {
 		if len(s.BestAtAxisMax) == 0 {
 			continue
 		}
-		cutoff = append(cutoff, s.Scenario+"/"+s.Label+"/"+s.LinkProfile+": "+strings.Join(s.BestAtAxisMax, ", "))
+		clamped := m.cappedAxes(s)
+		extendable := make([]string, 0, len(s.BestAtAxisMax))
+		atBest := make([]string, 0, len(s.BestAtAxisMax))
+		for _, axis := range s.BestAtAxisMax {
+			if slices.Contains(clamped, axis) {
+				atBest = append(atBest, axis)
+				continue
+			}
+			extendable = append(extendable, axis)
+		}
+		if len(extendable) > 0 {
+			cutoff = append(cutoff, s.Scenario+"/"+s.Label+"/"+s.LinkProfile+": "+strings.Join(extendable, ", "))
+		}
+		if len(atBest) > 0 {
+			capped = append(capped, s.Scenario+"/"+s.Label+"/"+s.LinkProfile+": "+strings.Join(atBest, ", "))
+		}
 	}
 	if len(cutoff) > 0 {
 		b.line("**The optimum sits on the edge of the grid** for %s. The best value measured is the largest one swept, so the real optimum is at or beyond it and this sweep does not contain it. Extend that axis before fitting anything to these numbers.", strings.Join(cutoff, "; "))
-	} else {
+	} else if len(capped) > 0 {
+		b.line("No optimum sits on an extendable edge of its grid. Every best cell that lands on an axis edge lands on one the payload itself bounds: the sweep already measured the largest distinct configuration that payload has.")
+	}
+	if len(capped) > 0 {
+		b.line("")
+		b.line("**The best cell of %s sits on an axis edge that is the payload's own bound**, not a place the sweep stopped: the axis was clamped to what the payload can use, and every value beyond it would be the same configuration measured twice. There is nothing to extend there; the honest read is that this payload's optimum is the edge itself.", strings.Join(capped, "; "))
+	}
+	if len(cutoff) == 0 && len(capped) == 0 {
 		b.line("Every best cell is interior to its axes, so each optimum was measured rather than cut off.")
 	}
 }
@@ -303,13 +402,48 @@ func carriedSummary(a schema.Auto) string {
 	return out
 }
 
+// edgeOf describes where the best cell an auto row is scored against sits,
+// when it sits anywhere noteworthy: an extendable edge of the grid ("edge of
+// the grid") or an edge the payload itself bounds ("at the payload's bound").
+// Empty when the best cell is interior, which is the case that needs no
+// qualifier.
+func (m Matrix) edgeOf(a schema.Auto) string {
+	// The best cell an auto row is scored against is a cell of the candidate
+	// build's grid, so the row's own label ("auto") is not the group's and
+	// must not be part of the match.
+	for _, s := range m.Result.Scaling {
+		if s.Scenario != a.Scenario || s.LinkProfile != a.LinkProfile {
+			continue
+		}
+		clamped := m.cappedAxes(s)
+		extendable := make([]string, 0, len(s.BestAtAxisMax))
+		atBound := make([]string, 0, len(s.BestAtAxisMax))
+		for _, axis := range s.BestAtAxisMax {
+			if slices.Contains(clamped, axis) {
+				atBound = append(atBound, axis)
+				continue
+			}
+			extendable = append(extendable, axis)
+		}
+		switch {
+		case len(extendable) > 0 && len(atBound) > 0:
+			return "edge of the grid: " + strings.Join(extendable, ", ") + "; at the payload's bound: " + strings.Join(atBound, ", ")
+		case len(extendable) > 0:
+			return "edge of the grid: " + strings.Join(extendable, ", ")
+		case len(atBound) > 0:
+			return "at the payload's bound: " + strings.Join(atBound, ", ")
+		}
+	}
+	return ""
+}
+
 func (m Matrix) autoCost(b *buf) {
 	b.line("")
 	b.line("### What `auto` costs (policy regret)")
 	b.line("")
 	// Through "%s": the sentence carries a literal per cent sign, and vet reads
 	// a bare string here as a format.
-	b.line("%s", "One run per scenario and profile with `connections`, `concurrency` and `request_concurrency` all set to `auto`, on the candidate build, measured next to the cells it is scored against. `Picked` is read out of the run's own counters, so it is what easySFTP did and not what this script assumes; `Best` is the fastest cell of the same scenario and profile. `Regret` is the gap between them: how much slower the policy is than the settings a sweep would have chosen. A policy within ~15% on every profile is defensible, one that only wins on the house line is not (issue #184, phase 5; the policy itself is #209).")
+	b.line("%s", "One run per scenario and profile with `connections`, `concurrency` and `request_concurrency` all set to `auto`, on the candidate build, measured next to the cells it is scored against. `Picked` is read out of the run's own counters, so it is what easySFTP did and not what this script assumes; `Best` is the fastest cell of the same scenario and profile. `Regret` is the gap between them: how much slower the policy is than the settings a sweep would have chosen. A policy within ~15% on every profile is defensible, one that only wins on the house line is not (issue #184, phase 5; the policy itself is #209). Where the best cell a row is scored against sits on an extendable edge of the grid, the regret is a lower bound: the true optimum is at or beyond that edge, so the policy is really further from it than the number here says; a cell marked as sitting at the payload's own bound is the one exception, because no distinct configuration exists past it (issue #240).")
 	b.line("")
 	b.line("| Scenario | Profile | Picked (conn/conc/req) | Started at | Changes | Carried | auto | Best cell | Best | Regret | Same cell in grid |")
 	b.line("|---|---|---|---|---|---|---|---|---|---|---|")
@@ -320,6 +454,13 @@ func (m Matrix) autoCost(b *buf) {
 			best = num(float64(a.Best.Connections)) + "/" + num(float64(a.Best.Concurrency)) + "/" +
 				requestOrDefault(a.Best.RequestConcurrency)
 			bestMS = num(a.Best.MedianMS) + " ms"
+			// Regret is scored against this cell, so what the cell sits on
+			// bounds the number: an edge means the real optimum is at or
+			// beyond it and the regret is understated, and a payload-clamped
+			// edge means it is not understated at all (issue #240).
+			if edge := m.edgeOf(a); edge != "" {
+				best += " (" + edge + ")"
+			}
 		}
 		inGrid := "not swept"
 		if a.ChosenInGrid {

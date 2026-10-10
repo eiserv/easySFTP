@@ -47,13 +47,13 @@ func runMatrix() error {
 	if opts.Repeats, err = envPositive("REPEATS", stats.MinRepeatsForAnalysis); err != nil {
 		return err
 	}
-	if opts.ConnectionsAxis, opts.ConnectionsDisplay, err = envAxis("MATRIX_CONNECTIONS", "1 2 4 8"); err != nil {
+	if opts.ConnectionsAxis, opts.ConnectionsDisplay, err = envAxis("MATRIX_CONNECTIONS", "1 2 4 8 16"); err != nil {
 		return err
 	}
-	if opts.ConcurrencyAxis, opts.ConcurrencyDisplay, err = envAxis("MATRIX_CONCURRENCY", "1 2 4 8 16 32 64"); err != nil {
+	if opts.ConcurrencyAxis, opts.ConcurrencyDisplay, err = envAxis("MATRIX_CONCURRENCY", "1 2 4 8 16 32 64 128"); err != nil {
 		return err
 	}
-	if opts.RequestAxis, opts.RequestDisplay, err = envRequestAxis("MATRIX_REQUEST_CONCURRENCY", "1 16 64"); err != nil {
+	if opts.RequestAxis, opts.RequestDisplay, err = envRequestAxis("MATRIX_REQUEST_CONCURRENCY", "1 16 64 128"); err != nil {
 		return err
 	}
 

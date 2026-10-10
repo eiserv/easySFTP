@@ -170,16 +170,26 @@ The axes are therefore capped against the payload, per scenario, by
   has anything left to pipeline.
 
 What that pays for is the two things phase 5 asks for: a `concurrency` axis that
-runs to 64 so the optimum can be interior, and a `request_concurrency` axis that
-is swept for real instead of being declared and left empty. `axes` keeps what
-was requested, `axes.per_scenario` records what each scenario was actually
+runs past the point the optimum should sit at, and a `request_concurrency` axis
+that is swept for real instead of being declared and left empty. `axes` keeps
+what was requested, `axes.per_scenario` records what each scenario was actually
 measured over, and `matrix.md` prints both next to the scenario table. A cell
 missing from the declared grid was not skipped; it would have been a duplicate.
+The `request_concurrency` axis is also clamped to the packet count of the
+scenario's largest file, exactly the way the file count clamps the other two
+axes: pkg/sftp sizes its per-file pipeline at fileSize/32KiB + 1 and clamps it
+at the setting, so a value above the packet count would measure the same
+pipeline under another name.
 
 `scaling[].best_at_axis_max` is the honesty check on top: it names the axes
 whose largest swept value is the best cell. Where it is non-empty the optimum is
 at or beyond the edge of the sweep, and anything fitted to those numbers
-extrapolates.
+extrapolates. An edge the payload itself bounds is named for that in
+`matrix.md`: the requested axis was clamped down to the file count (or the
+largest file's packet count), so the edge is the largest distinct configuration
+the payload has and not a place the sweep chose to stop. In the stored v3.8.3
+sweep, seven of nine scenarios still sat on an extendable edge, which is what
+raised the defaults past the old caps.
 
 ### What `auto` costs
 

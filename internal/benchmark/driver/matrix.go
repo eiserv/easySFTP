@@ -215,15 +215,9 @@ func axesFor(name string, opts Options) (axes, error) {
 	if err != nil {
 		return axes{}, err
 	}
-	sweeps, err := scenario.SweepsRequests(name)
+	request, err := scenario.RequestsFor(name, opts.RequestAxis)
 	if err != nil {
 		return axes{}, err
-	}
-	request := opts.RequestAxis
-	if !sweeps {
-		// The one pass that sets nothing and leaves easySFTP its own value,
-		// stored as a null coordinate.
-		request = []*int{nil}
 	}
 	return axes{connections: connections, concurrency: concurrency, request: request, files: files}, nil
 }
