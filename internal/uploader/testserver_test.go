@@ -19,6 +19,7 @@ import (
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/text/unicode/norm"
 )
 
 // testServer is an in-process SSH server exposing an in-memory SFTP root,
@@ -518,6 +519,80 @@ func startTestServer(t *testing.T, opts ...serverOption) *testServer {
 
 	go srv.acceptLoop()
 	return srv
+}
+
+// foldServerPath case-folds and Unicode-normalizes every path segment, which
+// is the comparison rule of a case-insensitive filesystem: two spellings that
+// differ only by case (or by NFC/NFD form) are one entry. Used by
+// withCaseInsensitive to model NTFS, default APFS, and the many NAS appliances
+// whose names fold the same way.
+func foldServerPath(p string) string {
+	folded := make([]string, 0, strings.Count(p, "/")+1)
+	for _, seg := range strings.Split(p, "/") {
+		folded = append(folded, strings.ToLower(norm.NFKC.String(seg)))
+	}
+	return strings.Join(folded, "/")
+}
+
+// caseInsensitiveHandlers wraps an in-memory SFTP backend so every path it
+// stores or looks up is case-folded first, which is the whole emulation of a
+// filesystem whose directory entries are case-insensitive: two spellings that
+// differ only by case (or by NFC/NFD form) resolve to one entry, whichever
+// spelling created it. The request server builds one Request per packet, so
+// folding the request fields in place before delegating is sufficient.
+//
+// Like every other FileCmder wrapper in this file, it needs the PosixRename
+// method: without it pkg/sftp silently downgrades posix-rename to plain
+// "Rename", which fails whenever the target exists, and every overwriting
+// rename (each manifest rewrite) would die with "file already exists".
+type caseInsensitiveHandlers struct {
+	inner sftp.Handlers
+}
+
+func (h caseInsensitiveHandlers) fold(req *sftp.Request) *sftp.Request {
+	req.Filepath = foldServerPath(req.Filepath)
+	if req.Target != "" {
+		req.Target = foldServerPath(req.Target)
+	}
+	return req
+}
+
+func (h caseInsensitiveHandlers) Fileread(req *sftp.Request) (io.ReaderAt, error) {
+	return h.inner.FileGet.Fileread(h.fold(req))
+}
+
+func (h caseInsensitiveHandlers) Filewrite(req *sftp.Request) (io.WriterAt, error) {
+	return h.inner.FilePut.Filewrite(h.fold(req))
+}
+
+func (h caseInsensitiveHandlers) Filecmd(req *sftp.Request) error {
+	return h.inner.FileCmd.Filecmd(h.fold(req))
+}
+
+func (h caseInsensitiveHandlers) PosixRename(req *sftp.Request) error {
+	return posixRenamePassthrough(h.inner.FileCmd, h.fold(req))
+}
+
+func (h caseInsensitiveHandlers) Filelist(req *sftp.Request) (sftp.ListerAt, error) {
+	return h.inner.FileList.Filelist(h.fold(req))
+}
+
+// withCaseInsensitive models a server whose filesystem treats names that
+// differ only by case (or Unicode normalization form) as the same file:
+// Windows OpenSSH on NTFS, macOS servers on default APFS, and many NAS
+// appliances. Every path the in-memory backend stores or resolves is
+// case-folded first, so an upload of README.md lands on the entry an old
+// Readme.md created, and a Remove of either spelling removes it.
+func withCaseInsensitive() serverOption {
+	return func(s *testServer) {
+		folding := caseInsensitiveHandlers{inner: s.handlers}
+		s.handlers = sftp.Handlers{
+			FileGet:  folding,
+			FilePut:  folding,
+			FileCmd:  folding,
+			FileList: folding,
+		}
+	}
 }
 
 // faultyRename wraps a FileCmder and fails every rename, delegating everything

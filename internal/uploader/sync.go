@@ -12,11 +12,13 @@ import (
 	"path"
 	"runtime"
 	"sort"
+	"strings"
 
 	"github.com/pkg/sftp"
 
 	"github.com/eiserv/easySFTP/internal/config"
 	"github.com/eiserv/easySFTP/internal/metrics"
+	"golang.org/x/text/unicode/norm"
 )
 
 // manifestVersion is written to every manifest this version of easySFTP
@@ -269,14 +271,29 @@ func executeSync(ctx context.Context, cfg *config.Config, sess *session, p plan,
 	return nil
 }
 
+// foldPath returns a comparison key for the case-insensitive (and
+// Unicode-normalization-insensitive) filesystems sync must not corrupt:
+// every path segment is case-folded and NFKC-normalized, so Readme.md and
+// README.md, or an NFC and an NFD spelling, share one key. It runs over
+// every manifest key and every planned file, so it stays cheap on purpose.
+func foldPath(p string) string {
+	folded := make([]string, 0, strings.Count(p, "/")+1)
+	for _, seg := range strings.Split(p, "/") {
+		folded = append(folded, strings.ToLower(norm.NFKC.String(seg)))
+	}
+	return strings.Join(folded, "/")
+}
+
 func collidingDeletes(toDelete []string, plan []fileItem) (colliding, rest []string) {
 	stale := make(map[string]bool, len(toDelete))
 	for _, rel := range toDelete {
 		stale[rel] = true
 	}
 	plannedFile := make(map[string]bool, len(plan))
+	plannedFold := make(map[string]bool, len(plan))
 	for _, f := range plan {
 		plannedFile[f.rel] = true
+		plannedFold[foldPath(f.rel)] = true
 	}
 	conflict := make(map[string]bool)
 
@@ -307,6 +324,25 @@ func collidingDeletes(toDelete []string, plan []fileItem) (colliding, rest []str
 				conflict[rel] = true
 				break
 			}
+		}
+	}
+
+	// A stale entry that case-folds (or Unicode-normalizes) to a path this
+	// run plans: on a case-insensitive filesystem the two are one directory
+	// entry, so deleting the old spelling after the upload removes the file
+	// the run just wrote, and the run reports it green (issue #313). It is
+	// removed before the upload instead, with the other collisions: that
+	// is also the only order in which the new spelling can take effect
+	// there, because a post-upload Remove of Readme.md is a Remove of
+	// README.md on NTFS. On a case-sensitive server the entry is a
+	// genuinely stale file, and moving it earlier only shortens the window
+	// in which the old file is gone, which the delete sweep accepts anyway.
+	for _, rel := range toDelete {
+		if conflict[rel] {
+			continue
+		}
+		if plannedFold[foldPath(rel)] {
+			conflict[rel] = true
 		}
 	}
 
