@@ -398,6 +398,17 @@ exclude: |
 
 - Patterns are matched against the path **relative to the local root** of each
   deployment.
+- The semantics are git's own, not a regex approximation: `?` is a
+  one-character wildcard, `[abc]` / `[!abc]` are character classes, `**`
+  spans directories, a slash anywhere but the end anchors the pattern at
+  the root, and `(`, `+`, `$`, `^`, `|` are literal name characters. The
+  suite pins this with a differential test that runs `git
+  check-ignore` over every table row when git is on PATH.
+- A pattern that cannot be parsed (an unterminated `[...]` class, a lone
+  trailing backslash) fails the run with the offending line named
+  instead of being silently dropped.
+- An escaped trailing space (`foo` + backslash + space) is a literal
+  name; an unescaped trailing space is trimmed, a tab never is.
 - `!pattern` re-includes files excluded by an earlier pattern.
 - In the config file, per-deployment `exclude` lists add to `defaults.exclude`.
 - An ignored directory (e.g. `node_modules/`) is skipped without being walked
@@ -405,6 +416,12 @@ exclude: |
   automatically disabled as soon as any pattern is a `!` re-include, because a
   re-include may point below an ignored directory; results are identical either
   way, only planning speed differs.
+- One difference from git is deliberate: a `!` re-include below an ignored
+  directory is honored (`dist/` then `!dist/keep.txt` uploads `keep.txt`),
+  where git stops at the excluded directory and never reaches the file. The
+  pruning above is what makes that both possible and exact: with pruning off,
+  every file is walked and the last matching pattern wins, exactly as with
+  pruning on for every path git would reach.
 
 ## Outputs
 

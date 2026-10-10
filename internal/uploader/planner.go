@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	ignore "github.com/sabhiram/go-gitignore"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/eiserv/easySFTP/internal/config"
@@ -66,7 +65,7 @@ func hasNegation(lines []string) bool {
 //   - manifestName: the effective sync manifest file name; a local file by that
 //     name is never uploaded, so a target's own manifest can't be clobbered.
 type planOptions struct {
-	matcher      *ignore.GitIgnore
+	matcher      *gitignoreMatcher
 	pruneDirs    bool
 	verbose      Logger
 	manifestName string
@@ -100,7 +99,7 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, opts planOption
 		if strings.HasSuffix(pair.Remote, "/") || remoteBase == "." {
 			remotePath = path.Join(remoteBase, filepath.Base(pair.Local))
 		}
-		if matched, pat := matcher.MatchesPathHow(filepath.Base(pair.Local)); matched {
+		if matched, pat := matcher.matchesHow(filepath.Base(pair.Local), false); matched {
 			if verbose != nil {
 				verbose.Infof("skip %s (ignore pattern %q)", filepath.Base(pair.Local), pat.Line)
 			}
@@ -176,9 +175,9 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, opts planOption
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			// The trailing slash lets directory-only patterns ("dist/") match.
+			// isDir tells trailing-slash patterns ("dist/") this is a directory.
 			if opts.pruneDirs && rel != "." {
-				if matched, pat := matcher.MatchesPathHow(rel + "/"); matched {
+				if matched, pat := matcher.matchesHow(rel, true); matched {
 					if verbose != nil {
 						verbose.Infof("skip %s/ and everything below it (ignore pattern %q)", rel, pat.Line)
 					}
@@ -190,7 +189,7 @@ func buildPlan(pair config.UploadPair, strategy config.Strategy, opts planOption
 		if rel == opts.manifestName {
 			return nil
 		}
-		if matched, pat := matcher.MatchesPathHow(rel); matched {
+		if matched, pat := matcher.matchesHow(rel, false); matched {
 			if verbose != nil {
 				verbose.Infof("skip %s (ignore pattern %q)", rel, pat.Line)
 			}

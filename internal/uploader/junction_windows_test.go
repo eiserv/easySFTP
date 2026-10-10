@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/eiserv/easySFTP/internal/config"
-	ignore "github.com/sabhiram/go-gitignore"
 )
 
 // trimFinalPath keeps a local volume path's drive letter and turns a UNC
@@ -50,7 +49,7 @@ func TestSymlinkToJunctionChainIsWalkedThrough(t *testing.T) {
 		t.Skipf("cannot create a directory symlink on this machine (needs the SeCreateSymbolicLink privilege): %v (%s)", err, out)
 	}
 
-	matcher := ignore.CompileIgnoreLines()
+	matcher := mustCompileGitignore(t)
 	p, err := buildPlan(config.UploadPair{Local: symlink, Remote: "/www"}, config.StrategyOverlay, planOptions{matcher: matcher, pruneDirs: true, manifestName: manifestName})
 	if err != nil {
 		t.Fatal(err)

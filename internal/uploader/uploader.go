@@ -17,8 +17,6 @@ import (
 	"strings"
 	"time"
 
-	ignore "github.com/sabhiram/go-gitignore"
-
 	"github.com/eiserv/easySFTP/internal/autocache"
 	"github.com/eiserv/easySFTP/internal/config"
 	"github.com/eiserv/easySFTP/internal/metrics"
@@ -104,7 +102,11 @@ func Run(ctx context.Context, cfg *config.Config, log Logger) (*Stats, error) {
 	for _, pair := range cfg.Uploads {
 		st := effectiveStrategy(pair)
 		lines := append(append([]string{}, cfg.IgnoreLines...), pair.Ignore...)
-		matcher := ignore.CompileIgnoreLines(lines...)
+		matcher, err := compileGitignore(lines)
+		if err != nil {
+			endScan()
+			return stats, err
+		}
 		// verbose is nil unless log-level is debug; buildPlan then explains
 		// every exclude decision.
 		var verbose Logger
