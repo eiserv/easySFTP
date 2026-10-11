@@ -14,14 +14,14 @@
 # plots benchmarks/analysis/README.md embeds, and an un-ignoring exception is
 # the only way they stay both committed and regenerable (issue #245). Drop a
 # name from the list below when the page stops referring to it.
-!/benchmarks/analysis/out/auto-matrix-20260816T125322Z-main.png
-!/benchmarks/analysis/out/canary-matrix-20260816T125322Z-main.png
-!/benchmarks/analysis/out/deletes-matrix-20260816T125322Z-main-small.png
-!/benchmarks/analysis/out/heatmap-matrix-20260816T125322Z-main-small-candidate-baseline-default.png
-!/benchmarks/analysis/out/link-matrix-20260816T125322Z-main.png
-!/benchmarks/analysis/out/operations-release-v3.5.0-small-baseline.png
-!/benchmarks/analysis/out/phases-release-v3.5.0.png
-!/benchmarks/analysis/out/scaling-matrix-20260816T125322Z-main-small-candidate-baseline-all.png
+!/benchmarks/analysis/out/auto-matrix-20261008T071043Z-v3.8.4.png
+!/benchmarks/analysis/out/canary-matrix-20261008T071043Z-v3.8.4.png
+!/benchmarks/analysis/out/deletes-matrix-20261008T071043Z-v3.8.4-small.png
+!/benchmarks/analysis/out/heatmap-matrix-20261008T071043Z-v3.8.4-small-candidate-baseline-default.png
+!/benchmarks/analysis/out/link-matrix-20261008T071043Z-v3.8.4.png
+!/benchmarks/analysis/out/operations-release-v3.8.4-small-baseline.png
+!/benchmarks/analysis/out/phases-release-v3.8.4.png
+!/benchmarks/analysis/out/scaling-matrix-20261008T071043Z-v3.8.4-small-candidate-baseline-all.png
 !/benchmarks/analysis/out/trend-releases.png
 /benchmarks/analysis/.venv/
 /benchmarks/analysis/__pycache__/
