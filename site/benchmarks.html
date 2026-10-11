@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmarks | easySFTP</title>
+<meta name="description" content="easySFTP benchmark graphs: throughput across releases, the connections and concurrency sweep, what auto picks, where the wall clock goes and what the round-trips cost.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-family='monospace' font-size='13' fill='%230e6b5c'>=&gt;</text></svg>">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="./">easysftp<span class="cursor">_</span></a>
+    <nav class="nav-links" aria-label="Site">
+      <a href="docs.html">docs</a>
+      <a href="benchmarks.html" aria-current="page">benchmarks</a>
+      <a href="docs.html#contributing">contributing</a>
+      <a href="https://github.com/eiserv/easySFTP">github &#8599;</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="section bench-intro">
+    <div class="wrap">
+      <h1 class="section-key">benchmarks</h1>
+      <p class="aside">These graphs are drawn from the results the release workflow
+      stores in the repository: the newest release measurement and the newest
+      connections x concurrency sweep. Every figure carries its provenance under
+      it (version, commit, runner, time), and any caveat the stored file
+      justifies is printed in red. All numbers were measured on one self-hosted
+      runner over one unshaped link, so read them as a comparison between easySFTP
+      versions, not as what your server will do. If a graph and the stored JSON
+      disagree, the JSON is right. The data and the commands that redraw each
+      figure are in
+      <a href="https://github.com/eiserv/easySFTP/tree/main/benchmarks">benchmarks/</a>
+      and the
+      <a href="https://github.com/eiserv/easySFTP/blob/main/benchmarks/analysis/README.md">analysis README</a>.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <h2 class="section-key">across releases</h2>
+      <div class="bench-grid bench-grid-one">
+        <figure class="fig">
+          <a href="benchmarks/trend.png"><img src="benchmarks/trend.png" alt="Throughput per scenario for every stored release, in MiB/s and files/s" loading="lazy"></a>
+          <figcaption>One point per stored release measurement. The releases are evenly
+          spaced and labelled with the day their benchmark ran, so the order is
+          readable even when two releases were cut days or weeks apart. Compare
+          points only within one runner marker.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <h2 class="section-key">the sweep</h2>
+      <div class="bench-grid">
+        <figure class="fig">
+          <a href="benchmarks/heatmap.png"><img src="benchmarks/heatmap.png" alt="Heatmap of throughput over connections and concurrency" loading="lazy"></a>
+          <figcaption><strong>The grid.</strong> One measured configuration per square,
+          colored by throughput. The red square is the fastest cell.</figcaption>
+        </figure>
+        <figure class="fig">
+          <a href="benchmarks/scaling.png"><img src="benchmarks/scaling.png" alt="Throughput curves against concurrency for each connection count" loading="lazy"></a>
+          <figcaption><strong>Where scaling stops paying.</strong> The same cells as curves.
+          The dotted line is perfect scaling; the gap to it is what the setting is worth.</figcaption>
+        </figure>
+        <figure class="fig">
+          <a href="benchmarks/auto.png"><img src="benchmarks/auto.png" alt="What auto picks against the best measured cell" loading="lazy"></a>
+          <figcaption><strong>The policy against the grid.</strong> What easySFTP picks for
+          itself with <code>auto</code>, scored against the fastest cell of the same
+          scenario.</figcaption>
+        </figure>
+        <figure class="fig">
+          <a href="benchmarks/canary.png"><img src="benchmarks/canary.png" alt="One fixed cell repeated through the sweep" loading="lazy"></a>
+          <figcaption><strong>Did the line hold still.</strong> One fixed cell repeated through
+          the sweep. A large spread makes the whole run a poor comparison basis.</figcaption>
+        </figure>
+        <figure class="fig">
+          <a href="benchmarks/link.png"><img src="benchmarks/link.png" alt="Measured throughput next to the link probe's own control" loading="lazy"></a>
+          <figcaption><strong>Against the line itself.</strong> Measured throughput next to the
+          control the link probe took over the same path.</figcaption>
+        </figure>
+        <figure class="fig">
+          <a href="benchmarks/deletes.png"><img src="benchmarks/deletes.png" alt="Delete sweep rates" loading="lazy"></a>
+          <figcaption><strong>Deletion.</strong> The clean deployment measured before every
+          run, the only measurement of deletion in the harness.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <h2 class="section-key">one release, taken apart</h2>
+      <div class="bench-grid">
+        <figure class="fig">
+          <a href="benchmarks/phases.png"><img src="benchmarks/phases.png" alt="Where the wall clock of a deployment goes, by phase" loading="lazy"></a>
+          <figcaption><strong>Where the wall clock goes.</strong> Phases are wall clock and add
+          up to roughly the run's duration.</figcaption>
+        </figure>
+        <figure class="fig">
+          <a href="benchmarks/operations.png"><img src="benchmarks/operations.png" alt="Cumulative work and per call cost of each SFTP operation" loading="lazy"></a>
+          <figcaption><strong>What the round-trips cost.</strong> Cumulative work per operation
+          on the left, per call cost on the right. The two panels are different kinds of
+          number.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <span>MIT license</span>
+    <a href="https://github.com/eiserv/easySFTP">github</a>
+    <a href="https://github.com/eiserv/easySFTP/blob/main/CHANGELOG.md">changelog</a>
+    <span class="spacer"></span>
+  </div>
+</footer>
+
+</body>
+</html>

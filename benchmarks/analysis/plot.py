@@ -1283,6 +1283,13 @@ def trend(args):
         return []
 
     markers = {runner: mark for runner, mark in zip(sorted(runners), "os^Dv*Xp")}
+    # One evenly spaced position per benchmark run, labelled with the release
+    # and the day it was measured. A true time axis puts weeks of nothing
+    # between two releases and stacks releases cut on the same day on top of
+    # each other; the point of this chart is the order of the releases, and
+    # the dates are still on the axis.
+    runs = sorted({point["when"] for points in series.values() for point in points})
+    position = {when: index for index, when in enumerate(runs)}
     figure, (top, bottom) = plt.subplots(2, 1, figsize=(10, 8.4), sharex=True)
     for index, (scenario, points) in enumerate(sorted(series.items())):
         points.sort(key=lambda point: point["when"])
@@ -1292,7 +1299,7 @@ def trend(args):
             if not usable:
                 continue
             axes.plot(
-                [point["when"] for point in usable],
+                [position[point["when"]] for point in usable],
                 [point[field] for point in usable],
                 color=color,
                 label=scenario if axes is top else None,
@@ -1300,7 +1307,7 @@ def trend(args):
             )
             for point in usable:
                 axes.scatter(
-                    [point["when"]],
+                    [position[point["when"]]],
                     [point[field]],
                     color=color,
                     marker=markers.get(point["runner"], "o"),
@@ -1312,19 +1319,18 @@ def trend(args):
     for points in series.values():
         for point in points:
             by_release[point["when"]].append(point)
-    for when, points in by_release.items():
-        top.annotate(
-            points[0]["label"],
-            (when, max(point["mib_per_s"] for point in points)),
-            fontsize=8,
-            ha="center",
-            textcoords="offset points",
-            xytext=(0, 8),
-        )
+    ticks = []
+    for when in runs:
+        points = by_release[when]
+        ticks.append(f'{points[0]["label"]}\n{when:%Y-%m-%d}')
+    top.set_xticks(range(len(runs)))
+    bottom.set_xticks(range(len(runs)))
+    bottom.set_xticklabels(ticks, fontsize=8)
+    top.margins(x=0.04)
 
     top.set_ylabel("MiB/s")
     bottom.set_ylabel("files/s")
-    bottom.set_xlabel("release")
+    bottom.set_xlabel("release and the day its benchmark ran (evenly spaced, not to time scale)")
     top.legend(title="scenario", fontsize=8)
     for axes in (top, bottom):
         axes.grid(alpha=0.3)

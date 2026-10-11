@@ -148,7 +148,10 @@ from `internal/uploader`, which is what makes it one: read against it, a slower
 easySFTP and a slower line stop looking the same.
 
 A **trend** point is one stored release measurement of one scenario, with a
-marker per runner. Compare points only within the same `environment` and, since
+marker per runner. The horizontal axis is one evenly spaced position per
+benchmark run, labelled with the release and the day it was measured: releases
+cut weeks apart and releases cut the same day take the same room, so it shows
+the order of the releases and is not a time scale. Compare points only within the same `environment` and, since
 issue #184, the same `link`: a faster line and a faster easySFTP look identical
 here otherwise. The trend chart cannot tell them apart and does not try.
 
@@ -220,6 +223,12 @@ Across releases:
 ```bash
 python benchmarks/analysis/plot.py trend
 ```
+
+The same files are published on the project's GitHub Pages site as
+`benchmarks.html` ([`site/benchmarks.html`](../../site/benchmarks.html)). The
+`Deploy GitHub Pages` workflow copies one file per kind out of `out/` under a
+stable name, so regenerating the gallery with new file names needs no change to
+the page, and it fails the deployment if a kind has zero or two files.
 
 ## Self-checks
 

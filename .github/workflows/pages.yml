@@ -7,6 +7,7 @@ on:
       - "site/**"
       - "docs/**"
       - "CONTRIBUTING.md"
+      - "benchmarks/analysis/out/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -41,6 +42,23 @@ jobs:
              docs/examples.md docs/security.md docs/troubleshooting.md \
              docs/providers.md docs/migration-v3.md _site/content/
           cp CONTRIBUTING.md _site/content/contributing.md
+      - name: Add the benchmark graphs
+        # The graphs are the committed gallery (benchmarks/analysis/README.md).
+        # Their file names carry the sweep or release they were drawn from, so
+        # they are copied to the stable names site/benchmarks.html refers to.
+        # Exactly one file per kind: a regenerated gallery that left an old
+        # file behind fails here instead of publishing the wrong figure.
+        run: |
+          mkdir -p _site/benchmarks
+          for kind in heatmap scaling auto canary link deletes phases operations; do
+            files=(benchmarks/analysis/out/"$kind"-*.png)
+            if [ "${#files[@]}" -ne 1 ] || [ ! -f "${files[0]}" ]; then
+              echo "expected exactly one benchmarks/analysis/out/$kind-*.png, found: ${files[*]}" >&2
+              exit 1
+            fi
+            cp "${files[0]}" "_site/benchmarks/$kind.png"
+          done
+          cp benchmarks/analysis/out/trend-releases.png _site/benchmarks/trend.png
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
