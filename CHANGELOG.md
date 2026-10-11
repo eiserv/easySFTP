@@ -5,6 +5,21 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.5](https://github.com/eiserv/easySFTP/compare/v3.8.4...v3.8.5) (2026-10-11)
+
+
+### Bug Fixes
+
+* **benchmarks:** name a payload-clamped axis edge for what it is, and sweep past the cut-offs the corpus kept reporting ([#311](https://github.com/eiserv/easySFTP/issues/311)) ([5502513](https://github.com/eiserv/easySFTP/commit/5502513915082fa50f9e1a8b2870517d5de4c490))
+* **uploader:** remove a case-folded spelling before the upload, not after ([#326](https://github.com/eiserv/easySFTP/issues/326)) ([b627baf](https://github.com/eiserv/easySFTP/commit/b627bafad1cd0d4d31e3f8ccec80fe4b11b5b868))
+* **uploader:** warn before an empty plan deletes in clean or sync ([#325](https://github.com/eiserv/easySFTP/issues/325)) ([ff3192f](https://github.com/eiserv/easySFTP/commit/ff3192fd1eba832688487e6c954867c6bfb57c75)), closes [#317](https://github.com/eiserv/easySFTP/issues/317)
+
+
+### Documentation
+
+* clarify sync fast path for normalized-mtime builds ([#324](https://github.com/eiserv/easySFTP/issues/324)) ([3f82def](https://github.com/eiserv/easySFTP/commit/3f82defe2def0ed0d1343594cc47cd1959dffb4d))
+* **site:** publish the benchmark graphs on a page of their own, and refresh the analysis gallery ([#329](https://github.com/eiserv/easySFTP/issues/329)) ([7e5680e](https://github.com/eiserv/easySFTP/commit/7e5680e696addcef0b246edf201f8158fd8725b1))
+
 ## [3.8.4](https://github.com/eiserv/easySFTP/compare/v3.8.3...v3.8.4) (2026-10-08)
 
 
