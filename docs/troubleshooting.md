@@ -254,6 +254,12 @@ rule; see [security.md](security.md#temporary-upload-files-in-web-roots).
 - Directory patterns need a trailing slash (`node_modules/`), just like
   gitignore.
 - Test your patterns cheaply with `dry-run: true`.
+- A pattern the matcher cannot parse (an unterminated `[...]` class, a lone
+  trailing backslash) fails the run with the line named; it is never dropped
+  silently.
+- The matcher is pinned against real git by a differential test, and its rules
+  are listed under [Exclude patterns](configuration.md#exclude-patterns) in
+  the configuration reference.
 
 ### Symlinks are missing on the server
 

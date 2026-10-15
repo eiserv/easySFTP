@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	ignore "github.com/sabhiram/go-gitignore"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
@@ -986,7 +985,7 @@ func TestIgnoredDirectoryIsPruned(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(local, "node_modules"), 0o755) })
 
-	matcher := ignore.CompileIgnoreLines("node_modules/")
+	matcher := mustCompileGitignore(t, "node_modules/")
 	p, err := buildPlan(config.UploadPair{Local: local, Remote: "/www"}, config.StrategyOverlay, planOptions{matcher: matcher, pruneDirs: true, manifestName: manifestName})
 	if err != nil {
 		t.Fatalf("walk descended into the pruned directory: %v", err)
@@ -1051,7 +1050,7 @@ func BenchmarkBuildPlanIgnoredTree(b *testing.B) {
 	if err := os.WriteFile(filepath.Join(local, "index.html"), []byte("x"), 0o644); err != nil {
 		b.Fatal(err)
 	}
-	matcher := ignore.CompileIgnoreLines("node_modules/")
+	matcher := mustCompileGitignoreB(b, "node_modules/")
 	pair := config.UploadPair{Local: local, Remote: "/www"}
 	for _, bench := range []struct {
 		name  string
@@ -1088,7 +1087,7 @@ func TestSymlinkedSourceDirectoryIsWalkedThrough(t *testing.T) {
 		t.Skipf("cannot create a symlink on this machine: %v", err)
 	}
 
-	matcher := ignore.CompileIgnoreLines()
+	matcher := mustCompileGitignore(t)
 	p, err := buildPlan(config.UploadPair{Local: link, Remote: "/www"}, config.StrategyClean, planOptions{matcher: matcher, pruneDirs: true, manifestName: manifestName})
 	if err != nil {
 		t.Fatal(err)
@@ -1180,7 +1179,7 @@ func TestShortNamedJunctionIsWalkedThrough(t *testing.T) {
 		t.Skip("the temp path has no short form on this machine")
 	}
 
-	matcher := ignore.CompileIgnoreLines()
+	matcher := mustCompileGitignore(t)
 	p, err := buildPlan(config.UploadPair{Local: shortLink, Remote: "/www"}, config.StrategyOverlay, planOptions{matcher: matcher, pruneDirs: true, manifestName: manifestName})
 	if err != nil {
 		t.Fatal(err)
@@ -1207,7 +1206,7 @@ func TestJunctionedSourceDirectoryIsWalkedThrough(t *testing.T) {
 		t.Skipf("cannot create a junction on this machine: %v (%s)", err, out)
 	}
 
-	matcher := ignore.CompileIgnoreLines()
+	matcher := mustCompileGitignore(t)
 	p, err := buildPlan(config.UploadPair{Local: link, Remote: "/www"}, config.StrategyOverlay, planOptions{matcher: matcher, pruneDirs: true, manifestName: manifestName})
 	if err != nil {
 		t.Fatal(err)
