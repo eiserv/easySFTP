@@ -5,6 +5,18 @@ New entries are generated automatically by [Release Please](https://github.com/g
 from [Conventional Commits](https://www.conventionalcommits.org/); this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.6](https://github.com/eiserv/easySFTP/compare/v3.8.5...v3.8.6) (2026-10-22)
+
+
+### Bug Fixes
+
+* **uploader:** make exclude patterns actually gitignore-compatible ([#327](https://github.com/eiserv/easySFTP/issues/327)) ([1cc0f5a](https://github.com/eiserv/easySFTP/commit/1cc0f5a210c7b16b65c114108fd341699f33c696))
+
+
+### Documentation
+
+* configuration.md exclude section gains the rule list, the ([1cc0f5a](https://github.com/eiserv/easySFTP/commit/1cc0f5a210c7b16b65c114108fd341699f33c696))
+
 ## [3.8.5](https://github.com/eiserv/easySFTP/compare/v3.8.4...v3.8.5) (2026-10-11)
 
 
