@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-10-11T15:55:18Z",
+  "generated_at": "2026-10-22T02:07:29Z",
   "generated_by": "cmd/easysftp-bench store",
   "documentation": "benchmarks/README.md",
   "layout": {
@@ -11,8 +11,43 @@
     "latest": "latest.{json,md}"
   },
   "keep_releases": 5,
-  "latest_release": "v3.8.5",
+  "latest_release": "v3.8.6",
   "entries": [
+    {
+      "kind": "release",
+      "version": "v3.8.6",
+      "label": null,
+      "official": true,
+      "recorded_at": "2026-10-22T02:07:29Z",
+      "commit": "3ce56c4094f8b49f470ffe275ba2baed6e7a9b3f",
+      "run_url": "https://github.com/eiserv/easySFTP/actions/runs/39709499832",
+      "candidate_ref": "v3.8.6 (3ce56c4)",
+      "benchmark_kind": "standard",
+      "benchmark_schema_version": 2,
+      "runner": "self-hosted, Linux 7.0.0-38-generic, 4 cpu",
+      "environment": {
+        "runner": "self-hosted",
+        "os": "Linux",
+        "kernel": "7.0.0-38-generic",
+        "arch": "x86_64",
+        "cpu_model": "Intel(R) Xeon(R) CPU           E5645  @ 2.40GHz",
+        "cpus": 4,
+        "go_version": "go1.26.7"
+      },
+      "link_profiles": [
+        "baseline"
+      ],
+      "rtt_p50_ms": 13.09,
+      "archived": false,
+      "json": "releases/release-v3.8.6.json",
+      "markdown": "releases/release-v3.8.6.md",
+      "median_ms": {
+        "large": 49331,
+        "mixed": 10899,
+        "small": 3918
+      },
+      "best_ms": {}
+    },
     {
       "kind": "matrix",
       "version": null,
@@ -351,9 +386,9 @@
         "baseline"
       ],
       "rtt_p50_ms": 13.1,
-      "archived": false,
-      "json": "matrix/matrix-20260830T205527Z-v3.8.0.json",
-      "markdown": "matrix/matrix-20260830T205527Z-v3.8.0.md",
+      "archived": true,
+      "json": "archive/matrix/matrix-20260830T205527Z-v3.8.0.json",
+      "markdown": "archive/matrix/matrix-20260830T205527Z-v3.8.0.md",
       "repeats": 2,
       "below_analysis_threshold": true,
       "median_ms": {},
@@ -395,9 +430,9 @@
         "baseline"
       ],
       "rtt_p50_ms": 13.08,
-      "archived": false,
-      "json": "releases/release-v3.8.0.json",
-      "markdown": "releases/release-v3.8.0.md",
+      "archived": true,
+      "json": "archive/releases/release-v3.8.0.json",
+      "markdown": "archive/releases/release-v3.8.0.md",
       "median_ms": {
         "large": 48954,
         "mixed": 11720,

@@ -1,0 +1,2932 @@
+{
+  "schema_version": 2,
+  "kind": "release",
+  "version": "v3.8.6",
+  "label": null,
+  "official": true,
+  "recorded_at": "2026-10-22T02:07:29Z",
+  "commit": "3ce56c4094f8b49f470ffe275ba2baed6e7a9b3f",
+  "run_url": "https://github.com/eiserv/easySFTP/actions/runs/39709499832",
+  "benchmark": {
+    "schema_version": 2,
+    "benchmark_kind": "standard",
+    "candidate_ref": "v3.8.6 (3ce56c4)",
+    "baseline_ref": "",
+    "repeats": 3,
+    "runner": "self-hosted, Linux 7.0.0-38-generic, 4 cpu",
+    "environment": {
+      "runner": "self-hosted",
+      "os": "Linux",
+      "kernel": "7.0.0-38-generic",
+      "arch": "x86_64",
+      "cpu_model": "Intel(R) Xeon(R) CPU           E5645  @ 2.40GHz",
+      "cpus": 4,
+      "go_version": "go1.26.7"
+    },
+    "link": {
+      "iface": null,
+      "shaping": {
+        "available": false,
+        "reason": "no profile asked for shaping, so it was never probed for",
+        "requested": [
+          "baseline"
+        ],
+        "applied": [
+          "baseline"
+        ]
+      },
+      "probes": [
+        {
+          "profile": "baseline",
+          "at": "start",
+          "schema_version": 1,
+          "note": "measured with x/crypto/ssh and pkg/sftp, not with easySFTP's uploader: this separates the line from easySFTP, not pkg/sftp from the line. rtt is a sequential no-op round-trip; control writes the same total payload once over one connection and once over several, both pipelined at 64 concurrent requests per file like the uploader itself (issue #276)",
+          "measured_at": "2026-10-22T02:08:12Z",
+          "handshake_ms": 380.28,
+          "rtt_ms": {
+            "p50": 13.09,
+            "p90": 13.3,
+            "min": 12.78,
+            "max": 19.37,
+            "samples": 21
+          },
+          "control": {
+            "streams": 4,
+            "bytes": 8388608,
+            "single_stream_mib_per_s": 0.4,
+            "n_stream_mib_per_s": 1.18,
+            "note": "both passes write the same total payload; the multi-stream pass splits it over separate SSH connections"
+          },
+          "host_load": {
+            "available": false,
+            "reason": "neither /proc/loadavg nor an exec channel is available; expected on an SFTP-only account"
+          },
+          "errors": []
+        },
+        {
+          "profile": "baseline",
+          "at": "end",
+          "schema_version": 1,
+          "note": "measured with x/crypto/ssh and pkg/sftp, not with easySFTP's uploader: this separates the line from easySFTP, not pkg/sftp from the line. rtt is a sequential no-op round-trip; control writes the same total payload once over one connection and once over several, both pipelined at 64 concurrent requests per file like the uploader itself (issue #276)",
+          "measured_at": "2026-10-22T02:12:08Z",
+          "handshake_ms": 464.85,
+          "rtt_ms": {
+            "p50": 13.15,
+            "p90": 13.86,
+            "min": 12.92,
+            "max": 16.1,
+            "samples": 21
+          },
+          "control": {
+            "streams": 4,
+            "bytes": 8388608,
+            "single_stream_mib_per_s": 0.41,
+            "n_stream_mib_per_s": 1.2,
+            "note": "both passes write the same total payload; the multi-stream pass splits it over separate SSH connections"
+          },
+          "host_load": {
+            "available": false,
+            "reason": "neither /proc/loadavg nor an exec channel is available; expected on an SFTP-only account"
+          },
+          "errors": []
+        }
+      ],
+      "note": "environment describes the runner and is the comparability key; link is measured and varies per run. Under a network ceiling a code delta cannot be interpreted."
+    },
+    "settings": "easySFTP defaults (no advanced.* overrides): connections auto, concurrency auto, request_concurrency auto, retries 2, timeout 30s, mode overlay",
+    "reference_label": "candidate",
+    "scenarios": {
+      "large": "2 files x 16 MiB",
+      "mixed": "40 x 16 KiB + 12 x 256 KiB + 4 x 2 MiB",
+      "small": "300 files x 4 KiB"
+    },
+    "note": "phases are wall clock and add up to the duration; operations are cumulative across parallel workers and do not",
+    "results": [
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "large",
+        "link_profile": "baseline",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 2,
+        "bytes": 33554432,
+        "durations_ms": [
+          42776,
+          57454,
+          49331
+        ],
+        "median_ms": 49331,
+        "min_ms": 42776,
+        "max_ms": 57454,
+        "mad_ms": 6555,
+        "duration_ms": {
+          "values": [
+            42776,
+            57454,
+            49331
+          ],
+          "median": 49331,
+          "min": 42776,
+          "max": 57454,
+          "mad": 6555,
+          "samples": 3
+        },
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "process": {
+          "user_cpu_ms": 528.46,
+          "sys_cpu_ms": 558.33,
+          "cpu_percent": 2.18,
+          "max_rss_bytes": 9302016,
+          "go_total_alloc_bytes": 1308752,
+          "go_mallocs": 12115,
+          "go_gc_count": 0,
+          "go_gc_pause_total_ms": 0,
+          "go_peak_goroutines": 159,
+          "disk_read_bytes": 43286528,
+          "net_read_bytes": 78374,
+          "net_write_bytes": 33666572
+        },
+        "counters": {
+          "auto_changes": 0,
+          "auto_final_connections": 2,
+          "auto_initial_concurrency": 2,
+          "auto_initial_connections": 2,
+          "auto_initial_request_concurrency": 64,
+          "auto_spread_decreases": 0,
+          "auto_spread_increases": 0,
+          "bytes_uploaded": 33554432,
+          "config_concurrency": 2,
+          "config_connections": 2,
+          "config_request_concurrency": 64,
+          "connections_opened": 2,
+          "connections_pool_size": 8,
+          "connections_used": 2,
+          "dirs_deleted": 0,
+          "files_deleted": 0,
+          "files_skipped": 0,
+          "files_uploaded": 2,
+          "link_bdp_bytes": 4845,
+          "link_handshake_us": 466934,
+          "link_observed_stream_bytes_per_second": 344822,
+          "link_rtt_us": 13143,
+          "link_stream_bytes_per_second": 0,
+          "local_read_bytes": 33554432,
+          "workload_bytes": 33554432,
+          "workload_files": 2,
+          "workload_largest_bytes": 16777216,
+          "workload_p50_bytes": 16777216,
+          "workload_p90_bytes": 16777216,
+          "workload_probes": 0,
+          "workload_small_files": 0
+        },
+        "phases": [
+          {
+            "name": "upload",
+            "median_ms": 48654.75
+          },
+          {
+            "name": "connect",
+            "median_ms": 507.28
+          },
+          {
+            "name": "sweep_stale_temps",
+            "median_ms": 57.39
+          },
+          {
+            "name": "create_dirs",
+            "median_ms": 40.25
+          },
+          {
+            "name": "cleanup",
+            "median_ms": 27.1
+          },
+          {
+            "name": "local_scan",
+            "median_ms": 7.12
+          }
+        ],
+        "operations": [
+          {
+            "name": "file_upload",
+            "count": 2,
+            "median_total_ms": 93119.89,
+            "avg_ms": 46559.95,
+            "p50_ms": 48653.58,
+            "p90_ms": 48653.58,
+            "p99_ms": 48653.58,
+            "max_ms": 48653.58,
+            "errors": 0
+          },
+          {
+            "name": "sftp_write",
+            "count": 2,
+            "median_total_ms": 92018.94,
+            "avg_ms": 46009.47,
+            "p50_ms": 48609.54,
+            "p90_ms": 48609.54,
+            "p99_ms": 48609.54,
+            "max_ms": 48609.54,
+            "errors": 0
+          },
+          {
+            "name": "ssh_connect",
+            "count": 1,
+            "median_total_ms": 466.93,
+            "avg_ms": 466.93,
+            "p50_ms": 466.93,
+            "p90_ms": 466.93,
+            "p99_ms": 466.93,
+            "max_ms": 466.93,
+            "errors": 0
+          },
+          {
+            "name": "sftp_readdir",
+            "count": 3,
+            "median_total_ms": 161.57,
+            "avg_ms": 53.86,
+            "p50_ms": 52.84,
+            "p90_ms": 57.28,
+            "p99_ms": 57.28,
+            "max_ms": 57.28,
+            "errors": 0
+          },
+          {
+            "name": "sftp_mkdirall",
+            "count": 2,
+            "median_total_ms": 80.1,
+            "avg_ms": 40.05,
+            "p50_ms": 40.17,
+            "p90_ms": 40.17,
+            "p99_ms": 40.17,
+            "max_ms": 40.17,
+            "errors": 0
+          },
+          {
+            "name": "sftp_chmod",
+            "count": 2,
+            "median_total_ms": 44.75,
+            "avg_ms": 22.38,
+            "p50_ms": 31.54,
+            "p90_ms": 31.54,
+            "p99_ms": 31.54,
+            "max_ms": 31.54,
+            "errors": 0
+          },
+          {
+            "name": "sftp_realpath",
+            "count": 3,
+            "median_total_ms": 39.48,
+            "avg_ms": 13.16,
+            "p50_ms": 13.14,
+            "p90_ms": 13.21,
+            "p99_ms": 13.21,
+            "max_ms": 13.21,
+            "errors": 0
+          },
+          {
+            "name": "sftp_rename",
+            "count": 2,
+            "median_total_ms": 30.42,
+            "avg_ms": 15.21,
+            "p50_ms": 17.08,
+            "p90_ms": 17.08,
+            "p99_ms": 17.08,
+            "max_ms": 17.08,
+            "errors": 0
+          },
+          {
+            "name": "sftp_open",
+            "count": 2,
+            "median_total_ms": 27.08,
+            "avg_ms": 13.54,
+            "p50_ms": 13.57,
+            "p90_ms": 13.57,
+            "p99_ms": 13.57,
+            "max_ms": 13.57,
+            "errors": 0
+          }
+        ],
+        "mib_per_s": 0.65,
+        "files_per_s": 0.04
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "mixed",
+        "link_profile": "baseline",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 56,
+        "bytes": 12189696,
+        "durations_ms": [
+          10899,
+          10867,
+          11352
+        ],
+        "median_ms": 10899,
+        "min_ms": 10867,
+        "max_ms": 11352,
+        "mad_ms": 32,
+        "duration_ms": {
+          "values": [
+            10899,
+            10867,
+            11352
+          ],
+          "median": 10899,
+          "min": 10867,
+          "max": 11352,
+          "mad": 32,
+          "samples": 3
+        },
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "process": {
+          "user_cpu_ms": 225.23,
+          "sys_cpu_ms": 247.74,
+          "cpu_percent": 4.32,
+          "max_rss_bytes": 14958592,
+          "go_total_alloc_bytes": 5486472,
+          "go_mallocs": 21795,
+          "go_gc_count": 2,
+          "go_gc_pause_total_ms": 1.218829,
+          "go_peak_goroutines": 1246,
+          "disk_read_bytes": 2207744,
+          "net_read_bytes": 62564,
+          "net_write_bytes": 12279356
+        },
+        "counters": {
+          "auto_changes": 0,
+          "auto_final_connections": 8,
+          "auto_initial_concurrency": 56,
+          "auto_initial_connections": 8,
+          "auto_initial_request_concurrency": 64,
+          "auto_spread_decreases": 0,
+          "auto_spread_increases": 0,
+          "bytes_uploaded": 12189696,
+          "config_concurrency": 56,
+          "config_connections": 8,
+          "config_request_concurrency": 64,
+          "connections_opened": 8,
+          "connections_pool_size": 8,
+          "connections_used": 8,
+          "dirs_deleted": 0,
+          "files_deleted": 0,
+          "files_skipped": 0,
+          "files_uploaded": 56,
+          "link_bdp_bytes": 4798,
+          "link_handshake_us": 379177,
+          "link_observed_stream_bytes_per_second": 148512,
+          "link_rtt_us": 13018,
+          "link_stream_bytes_per_second": 0,
+          "local_read_bytes": 12189696,
+          "workload_bytes": 12189696,
+          "workload_files": 56,
+          "workload_largest_bytes": 2097152,
+          "workload_p50_bytes": 16384,
+          "workload_p90_bytes": 262144,
+          "workload_probes": 0,
+          "workload_small_files": 40
+        },
+        "phases": [
+          {
+            "name": "upload",
+            "median_ms": 10259.9
+          },
+          {
+            "name": "connect",
+            "median_ms": 418.11
+          },
+          {
+            "name": "cleanup",
+            "median_ms": 108.44
+          },
+          {
+            "name": "sweep_stale_temps",
+            "median_ms": 56.26
+          },
+          {
+            "name": "create_dirs",
+            "median_ms": 40.5
+          },
+          {
+            "name": "local_scan",
+            "median_ms": 1.86
+          }
+        ],
+        "operations": [
+          {
+            "name": "file_upload",
+            "count": 56,
+            "median_total_ms": 220939.63,
+            "avg_ms": 3945.35,
+            "p50_ms": 4234.89,
+            "p90_ms": 6172.59,
+            "p99_ms": 10258.97,
+            "max_ms": 10258.97,
+            "errors": 0
+          },
+          {
+            "name": "sftp_write",
+            "count": 56,
+            "median_total_ms": 96427.06,
+            "avg_ms": 1721.91,
+            "p50_ms": 1089.4,
+            "p90_ms": 2871.36,
+            "p99_ms": 8279.25,
+            "max_ms": 8279.25,
+            "errors": 0
+          },
+          {
+            "name": "sftp_chmod",
+            "count": 56,
+            "median_total_ms": 28726.25,
+            "avg_ms": 512.97,
+            "p50_ms": 542.13,
+            "p90_ms": 1089.73,
+            "p99_ms": 1568.55,
+            "max_ms": 1568.55,
+            "errors": 0
+          },
+          {
+            "name": "sftp_rename",
+            "count": 56,
+            "median_total_ms": 20506.34,
+            "avg_ms": 366.18,
+            "p50_ms": 354.56,
+            "p90_ms": 1033.21,
+            "p99_ms": 1344.46,
+            "max_ms": 1344.46,
+            "errors": 0
+          },
+          {
+            "name": "sftp_open",
+            "count": 56,
+            "median_total_ms": 860.06,
+            "avg_ms": 15.36,
+            "p50_ms": 14.6,
+            "p90_ms": 18.2,
+            "p99_ms": 19.42,
+            "max_ms": 19.42,
+            "errors": 0
+          },
+          {
+            "name": "sftp_readdir",
+            "count": 9,
+            "median_total_ms": 503.01,
+            "avg_ms": 55.89,
+            "p50_ms": 56.05,
+            "p90_ms": 56.17,
+            "p99_ms": 56.17,
+            "max_ms": 56.17,
+            "errors": 0
+          },
+          {
+            "name": "ssh_connect",
+            "count": 1,
+            "median_total_ms": 379.18,
+            "avg_ms": 379.18,
+            "p50_ms": 379.18,
+            "p90_ms": 379.18,
+            "p99_ms": 379.18,
+            "max_ms": 379.18,
+            "errors": 0
+          },
+          {
+            "name": "sftp_mkdirall",
+            "count": 8,
+            "median_total_ms": 319.28,
+            "avg_ms": 39.91,
+            "p50_ms": 39.92,
+            "p90_ms": 40.4,
+            "p99_ms": 40.4,
+            "max_ms": 40.4,
+            "errors": 0
+          },
+          {
+            "name": "sftp_realpath",
+            "count": 3,
+            "median_total_ms": 39.11,
+            "avg_ms": 13.04,
+            "p50_ms": 13.02,
+            "p90_ms": 13.11,
+            "p99_ms": 13.11,
+            "max_ms": 13.11,
+            "errors": 0
+          }
+        ],
+        "mib_per_s": 1.07,
+        "files_per_s": 5.14
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "small",
+        "link_profile": "baseline",
+        "repeats": 3,
+        "failed_runs": 0,
+        "files": 300,
+        "bytes": 1228800,
+        "durations_ms": [
+          3529,
+          3918,
+          4196
+        ],
+        "median_ms": 3918,
+        "min_ms": 3529,
+        "max_ms": 4196,
+        "mad_ms": 278,
+        "duration_ms": {
+          "values": [
+            3529,
+            3918,
+            4196
+          ],
+          "median": 3918,
+          "min": 3529,
+          "max": 4196,
+          "mad": 278,
+          "samples": 3
+        },
+        "retries": 0,
+        "errors": 0,
+        "refused_connections": 0,
+        "process": {
+          "user_cpu_ms": 204.14,
+          "sys_cpu_ms": 224.96,
+          "cpu_percent": 10.73,
+          "max_rss_bytes": 13688832,
+          "go_total_alloc_bytes": 12828160,
+          "go_mallocs": 37016,
+          "go_gc_count": 4,
+          "go_gc_pause_total_ms": 2.529759,
+          "go_peak_goroutines": 270,
+          "disk_read_bytes": 0,
+          "net_read_bytes": 105092,
+          "net_write_bytes": 1444572
+        },
+        "counters": {
+          "auto_changes": 0,
+          "auto_final_connections": 4,
+          "auto_initial_concurrency": 64,
+          "auto_initial_connections": 4,
+          "auto_initial_request_concurrency": 16,
+          "auto_spread_decreases": 0,
+          "auto_spread_increases": 0,
+          "bytes_uploaded": 1228800,
+          "config_concurrency": 64,
+          "config_connections": 4,
+          "config_request_concurrency": 16,
+          "connections_opened": 4,
+          "connections_pool_size": 8,
+          "connections_used": 4,
+          "dirs_deleted": 0,
+          "files_deleted": 0,
+          "files_skipped": 0,
+          "files_uploaded": 300,
+          "link_bdp_bytes": 4885,
+          "link_handshake_us": 381436,
+          "link_observed_stream_bytes_per_second": 0,
+          "link_rtt_us": 13254,
+          "link_stream_bytes_per_second": 0,
+          "local_read_bytes": 1228800,
+          "workload_bytes": 1228800,
+          "workload_files": 300,
+          "workload_largest_bytes": 4096,
+          "workload_p50_bytes": 4096,
+          "workload_p90_bytes": 4096,
+          "workload_probes": 0,
+          "workload_small_files": 300
+        },
+        "phases": [
+          {
+            "name": "upload",
+            "median_ms": 3344.34
+          },
+          {
+            "name": "connect",
+            "median_ms": 421.25
+          },
+          {
+            "name": "cleanup",
+            "median_ms": 55.94
+          },
+          {
+            "name": "sweep_stale_temps",
+            "median_ms": 54.63
+          },
+          {
+            "name": "create_dirs",
+            "median_ms": 41.82
+          },
+          {
+            "name": "local_scan",
+            "median_ms": 8.08
+          }
+        ],
+        "operations": [
+          {
+            "name": "file_upload",
+            "count": 300,
+            "median_total_ms": 194519.89,
+            "avg_ms": 648.4,
+            "p50_ms": 507.94,
+            "p90_ms": 1569.68,
+            "p99_ms": 2129.15,
+            "max_ms": 2129.43,
+            "errors": 0
+          },
+          {
+            "name": "sftp_write",
+            "count": 300,
+            "median_total_ms": 65867,
+            "avg_ms": 219.56,
+            "p50_ms": 194.56,
+            "p90_ms": 489.71,
+            "p99_ms": 590.21,
+            "max_ms": 751.08,
+            "errors": 0
+          },
+          {
+            "name": "sftp_rename",
+            "count": 300,
+            "median_total_ms": 21557.85,
+            "avg_ms": 71.86,
+            "p50_ms": 39.41,
+            "p90_ms": 210.88,
+            "p99_ms": 339.05,
+            "max_ms": 375.22,
+            "errors": 0
+          },
+          {
+            "name": "sftp_chmod",
+            "count": 300,
+            "median_total_ms": 20290.93,
+            "avg_ms": 67.64,
+            "p50_ms": 46.23,
+            "p90_ms": 137.84,
+            "p99_ms": 373.54,
+            "max_ms": 448.72,
+            "errors": 0
+          },
+          {
+            "name": "sftp_open",
+            "count": 300,
+            "median_total_ms": 19368.16,
+            "avg_ms": 64.56,
+            "p50_ms": 36.56,
+            "p90_ms": 199.21,
+            "p99_ms": 420.65,
+            "max_ms": 472.65,
+            "errors": 0
+          },
+          {
+            "name": "sftp_readdir",
+            "count": 9,
+            "median_total_ms": 484.65,
+            "avg_ms": 53.85,
+            "p50_ms": 54.31,
+            "p90_ms": 54.37,
+            "p99_ms": 54.37,
+            "max_ms": 54.37,
+            "errors": 0
+          },
+          {
+            "name": "ssh_connect",
+            "count": 1,
+            "median_total_ms": 381.44,
+            "avg_ms": 381.44,
+            "p50_ms": 381.44,
+            "p90_ms": 381.44,
+            "p99_ms": 381.44,
+            "max_ms": 381.44,
+            "errors": 0
+          },
+          {
+            "name": "sftp_mkdirall",
+            "count": 8,
+            "median_total_ms": 326.22,
+            "avg_ms": 40.78,
+            "p50_ms": 40.92,
+            "p90_ms": 41.46,
+            "p99_ms": 41.46,
+            "max_ms": 41.46,
+            "errors": 0
+          },
+          {
+            "name": "sftp_realpath",
+            "count": 3,
+            "median_total_ms": 40.27,
+            "avg_ms": 13.42,
+            "p50_ms": 13.25,
+            "p90_ms": 13.97,
+            "p99_ms": 13.97,
+            "max_ms": 13.97,
+            "errors": 0
+          }
+        ],
+        "mib_per_s": 0.3,
+        "files_per_s": 76.57
+      }
+    ],
+    "deletes": [
+      {
+        "label": "candidate",
+        "scenario": "large",
+        "link_profile": "baseline",
+        "sweeps": 2,
+        "failed_sweeps": 0,
+        "files_deleted": 2,
+        "durations_ms": [
+          751,
+          1027
+        ],
+        "median_ms": 751,
+        "min_ms": 751,
+        "max_ms": 1027,
+        "mad_ms": 0,
+        "phases": [
+          {
+            "name": "connect",
+            "median_ms": 435.29
+          },
+          {
+            "name": "remote_scan",
+            "median_ms": 108.46
+          },
+          {
+            "name": "sweep_stale_temps",
+            "median_ms": 52.35
+          },
+          {
+            "name": "delete_sweep",
+            "median_ms": 27.88
+          },
+          {
+            "name": "cleanup",
+            "median_ms": 15.8
+          },
+          {
+            "name": "local_scan",
+            "median_ms": 0.14
+          },
+          {
+            "name": "create_dirs",
+            "median_ms": 0.01
+          },
+          {
+            "name": "upload",
+            "median_ms": 0.01
+          }
+        ],
+        "operations": [
+          {
+            "name": "ssh_connect",
+            "count": 1,
+            "median_total_ms": 435.28,
+            "avg_ms": 435.28,
+            "p50_ms": 435.28,
+            "p90_ms": 435.28,
+            "p99_ms": 435.28,
+            "max_ms": 435.28,
+            "errors": 0
+          },
+          {
+            "name": "sftp_readdir",
+            "count": 4,
+            "median_total_ms": 213.57,
+            "avg_ms": 53.39,
+            "p50_ms": 53.07,
+            "p90_ms": 55.3,
+            "p99_ms": 55.3,
+            "max_ms": 55.3,
+            "errors": 0
+          },
+          {
+            "name": "sftp_rmdir",
+            "count": 2,
+            "median_total_ms": 27.97,
+            "avg_ms": 13.99,
+            "p50_ms": 14.08,
+            "p90_ms": 14.08,
+            "p99_ms": 14.08,
+            "max_ms": 14.08,
+            "errors": 0
+          },
+          {
+            "name": "sftp_remove",
+            "count": 2,
+            "median_total_ms": 27.09,
+            "avg_ms": 13.55,
+            "p50_ms": 13.55,
+            "p90_ms": 13.55,
+            "p99_ms": 13.55,
+            "max_ms": 13.55,
+            "errors": 0
+          }
+        ],
+        "deletes_per_s": 2.66
+      },
+      {
+        "label": "candidate",
+        "scenario": "mixed",
+        "link_profile": "baseline",
+        "sweeps": 2,
+        "failed_sweeps": 0,
+        "files_deleted": 56,
+        "durations_ms": [
+          791,
+          739
+        ],
+        "median_ms": 739,
+        "min_ms": 739,
+        "max_ms": 791,
+        "mad_ms": 0,
+        "phases": [
+          {
+            "name": "connect",
+            "median_ms": 493.48
+          },
+          {
+            "name": "remote_scan",
+            "median_ms": 107.6
+          },
+          {
+            "name": "delete_sweep",
+            "median_ms": 69.74
+          },
+          {
+            "name": "sweep_stale_temps",
+            "median_ms": 53.67
+          },
+          {
+            "name": "cleanup",
+            "median_ms": 13.51
+          },
+          {
+            "name": "local_scan",
+            "median_ms": 0.42
+          },
+          {
+            "name": "create_dirs",
+            "median_ms": 0.01
+          },
+          {
+            "name": "upload",
+            "median_ms": 0.01
+          }
+        ],
+        "operations": [
+          {
+            "name": "sftp_remove",
+            "count": 56,
+            "median_total_ms": 1889.3,
+            "avg_ms": 33.74,
+            "p50_ms": 26.72,
+            "p90_ms": 47.86,
+            "p99_ms": 49.16,
+            "max_ms": 49.16,
+            "errors": 0
+          },
+          {
+            "name": "sftp_readdir",
+            "count": 10,
+            "median_total_ms": 530.28,
+            "avg_ms": 53.03,
+            "p50_ms": 53.27,
+            "p90_ms": 54.05,
+            "p99_ms": 54.05,
+            "max_ms": 54.05,
+            "errors": 0
+          },
+          {
+            "name": "ssh_connect",
+            "count": 1,
+            "median_total_ms": 493.42,
+            "avg_ms": 493.42,
+            "p50_ms": 493.42,
+            "p90_ms": 493.42,
+            "p99_ms": 493.42,
+            "max_ms": 493.42,
+            "errors": 0
+          },
+          {
+            "name": "sftp_rmdir",
+            "count": 8,
+            "median_total_ms": 113.1,
+            "avg_ms": 14.14,
+            "p50_ms": 14.23,
+            "p90_ms": 15.16,
+            "p99_ms": 15.16,
+            "max_ms": 15.16,
+            "errors": 0
+          }
+        ],
+        "deletes_per_s": 75.78
+      },
+      {
+        "label": "candidate",
+        "scenario": "small",
+        "link_profile": "baseline",
+        "sweeps": 2,
+        "failed_sweeps": 0,
+        "files_deleted": 300,
+        "durations_ms": [
+          775,
+          733
+        ],
+        "median_ms": 733,
+        "min_ms": 733,
+        "max_ms": 775,
+        "mad_ms": 0,
+        "phases": [
+          {
+            "name": "connect",
+            "median_ms": 364.85
+          },
+          {
+            "name": "delete_sweep",
+            "median_ms": 180.84
+          },
+          {
+            "name": "remote_scan",
+            "median_ms": 121.75
+          },
+          {
+            "name": "sweep_stale_temps",
+            "median_ms": 51.22
+          },
+          {
+            "name": "cleanup",
+            "median_ms": 14.33
+          },
+          {
+            "name": "local_scan",
+            "median_ms": 0.15
+          },
+          {
+            "name": "create_dirs",
+            "median_ms": 0.05
+          },
+          {
+            "name": "upload",
+            "median_ms": 0.01
+          }
+        ],
+        "operations": [
+          {
+            "name": "sftp_remove",
+            "count": 300,
+            "median_total_ms": 9384.79,
+            "avg_ms": 31.28,
+            "p50_ms": 32.27,
+            "p90_ms": 42.26,
+            "p99_ms": 53.06,
+            "max_ms": 53.42,
+            "errors": 0
+          },
+          {
+            "name": "sftp_readdir",
+            "count": 10,
+            "median_total_ms": 600.39,
+            "avg_ms": 60.04,
+            "p50_ms": 57.34,
+            "p90_ms": 69.34,
+            "p99_ms": 69.34,
+            "max_ms": 69.34,
+            "errors": 0
+          },
+          {
+            "name": "ssh_connect",
+            "count": 1,
+            "median_total_ms": 364.85,
+            "avg_ms": 364.85,
+            "p50_ms": 364.85,
+            "p90_ms": 364.85,
+            "p99_ms": 364.85,
+            "max_ms": 364.85,
+            "errors": 0
+          },
+          {
+            "name": "sftp_rmdir",
+            "count": 8,
+            "median_total_ms": 137.41,
+            "avg_ms": 17.18,
+            "p50_ms": 17.33,
+            "p90_ms": 19.72,
+            "p99_ms": 19.72,
+            "max_ms": 19.72,
+            "errors": 0
+          }
+        ],
+        "deletes_per_s": 409.28
+      }
+    ],
+    "comparison": [],
+    "runs": [
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "small",
+        "link_profile": "baseline",
+        "repeat": 1,
+        "exit_code": 0,
+        "duration_ms": 3529,
+        "files": 300,
+        "bytes": 1228800,
+        "retries": 0,
+        "errors": 0,
+        "refused": 0,
+        "metrics": {
+          "schema_version": 1,
+          "note": "phases are wall clock; operation totals are cumulative across parallel workers and are normally larger than the phase they belong to",
+          "process": {
+            "wall_ms": 3531.46,
+            "user_cpu_ms": 235.57,
+            "sys_cpu_ms": 294.44,
+            "cpu_percent": 15.01,
+            "max_rss_bytes": 14082048,
+            "go_total_alloc_bytes": 12925688,
+            "go_mallocs": 37016,
+            "go_heap_sys_bytes": 10321920,
+            "go_gc_count": 5,
+            "go_gc_pause_total_ms": 2.529759,
+            "go_peak_goroutines": 270,
+            "go_max_procs": 4,
+            "disk_read_bytes": 1220608,
+            "disk_write_bytes": 24576,
+            "net_read_bytes": 104548,
+            "net_write_bytes": 1444572
+          },
+          "phases": [
+            {
+              "name": "upload",
+              "wall_ms": 2929.72,
+              "count": 1
+            },
+            {
+              "name": "connect",
+              "wall_ms": 421.25,
+              "count": 1
+            },
+            {
+              "name": "sweep_stale_temps",
+              "wall_ms": 68.89,
+              "count": 1
+            },
+            {
+              "name": "cleanup",
+              "wall_ms": 55.94,
+              "count": 1
+            },
+            {
+              "name": "create_dirs",
+              "wall_ms": 42.51,
+              "count": 1
+            },
+            {
+              "name": "local_scan",
+              "wall_ms": 10.88,
+              "count": 1
+            }
+          ],
+          "operations": [
+            {
+              "name": "file_upload",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 170343.6,
+              "avg_ms": 567.81,
+              "min_ms": 105.48,
+              "p50_ms": 381.9,
+              "p90_ms": 1077.39,
+              "p99_ms": 1950.01,
+              "max_ms": 1976.61
+            },
+            {
+              "name": "sftp_write",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 60105.4,
+              "avg_ms": 200.35,
+              "min_ms": 39.11,
+              "p50_ms": 139.82,
+              "p90_ms": 407.93,
+              "p99_ms": 590.21,
+              "max_ms": 751.08
+            },
+            {
+              "name": "sftp_rename",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 21557.85,
+              "avg_ms": 71.86,
+              "min_ms": 12.85,
+              "p50_ms": 39.41,
+              "p90_ms": 200.45,
+              "p99_ms": 265.06,
+              "max_ms": 340.56
+            },
+            {
+              "name": "sftp_chmod",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 18317.2,
+              "avg_ms": 61.06,
+              "min_ms": 12.83,
+              "p50_ms": 46.23,
+              "p90_ms": 106.28,
+              "p99_ms": 394.99,
+              "max_ms": 395.33
+            },
+            {
+              "name": "sftp_open",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 17131.04,
+              "avg_ms": 57.1,
+              "min_ms": 12.81,
+              "p50_ms": 39.73,
+              "p90_ms": 126.83,
+              "p99_ms": 364.16,
+              "max_ms": 375.71
+            },
+            {
+              "name": "sftp_readdir",
+              "count": 9,
+              "errors": 0,
+              "total_ms": 614.43,
+              "avg_ms": 68.27,
+              "min_ms": 68.1,
+              "p50_ms": 68.18,
+              "p90_ms": 68.64,
+              "p99_ms": 68.64,
+              "max_ms": 68.64
+            },
+            {
+              "name": "ssh_connect",
+              "count": 1,
+              "errors": 0,
+              "total_ms": 381.44,
+              "avg_ms": 381.44,
+              "min_ms": 381.44,
+              "p50_ms": 381.44,
+              "p90_ms": 381.44,
+              "p99_ms": 381.44,
+              "max_ms": 381.44
+            },
+            {
+              "name": "sftp_mkdirall",
+              "count": 8,
+              "errors": 0,
+              "total_ms": 326.26,
+              "avg_ms": 40.78,
+              "min_ms": 40.23,
+              "p50_ms": 40.77,
+              "p90_ms": 41.76,
+              "p99_ms": 41.76,
+              "max_ms": 41.76
+            },
+            {
+              "name": "sftp_realpath",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 39.8,
+              "avg_ms": 13.27,
+              "min_ms": 13.01,
+              "p50_ms": 13.25,
+              "p90_ms": 13.54,
+              "p99_ms": 13.54,
+              "max_ms": 13.54
+            }
+          ],
+          "counters": {
+            "auto_changes": 0,
+            "auto_final_connections": 4,
+            "auto_initial_concurrency": 64,
+            "auto_initial_connections": 4,
+            "auto_initial_request_concurrency": 16,
+            "auto_spread_decreases": 0,
+            "auto_spread_increases": 0,
+            "bytes_uploaded": 1228800,
+            "config_concurrency": 64,
+            "config_connections": 4,
+            "config_request_concurrency": 16,
+            "connections_opened": 4,
+            "connections_pool_size": 8,
+            "connections_used": 4,
+            "dirs_deleted": 0,
+            "files_deleted": 0,
+            "files_skipped": 0,
+            "files_uploaded": 300,
+            "link_bdp_bytes": 4885,
+            "link_handshake_us": 381436,
+            "link_observed_stream_bytes_per_second": 0,
+            "link_rtt_us": 13254,
+            "link_stream_bytes_per_second": 0,
+            "local_read_bytes": 1228800,
+            "workload_bytes": 1228800,
+            "workload_files": 300,
+            "workload_largest_bytes": 4096,
+            "workload_p50_bytes": 4096,
+            "workload_p90_bytes": 4096,
+            "workload_probes": 0,
+            "workload_small_files": 300
+          }
+        }
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "small",
+        "link_profile": "baseline",
+        "repeat": 2,
+        "exit_code": 0,
+        "duration_ms": 3918,
+        "files": 300,
+        "bytes": 1228800,
+        "retries": 0,
+        "errors": 0,
+        "refused": 0,
+        "metrics": {
+          "schema_version": 1,
+          "note": "phases are wall clock; operation totals are cumulative across parallel workers and are normally larger than the phase they belong to",
+          "process": {
+            "wall_ms": 3920.11,
+            "user_cpu_ms": 204.14,
+            "sys_cpu_ms": 216.55,
+            "cpu_percent": 10.73,
+            "max_rss_bytes": 13688832,
+            "go_total_alloc_bytes": 12828160,
+            "go_mallocs": 37273,
+            "go_heap_sys_bytes": 10846208,
+            "go_gc_count": 4,
+            "go_gc_pause_total_ms": 3.203674,
+            "go_peak_goroutines": 200,
+            "go_max_procs": 4,
+            "disk_read_bytes": 0,
+            "disk_write_bytes": 28672,
+            "net_read_bytes": 107419,
+            "net_write_bytes": 1446040
+          },
+          "phases": [
+            {
+              "name": "upload",
+              "wall_ms": 3344.34,
+              "count": 1
+            },
+            {
+              "name": "connect",
+              "wall_ms": 401.53,
+              "count": 1
+            },
+            {
+              "name": "cleanup",
+              "wall_ms": 67.97,
+              "count": 1
+            },
+            {
+              "name": "sweep_stale_temps",
+              "wall_ms": 54.63,
+              "count": 1
+            },
+            {
+              "name": "create_dirs",
+              "wall_ms": 41.82,
+              "count": 1
+            },
+            {
+              "name": "local_scan",
+              "wall_ms": 8.08,
+              "count": 1
+            }
+          ],
+          "operations": [
+            {
+              "name": "file_upload",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 194519.89,
+              "avg_ms": 648.4,
+              "min_ms": 85.33,
+              "p50_ms": 507.94,
+              "p90_ms": 1687.42,
+              "p99_ms": 2215.72,
+              "max_ms": 2216.57
+            },
+            {
+              "name": "sftp_write",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 65867,
+              "avg_ms": 219.56,
+              "min_ms": 28.67,
+              "p50_ms": 194.56,
+              "p90_ms": 489.71,
+              "p99_ms": 511.57,
+              "max_ms": 556.91
+            },
+            {
+              "name": "sftp_chmod",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 21734.12,
+              "avg_ms": 72.45,
+              "min_ms": 12.7,
+              "p50_ms": 55.46,
+              "p90_ms": 162.99,
+              "p99_ms": 372.21,
+              "max_ms": 448.72
+            },
+            {
+              "name": "sftp_rename",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 21305.93,
+              "avg_ms": 71.02,
+              "min_ms": 12.79,
+              "p50_ms": 32.28,
+              "p90_ms": 210.88,
+              "p99_ms": 339.05,
+              "max_ms": 375.22
+            },
+            {
+              "name": "sftp_open",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 19368.16,
+              "avg_ms": 64.56,
+              "min_ms": 12.77,
+              "p50_ms": 28.43,
+              "p90_ms": 199.21,
+              "p99_ms": 420.65,
+              "max_ms": 472.65
+            },
+            {
+              "name": "sftp_readdir",
+              "count": 9,
+              "errors": 0,
+              "total_ms": 483.26,
+              "avg_ms": 53.7,
+              "min_ms": 52.77,
+              "p50_ms": 53.89,
+              "p90_ms": 54.32,
+              "p99_ms": 54.32,
+              "max_ms": 54.32
+            },
+            {
+              "name": "ssh_connect",
+              "count": 1,
+              "errors": 0,
+              "total_ms": 361.23,
+              "avg_ms": 361.23,
+              "min_ms": 361.23,
+              "p50_ms": 361.23,
+              "p90_ms": 361.23,
+              "p99_ms": 361.23,
+              "max_ms": 361.23
+            },
+            {
+              "name": "sftp_mkdirall",
+              "count": 8,
+              "errors": 0,
+              "total_ms": 325.1,
+              "avg_ms": 40.64,
+              "min_ms": 39.71,
+              "p50_ms": 41.04,
+              "p90_ms": 41.43,
+              "p99_ms": 41.43,
+              "max_ms": 41.43
+            },
+            {
+              "name": "sftp_realpath",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 40.27,
+              "avg_ms": 13.42,
+              "min_ms": 12.96,
+              "p50_ms": 13.34,
+              "p90_ms": 13.97,
+              "p99_ms": 13.97,
+              "max_ms": 13.97
+            }
+          ],
+          "counters": {
+            "auto_changes": 0,
+            "auto_final_connections": 5,
+            "auto_initial_concurrency": 64,
+            "auto_initial_connections": 5,
+            "auto_initial_request_concurrency": 16,
+            "auto_spread_decreases": 0,
+            "auto_spread_increases": 0,
+            "bytes_uploaded": 1228800,
+            "config_concurrency": 64,
+            "config_connections": 5,
+            "config_request_concurrency": 16,
+            "connections_opened": 5,
+            "connections_pool_size": 8,
+            "connections_used": 5,
+            "dirs_deleted": 0,
+            "files_deleted": 0,
+            "files_skipped": 0,
+            "files_uploaded": 300,
+            "link_bdp_bytes": 4918,
+            "link_handshake_us": 361230,
+            "link_observed_stream_bytes_per_second": 0,
+            "link_rtt_us": 13341,
+            "link_stream_bytes_per_second": 0,
+            "local_read_bytes": 1228800,
+            "workload_bytes": 1228800,
+            "workload_files": 300,
+            "workload_largest_bytes": 4096,
+            "workload_p50_bytes": 4096,
+            "workload_p90_bytes": 4096,
+            "workload_probes": 0,
+            "workload_small_files": 300
+          }
+        }
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "small",
+        "link_profile": "baseline",
+        "repeat": 3,
+        "exit_code": 0,
+        "duration_ms": 4196,
+        "files": 300,
+        "bytes": 1228800,
+        "retries": 0,
+        "errors": 0,
+        "refused": 0,
+        "metrics": {
+          "schema_version": 1,
+          "note": "phases are wall clock; operation totals are cumulative across parallel workers and are normally larger than the phase they belong to",
+          "process": {
+            "wall_ms": 4197.32,
+            "user_cpu_ms": 182.78,
+            "sys_cpu_ms": 224.96,
+            "cpu_percent": 9.71,
+            "max_rss_bytes": 13647872,
+            "go_total_alloc_bytes": 12732344,
+            "go_mallocs": 36575,
+            "go_heap_sys_bytes": 10584064,
+            "go_gc_count": 4,
+            "go_gc_pause_total_ms": 1.922243,
+            "go_peak_goroutines": 182,
+            "go_max_procs": 4,
+            "disk_read_bytes": 0,
+            "disk_write_bytes": 24576,
+            "net_read_bytes": 105092,
+            "net_write_bytes": 1444572
+          },
+          "phases": [
+            {
+              "name": "upload",
+              "wall_ms": 3541.56,
+              "count": 1
+            },
+            {
+              "name": "connect",
+              "wall_ms": 497.61,
+              "count": 1
+            },
+            {
+              "name": "sweep_stale_temps",
+              "wall_ms": 54.57,
+              "count": 1
+            },
+            {
+              "name": "cleanup",
+              "wall_ms": 52.77,
+              "count": 1
+            },
+            {
+              "name": "create_dirs",
+              "wall_ms": 41.53,
+              "count": 1
+            },
+            {
+              "name": "local_scan",
+              "wall_ms": 7.71,
+              "count": 1
+            }
+          ],
+          "operations": [
+            {
+              "name": "file_upload",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 207818.55,
+              "avg_ms": 692.73,
+              "min_ms": 93.03,
+              "p50_ms": 548.02,
+              "p90_ms": 1569.68,
+              "p99_ms": 2129.15,
+              "max_ms": 2129.43
+            },
+            {
+              "name": "sftp_write",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 77719.17,
+              "avg_ms": 259.06,
+              "min_ms": 39.01,
+              "p50_ms": 194.74,
+              "p90_ms": 761.06,
+              "p99_ms": 794.77,
+              "max_ms": 833.1
+            },
+            {
+              "name": "sftp_rename",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 30677,
+              "avg_ms": 102.26,
+              "min_ms": 12.77,
+              "p50_ms": 40.53,
+              "p90_ms": 322.44,
+              "p99_ms": 504.27,
+              "max_ms": 512.12
+            },
+            {
+              "name": "sftp_open",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 27305.49,
+              "avg_ms": 91.02,
+              "min_ms": 12.83,
+              "p50_ms": 36.56,
+              "p90_ms": 287.95,
+              "p99_ms": 725.13,
+              "max_ms": 749.31
+            },
+            {
+              "name": "sftp_chmod",
+              "count": 300,
+              "errors": 0,
+              "total_ms": 20290.93,
+              "avg_ms": 67.64,
+              "min_ms": 12.66,
+              "p50_ms": 44.98,
+              "p90_ms": 137.84,
+              "p99_ms": 373.54,
+              "max_ms": 715.91
+            },
+            {
+              "name": "sftp_readdir",
+              "count": 9,
+              "errors": 0,
+              "total_ms": 484.65,
+              "avg_ms": 53.85,
+              "min_ms": 52.98,
+              "p50_ms": 54.31,
+              "p90_ms": 54.37,
+              "p99_ms": 54.37,
+              "max_ms": 54.37
+            },
+            {
+              "name": "ssh_connect",
+              "count": 1,
+              "errors": 0,
+              "total_ms": 456.72,
+              "avg_ms": 456.72,
+              "min_ms": 456.72,
+              "p50_ms": 456.72,
+              "p90_ms": 456.72,
+              "p99_ms": 456.72,
+              "max_ms": 456.72
+            },
+            {
+              "name": "sftp_mkdirall",
+              "count": 8,
+              "errors": 0,
+              "total_ms": 326.22,
+              "avg_ms": 40.78,
+              "min_ms": 39.96,
+              "p50_ms": 40.92,
+              "p90_ms": 41.46,
+              "p99_ms": 41.46,
+              "max_ms": 41.46
+            },
+            {
+              "name": "sftp_realpath",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 40.87,
+              "avg_ms": 13.62,
+              "min_ms": 13,
+              "p50_ms": 13.16,
+              "p90_ms": 14.71,
+              "p99_ms": 14.71,
+              "max_ms": 14.71
+            }
+          ],
+          "counters": {
+            "auto_changes": 0,
+            "auto_final_connections": 4,
+            "auto_initial_concurrency": 64,
+            "auto_initial_connections": 4,
+            "auto_initial_request_concurrency": 16,
+            "auto_spread_decreases": 0,
+            "auto_spread_increases": 0,
+            "bytes_uploaded": 1228800,
+            "config_concurrency": 64,
+            "config_connections": 4,
+            "config_request_concurrency": 16,
+            "connections_opened": 4,
+            "connections_pool_size": 8,
+            "connections_used": 4,
+            "dirs_deleted": 0,
+            "files_deleted": 0,
+            "files_skipped": 0,
+            "files_uploaded": 300,
+            "link_bdp_bytes": 4852,
+            "link_handshake_us": 456716,
+            "link_observed_stream_bytes_per_second": 0,
+            "link_rtt_us": 13163,
+            "link_stream_bytes_per_second": 0,
+            "local_read_bytes": 1228800,
+            "workload_bytes": 1228800,
+            "workload_files": 300,
+            "workload_largest_bytes": 4096,
+            "workload_p50_bytes": 4096,
+            "workload_p90_bytes": 4096,
+            "workload_probes": 0,
+            "workload_small_files": 300
+          }
+        }
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "mixed",
+        "link_profile": "baseline",
+        "repeat": 1,
+        "exit_code": 0,
+        "duration_ms": 10899,
+        "files": 56,
+        "bytes": 12189696,
+        "retries": 0,
+        "errors": 0,
+        "refused": 0,
+        "metrics": {
+          "schema_version": 1,
+          "note": "phases are wall clock; operation totals are cumulative across parallel workers and are normally larger than the phase they belong to",
+          "process": {
+            "wall_ms": 10910.02,
+            "user_cpu_ms": 209.2,
+            "sys_cpu_ms": 213.72,
+            "cpu_percent": 3.88,
+            "max_rss_bytes": 14606336,
+            "go_total_alloc_bytes": 5387840,
+            "go_mallocs": 21656,
+            "go_heap_sys_bytes": 9338880,
+            "go_gc_count": 2,
+            "go_gc_pause_total_ms": 0.380608,
+            "go_peak_goroutines": 1047,
+            "go_max_procs": 4,
+            "disk_read_bytes": 10010624,
+            "disk_write_bytes": 40960,
+            "net_read_bytes": 62392,
+            "net_write_bytes": 12279356
+          },
+          "phases": [
+            {
+              "name": "upload",
+              "wall_ms": 10259.9,
+              "count": 1
+            },
+            {
+              "name": "connect",
+              "wall_ms": 418.11,
+              "count": 1
+            },
+            {
+              "name": "cleanup",
+              "wall_ms": 110.39,
+              "count": 1
+            },
+            {
+              "name": "sweep_stale_temps",
+              "wall_ms": 69.14,
+              "count": 1
+            },
+            {
+              "name": "create_dirs",
+              "wall_ms": 40,
+              "count": 1
+            },
+            {
+              "name": "local_scan",
+              "wall_ms": 1.37,
+              "count": 1
+            }
+          ],
+          "operations": [
+            {
+              "name": "file_upload",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 220939.63,
+              "avg_ms": 3945.35,
+              "min_ms": 167.29,
+              "p50_ms": 4358.07,
+              "p90_ms": 5693.82,
+              "p99_ms": 10258.97,
+              "max_ms": 10258.97
+            },
+            {
+              "name": "sftp_write",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 96427.06,
+              "avg_ms": 1721.91,
+              "min_ms": 84.55,
+              "p50_ms": 1478.66,
+              "p90_ms": 2753.71,
+              "p99_ms": 8279.25,
+              "max_ms": 8279.25
+            },
+            {
+              "name": "sftp_chmod",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 28655.04,
+              "avg_ms": 511.7,
+              "min_ms": 12.86,
+              "p50_ms": 521.39,
+              "p90_ms": 1218.07,
+              "p99_ms": 1344.34,
+              "max_ms": 1344.34
+            },
+            {
+              "name": "sftp_rename",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 18145.11,
+              "avg_ms": 324.02,
+              "min_ms": 13.01,
+              "p50_ms": 170.28,
+              "p90_ms": 1033.21,
+              "p99_ms": 1344.46,
+              "max_ms": 1344.46
+            },
+            {
+              "name": "sftp_open",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 798.68,
+              "avg_ms": 14.26,
+              "min_ms": 13.14,
+              "p50_ms": 14.06,
+              "p90_ms": 16.06,
+              "p99_ms": 16.17,
+              "max_ms": 16.17
+            },
+            {
+              "name": "sftp_readdir",
+              "count": 9,
+              "errors": 0,
+              "total_ms": 568.79,
+              "avg_ms": 63.2,
+              "min_ms": 55.9,
+              "p50_ms": 68.84,
+              "p90_ms": 68.94,
+              "p99_ms": 68.94,
+              "max_ms": 68.94
+            },
+            {
+              "name": "ssh_connect",
+              "count": 1,
+              "errors": 0,
+              "total_ms": 379.18,
+              "avg_ms": 379.18,
+              "min_ms": 379.18,
+              "p50_ms": 379.18,
+              "p90_ms": 379.18,
+              "p99_ms": 379.18,
+              "max_ms": 379.18
+            },
+            {
+              "name": "sftp_mkdirall",
+              "count": 8,
+              "errors": 0,
+              "total_ms": 317.18,
+              "avg_ms": 39.65,
+              "min_ms": 39.08,
+              "p50_ms": 39.7,
+              "p90_ms": 39.86,
+              "p99_ms": 39.86,
+              "max_ms": 39.86
+            },
+            {
+              "name": "sftp_realpath",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 38.91,
+              "avg_ms": 12.97,
+              "min_ms": 12.82,
+              "p50_ms": 13,
+              "p90_ms": 13.09,
+              "p99_ms": 13.09,
+              "max_ms": 13.09
+            }
+          ],
+          "counters": {
+            "auto_changes": 0,
+            "auto_final_connections": 8,
+            "auto_initial_concurrency": 56,
+            "auto_initial_connections": 8,
+            "auto_initial_request_concurrency": 64,
+            "auto_spread_decreases": 0,
+            "auto_spread_increases": 0,
+            "bytes_uploaded": 12189696,
+            "config_concurrency": 56,
+            "config_connections": 8,
+            "config_request_concurrency": 64,
+            "connections_opened": 8,
+            "connections_pool_size": 8,
+            "connections_used": 8,
+            "dirs_deleted": 0,
+            "files_deleted": 0,
+            "files_skipped": 0,
+            "files_uploaded": 56,
+            "link_bdp_bytes": 4793,
+            "link_handshake_us": 379177,
+            "link_observed_stream_bytes_per_second": 148512,
+            "link_rtt_us": 13003,
+            "link_stream_bytes_per_second": 0,
+            "local_read_bytes": 12189696,
+            "workload_bytes": 12189696,
+            "workload_files": 56,
+            "workload_largest_bytes": 2097152,
+            "workload_p50_bytes": 16384,
+            "workload_p90_bytes": 262144,
+            "workload_probes": 0,
+            "workload_small_files": 40
+          }
+        }
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "mixed",
+        "link_profile": "baseline",
+        "repeat": 2,
+        "exit_code": 0,
+        "duration_ms": 10867,
+        "files": 56,
+        "bytes": 12189696,
+        "retries": 0,
+        "errors": 0,
+        "refused": 0,
+        "metrics": {
+          "schema_version": 1,
+          "note": "phases are wall clock; operation totals are cumulative across parallel workers and are normally larger than the phase they belong to",
+          "process": {
+            "wall_ms": 10869.41,
+            "user_cpu_ms": 225.23,
+            "sys_cpu_ms": 249.22,
+            "cpu_percent": 4.37,
+            "max_rss_bytes": 14958592,
+            "go_total_alloc_bytes": 5530472,
+            "go_mallocs": 21795,
+            "go_heap_sys_bytes": 9404416,
+            "go_gc_count": 2,
+            "go_gc_pause_total_ms": 3.520581,
+            "go_peak_goroutines": 1242,
+            "go_max_procs": 4,
+            "disk_read_bytes": 2207744,
+            "disk_write_bytes": 40960,
+            "net_read_bytes": 62724,
+            "net_write_bytes": 12279356
+          },
+          "phases": [
+            {
+              "name": "upload",
+              "wall_ms": 10063.41,
+              "count": 1
+            },
+            {
+              "name": "connect",
+              "wall_ms": 506.42,
+              "count": 1
+            },
+            {
+              "name": "cleanup",
+              "wall_ms": 108.44,
+              "count": 1
+            },
+            {
+              "name": "local_scan",
+              "wall_ms": 89.91,
+              "count": 1
+            },
+            {
+              "name": "sweep_stale_temps",
+              "wall_ms": 56.26,
+              "count": 1
+            },
+            {
+              "name": "create_dirs",
+              "wall_ms": 42.46,
+              "count": 1
+            }
+          ],
+          "operations": [
+            {
+              "name": "file_upload",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 219220.9,
+              "avg_ms": 3914.66,
+              "min_ms": 389.15,
+              "p50_ms": 4234.89,
+              "p90_ms": 6178.66,
+              "p99_ms": 10059.58,
+              "max_ms": 10059.58
+            },
+            {
+              "name": "sftp_write",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 86968.09,
+              "avg_ms": 1553,
+              "min_ms": 286.42,
+              "p50_ms": 946.31,
+              "p90_ms": 2871.36,
+              "p99_ms": 7857.3,
+              "max_ms": 7857.3
+            },
+            {
+              "name": "sftp_chmod",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 30902.75,
+              "avg_ms": 551.83,
+              "min_ms": 12.92,
+              "p50_ms": 542.13,
+              "p90_ms": 1089.73,
+              "p99_ms": 1568.55,
+              "max_ms": 1568.55
+            },
+            {
+              "name": "sftp_rename",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 20506.34,
+              "avg_ms": 366.18,
+              "min_ms": 12.95,
+              "p50_ms": 403.65,
+              "p90_ms": 732.92,
+              "p99_ms": 804.88,
+              "max_ms": 804.88
+            },
+            {
+              "name": "sftp_open",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 882.11,
+              "avg_ms": 15.75,
+              "min_ms": 13.19,
+              "p50_ms": 15.4,
+              "p90_ms": 18.2,
+              "p99_ms": 19.42,
+              "max_ms": 19.42
+            },
+            {
+              "name": "sftp_readdir",
+              "count": 9,
+              "errors": 0,
+              "total_ms": 503.01,
+              "avg_ms": 55.89,
+              "min_ms": 55.23,
+              "p50_ms": 56.05,
+              "p90_ms": 56.17,
+              "p99_ms": 56.17,
+              "max_ms": 56.17
+            },
+            {
+              "name": "ssh_connect",
+              "count": 1,
+              "errors": 0,
+              "total_ms": 464.46,
+              "avg_ms": 464.46,
+              "min_ms": 464.46,
+              "p50_ms": 464.46,
+              "p90_ms": 464.46,
+              "p99_ms": 464.46,
+              "max_ms": 464.46
+            },
+            {
+              "name": "sftp_mkdirall",
+              "count": 8,
+              "errors": 0,
+              "total_ms": 336.74,
+              "avg_ms": 42.09,
+              "min_ms": 41.85,
+              "p50_ms": 42.12,
+              "p90_ms": 42.39,
+              "p99_ms": 42.39,
+              "max_ms": 42.39
+            },
+            {
+              "name": "sftp_realpath",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 41.94,
+              "avg_ms": 13.98,
+              "min_ms": 12.86,
+              "p50_ms": 13.02,
+              "p90_ms": 16.06,
+              "p99_ms": 16.06,
+              "max_ms": 16.06
+            }
+          ],
+          "counters": {
+            "auto_changes": 0,
+            "auto_final_connections": 8,
+            "auto_initial_concurrency": 56,
+            "auto_initial_connections": 8,
+            "auto_initial_request_concurrency": 64,
+            "auto_spread_decreases": 0,
+            "auto_spread_increases": 0,
+            "bytes_uploaded": 12189696,
+            "config_concurrency": 56,
+            "config_connections": 8,
+            "config_request_concurrency": 64,
+            "connections_opened": 8,
+            "connections_pool_size": 8,
+            "connections_used": 8,
+            "dirs_deleted": 0,
+            "files_deleted": 0,
+            "files_skipped": 0,
+            "files_uploaded": 56,
+            "link_bdp_bytes": 4798,
+            "link_handshake_us": 464459,
+            "link_observed_stream_bytes_per_second": 151411,
+            "link_rtt_us": 13018,
+            "link_stream_bytes_per_second": 0,
+            "local_read_bytes": 12189696,
+            "workload_bytes": 12189696,
+            "workload_files": 56,
+            "workload_largest_bytes": 2097152,
+            "workload_p50_bytes": 16384,
+            "workload_p90_bytes": 262144,
+            "workload_probes": 0,
+            "workload_small_files": 40
+          }
+        }
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "mixed",
+        "link_profile": "baseline",
+        "repeat": 3,
+        "exit_code": 0,
+        "duration_ms": 11352,
+        "files": 56,
+        "bytes": 12189696,
+        "retries": 0,
+        "errors": 0,
+        "refused": 0,
+        "metrics": {
+          "schema_version": 1,
+          "note": "phases are wall clock; operation totals are cumulative across parallel workers and are normally larger than the phase they belong to",
+          "process": {
+            "wall_ms": 11354.31,
+            "user_cpu_ms": 242.68,
+            "sys_cpu_ms": 247.74,
+            "cpu_percent": 4.32,
+            "max_rss_bytes": 14958592,
+            "go_total_alloc_bytes": 5486472,
+            "go_mallocs": 21954,
+            "go_heap_sys_bytes": 9404416,
+            "go_gc_count": 3,
+            "go_gc_pause_total_ms": 1.218829,
+            "go_peak_goroutines": 1246,
+            "go_max_procs": 4,
+            "disk_read_bytes": 0,
+            "disk_write_bytes": 40960,
+            "net_read_bytes": 62564,
+            "net_write_bytes": 12279356
+          },
+          "phases": [
+            {
+              "name": "upload",
+              "wall_ms": 10756.32,
+              "count": 1
+            },
+            {
+              "name": "connect",
+              "wall_ms": 390.55,
+              "count": 1
+            },
+            {
+              "name": "cleanup",
+              "wall_ms": 107.26,
+              "count": 1
+            },
+            {
+              "name": "sweep_stale_temps",
+              "wall_ms": 55.7,
+              "count": 1
+            },
+            {
+              "name": "create_dirs",
+              "wall_ms": 40.5,
+              "count": 1
+            },
+            {
+              "name": "local_scan",
+              "wall_ms": 1.86,
+              "count": 1
+            }
+          ],
+          "operations": [
+            {
+              "name": "file_upload",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 230014.5,
+              "avg_ms": 4107.4,
+              "min_ms": 194.92,
+              "p50_ms": 4212.81,
+              "p90_ms": 6172.59,
+              "p99_ms": 10754.11,
+              "max_ms": 10754.11
+            },
+            {
+              "name": "sftp_write",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 97400.55,
+              "avg_ms": 1739.3,
+              "min_ms": 135.9,
+              "p50_ms": 1089.4,
+              "p90_ms": 3492.75,
+              "p99_ms": 9185.49,
+              "max_ms": 9185.49
+            },
+            {
+              "name": "sftp_chmod",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 28726.25,
+              "avg_ms": 512.97,
+              "min_ms": 12.86,
+              "p50_ms": 559.98,
+              "p90_ms": 900.16,
+              "p99_ms": 2363.12,
+              "max_ms": 2363.12
+            },
+            {
+              "name": "sftp_rename",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 28219,
+              "avg_ms": 503.91,
+              "min_ms": 13.07,
+              "p50_ms": 354.56,
+              "p90_ms": 1069.79,
+              "p99_ms": 2363.45,
+              "max_ms": 2363.45
+            },
+            {
+              "name": "sftp_open",
+              "count": 56,
+              "errors": 0,
+              "total_ms": 860.06,
+              "avg_ms": 15.36,
+              "min_ms": 13.15,
+              "p50_ms": 14.6,
+              "p90_ms": 19.68,
+              "p99_ms": 20.42,
+              "max_ms": 20.42
+            },
+            {
+              "name": "sftp_readdir",
+              "count": 9,
+              "errors": 0,
+              "total_ms": 481.99,
+              "avg_ms": 53.55,
+              "min_ms": 52.71,
+              "p50_ms": 53.25,
+              "p90_ms": 54.15,
+              "p99_ms": 54.15,
+              "max_ms": 54.15
+            },
+            {
+              "name": "ssh_connect",
+              "count": 1,
+              "errors": 0,
+              "total_ms": 351.42,
+              "avg_ms": 351.42,
+              "min_ms": 351.42,
+              "p50_ms": 351.42,
+              "p90_ms": 351.42,
+              "p99_ms": 351.42,
+              "max_ms": 351.42
+            },
+            {
+              "name": "sftp_mkdirall",
+              "count": 8,
+              "errors": 0,
+              "total_ms": 319.28,
+              "avg_ms": 39.91,
+              "min_ms": 39.36,
+              "p50_ms": 39.92,
+              "p90_ms": 40.4,
+              "p99_ms": 40.4,
+              "max_ms": 40.4
+            },
+            {
+              "name": "sftp_realpath",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 39.11,
+              "avg_ms": 13.04,
+              "min_ms": 12.88,
+              "p50_ms": 13.11,
+              "p90_ms": 13.11,
+              "p99_ms": 13.11,
+              "max_ms": 13.11
+            }
+          ],
+          "counters": {
+            "auto_changes": 0,
+            "auto_final_connections": 8,
+            "auto_initial_concurrency": 56,
+            "auto_initial_connections": 8,
+            "auto_initial_request_concurrency": 64,
+            "auto_spread_decreases": 0,
+            "auto_spread_increases": 0,
+            "bytes_uploaded": 12189696,
+            "config_concurrency": 56,
+            "config_connections": 8,
+            "config_request_concurrency": 64,
+            "connections_opened": 8,
+            "connections_pool_size": 8,
+            "connections_used": 8,
+            "dirs_deleted": 0,
+            "files_deleted": 0,
+            "files_skipped": 0,
+            "files_uploaded": 56,
+            "link_bdp_bytes": 4834,
+            "link_handshake_us": 351424,
+            "link_observed_stream_bytes_per_second": 141660,
+            "link_rtt_us": 13113,
+            "link_stream_bytes_per_second": 0,
+            "local_read_bytes": 12189696,
+            "workload_bytes": 12189696,
+            "workload_files": 56,
+            "workload_largest_bytes": 2097152,
+            "workload_p50_bytes": 16384,
+            "workload_p90_bytes": 262144,
+            "workload_probes": 0,
+            "workload_small_files": 40
+          }
+        }
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "large",
+        "link_profile": "baseline",
+        "repeat": 1,
+        "exit_code": 0,
+        "duration_ms": 42776,
+        "files": 2,
+        "bytes": 33554432,
+        "retries": 0,
+        "errors": 0,
+        "refused": 0,
+        "metrics": {
+          "schema_version": 1,
+          "note": "phases are wall clock; operation totals are cumulative across parallel workers and are normally larger than the phase they belong to",
+          "process": {
+            "wall_ms": 42778.68,
+            "user_cpu_ms": 423.66,
+            "sys_cpu_ms": 507.17,
+            "cpu_percent": 2.18,
+            "max_rss_bytes": 9494528,
+            "go_total_alloc_bytes": 1311840,
+            "go_mallocs": 12115,
+            "go_heap_sys_bytes": 7503872,
+            "go_gc_count": 0,
+            "go_gc_pause_total_ms": 0,
+            "go_peak_goroutines": 159,
+            "go_max_procs": 4,
+            "disk_read_bytes": 43286528,
+            "disk_write_bytes": 20480,
+            "net_read_bytes": 78374,
+            "net_write_bytes": 33666572
+          },
+          "phases": [
+            {
+              "name": "upload",
+              "wall_ms": 42229.31,
+              "count": 1
+            },
+            {
+              "name": "connect",
+              "wall_ms": 412.27,
+              "count": 1
+            },
+            {
+              "name": "sweep_stale_temps",
+              "wall_ms": 57.39,
+              "count": 1
+            },
+            {
+              "name": "create_dirs",
+              "wall_ms": 40.25,
+              "count": 1
+            },
+            {
+              "name": "cleanup",
+              "wall_ms": 27.1,
+              "count": 1
+            },
+            {
+              "name": "local_scan",
+              "wall_ms": 9.85,
+              "count": 1
+            }
+          ],
+          "operations": [
+            {
+              "name": "file_upload",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 81849.65,
+              "avg_ms": 40924.82,
+              "min_ms": 39621.34,
+              "p50_ms": 42228.31,
+              "p90_ms": 42228.31,
+              "p99_ms": 42228.31,
+              "max_ms": 42228.31
+            },
+            {
+              "name": "sftp_write",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 81268.92,
+              "avg_ms": 40634.46,
+              "min_ms": 39080.27,
+              "p50_ms": 42188.65,
+              "p90_ms": 42188.65,
+              "p99_ms": 42188.65,
+              "max_ms": 42188.65
+            },
+            {
+              "name": "ssh_connect",
+              "count": 1,
+              "errors": 0,
+              "total_ms": 373.43,
+              "avg_ms": 373.43,
+              "min_ms": 373.43,
+              "p50_ms": 373.43,
+              "p90_ms": 373.43,
+              "p99_ms": 373.43,
+              "max_ms": 373.43
+            },
+            {
+              "name": "sftp_readdir",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 161.57,
+              "avg_ms": 53.86,
+              "min_ms": 52.12,
+              "p50_ms": 52.17,
+              "p90_ms": 57.28,
+              "p99_ms": 57.28,
+              "max_ms": 57.28
+            },
+            {
+              "name": "sftp_mkdirall",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 79.84,
+              "avg_ms": 39.92,
+              "min_ms": 39.67,
+              "p50_ms": 40.17,
+              "p90_ms": 40.17,
+              "p99_ms": 40.17,
+              "max_ms": 40.17
+            },
+            {
+              "name": "sftp_chmod",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 77.99,
+              "avg_ms": 38.99,
+              "min_ms": 12.9,
+              "p50_ms": 65.09,
+              "p90_ms": 65.09,
+              "p99_ms": 65.09,
+              "max_ms": 65.09
+            },
+            {
+              "name": "sftp_realpath",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 38.82,
+              "avg_ms": 12.94,
+              "min_ms": 12.78,
+              "p50_ms": 13.01,
+              "p90_ms": 13.03,
+              "p99_ms": 13.03,
+              "max_ms": 13.03
+            },
+            {
+              "name": "sftp_rename",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 27.34,
+              "avg_ms": 13.67,
+              "min_ms": 13.21,
+              "p50_ms": 14.13,
+              "p90_ms": 14.13,
+              "p99_ms": 14.13,
+              "max_ms": 14.13
+            },
+            {
+              "name": "sftp_open",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 26.84,
+              "avg_ms": 13.42,
+              "min_ms": 13.37,
+              "p50_ms": 13.46,
+              "p90_ms": 13.46,
+              "p99_ms": 13.46,
+              "max_ms": 13.46
+            }
+          ],
+          "counters": {
+            "auto_changes": 0,
+            "auto_final_connections": 2,
+            "auto_initial_concurrency": 2,
+            "auto_initial_connections": 2,
+            "auto_initial_request_concurrency": 64,
+            "auto_spread_decreases": 0,
+            "auto_spread_increases": 0,
+            "bytes_uploaded": 33554432,
+            "config_concurrency": 2,
+            "config_connections": 2,
+            "config_request_concurrency": 64,
+            "connections_opened": 2,
+            "connections_pool_size": 8,
+            "connections_used": 2,
+            "dirs_deleted": 0,
+            "files_deleted": 0,
+            "files_skipped": 0,
+            "files_uploaded": 2,
+            "link_bdp_bytes": 4797,
+            "link_handshake_us": 373424,
+            "link_observed_stream_bytes_per_second": 397289,
+            "link_rtt_us": 13014,
+            "link_stream_bytes_per_second": 0,
+            "local_read_bytes": 33554432,
+            "workload_bytes": 33554432,
+            "workload_files": 2,
+            "workload_largest_bytes": 16777216,
+            "workload_p50_bytes": 16777216,
+            "workload_p90_bytes": 16777216,
+            "workload_probes": 0,
+            "workload_small_files": 0
+          }
+        }
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "large",
+        "link_profile": "baseline",
+        "repeat": 2,
+        "exit_code": 0,
+        "duration_ms": 57454,
+        "files": 2,
+        "bytes": 33554432,
+        "retries": 0,
+        "errors": 0,
+        "refused": 0,
+        "metrics": {
+          "schema_version": 1,
+          "note": "phases are wall clock; operation totals are cumulative across parallel workers and are normally larger than the phase they belong to",
+          "process": {
+            "wall_ms": 57554.34,
+            "user_cpu_ms": 528.46,
+            "sys_cpu_ms": 558.33,
+            "cpu_percent": 1.89,
+            "max_rss_bytes": 8863744,
+            "go_total_alloc_bytes": 1305864,
+            "go_mallocs": 12116,
+            "go_heap_sys_bytes": 7569408,
+            "go_gc_count": 0,
+            "go_gc_pause_total_ms": 0,
+            "go_peak_goroutines": 158,
+            "go_max_procs": 4,
+            "disk_read_bytes": 26099712,
+            "disk_write_bytes": 20480,
+            "net_read_bytes": 78478,
+            "net_write_bytes": 33666608
+          },
+          "phases": [
+            {
+              "name": "upload",
+              "wall_ms": 56436.43,
+              "count": 1
+            },
+            {
+              "name": "connect",
+              "wall_ms": 515.08,
+              "count": 1
+            },
+            {
+              "name": "cleanup",
+              "wall_ms": 210.66,
+              "count": 1
+            },
+            {
+              "name": "sweep_stale_temps",
+              "wall_ms": 53.2,
+              "count": 1
+            },
+            {
+              "name": "create_dirs",
+              "wall_ms": 40.39,
+              "count": 1
+            },
+            {
+              "name": "local_scan",
+              "wall_ms": 7.12,
+              "count": 1
+            }
+          ],
+          "operations": [
+            {
+              "name": "file_upload",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 93119.89,
+              "avg_ms": 46559.95,
+              "min_ms": 36814.54,
+              "p50_ms": 56305.35,
+              "p90_ms": 56305.35,
+              "p99_ms": 56305.35,
+              "max_ms": 56305.35
+            },
+            {
+              "name": "sftp_write",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 92018.94,
+              "avg_ms": 46009.47,
+              "min_ms": 36774.54,
+              "p50_ms": 55244.4,
+              "p90_ms": 55244.4,
+              "p99_ms": 55244.4,
+              "max_ms": 55244.4
+            },
+            {
+              "name": "ssh_connect",
+              "count": 1,
+              "errors": 0,
+              "total_ms": 475.58,
+              "avg_ms": 475.58,
+              "min_ms": 475.58,
+              "p50_ms": 475.58,
+              "p90_ms": 475.58,
+              "p99_ms": 475.58,
+              "max_ms": 475.58
+            },
+            {
+              "name": "sftp_readdir",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 158.59,
+              "avg_ms": 52.86,
+              "min_ms": 52.81,
+              "p50_ms": 52.84,
+              "p90_ms": 52.94,
+              "p99_ms": 52.94,
+              "max_ms": 52.94
+            },
+            {
+              "name": "sftp_rename",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 94.71,
+              "avg_ms": 47.36,
+              "min_ms": 13.24,
+              "p50_ms": 81.46,
+              "p90_ms": 81.46,
+              "p99_ms": 81.46,
+              "max_ms": 81.46
+            },
+            {
+              "name": "sftp_mkdirall",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 80.1,
+              "avg_ms": 40.05,
+              "min_ms": 39.85,
+              "p50_ms": 40.25,
+              "p90_ms": 40.25,
+              "p99_ms": 40.25,
+              "max_ms": 40.25
+            },
+            {
+              "name": "sftp_chmod",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 44.75,
+              "avg_ms": 22.38,
+              "min_ms": 13.21,
+              "p50_ms": 31.54,
+              "p90_ms": 31.54,
+              "p99_ms": 31.54,
+              "max_ms": 31.54
+            },
+            {
+              "name": "sftp_realpath",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 39.48,
+              "avg_ms": 13.16,
+              "min_ms": 13.12,
+              "p50_ms": 13.14,
+              "p90_ms": 13.21,
+              "p99_ms": 13.21,
+              "max_ms": 13.21
+            },
+            {
+              "name": "sftp_open",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 28.15,
+              "avg_ms": 14.08,
+              "min_ms": 13.47,
+              "p50_ms": 14.69,
+              "p90_ms": 14.69,
+              "p99_ms": 14.69,
+              "max_ms": 14.69
+            }
+          ],
+          "counters": {
+            "auto_changes": 0,
+            "auto_final_connections": 2,
+            "auto_initial_concurrency": 2,
+            "auto_initial_connections": 2,
+            "auto_initial_request_concurrency": 64,
+            "auto_spread_decreases": 0,
+            "auto_spread_increases": 0,
+            "bytes_uploaded": 33554432,
+            "config_concurrency": 2,
+            "config_connections": 2,
+            "config_request_concurrency": 64,
+            "connections_opened": 2,
+            "connections_pool_size": 8,
+            "connections_used": 2,
+            "dirs_deleted": 0,
+            "files_deleted": 0,
+            "files_skipped": 0,
+            "files_uploaded": 2,
+            "link_bdp_bytes": 4845,
+            "link_handshake_us": 475579,
+            "link_observed_stream_bytes_per_second": 297314,
+            "link_rtt_us": 13143,
+            "link_stream_bytes_per_second": 0,
+            "local_read_bytes": 33554432,
+            "workload_bytes": 33554432,
+            "workload_files": 2,
+            "workload_largest_bytes": 16777216,
+            "workload_p50_bytes": 16777216,
+            "workload_p90_bytes": 16777216,
+            "workload_probes": 0,
+            "workload_small_files": 0
+          }
+        }
+      },
+      {
+        "label": "candidate",
+        "ref": "v3.8.6 (3ce56c4)",
+        "scenario": "large",
+        "link_profile": "baseline",
+        "repeat": 3,
+        "exit_code": 0,
+        "duration_ms": 49331,
+        "files": 2,
+        "bytes": 33554432,
+        "retries": 0,
+        "errors": 0,
+        "refused": 0,
+        "metrics": {
+          "schema_version": 1,
+          "note": "phases are wall clock; operation totals are cumulative across parallel workers and are normally larger than the phase they belong to",
+          "process": {
+            "wall_ms": 49333.11,
+            "user_cpu_ms": 553.47,
+            "sys_cpu_ms": 637.1,
+            "cpu_percent": 2.41,
+            "max_rss_bytes": 9302016,
+            "go_total_alloc_bytes": 1308752,
+            "go_mallocs": 12076,
+            "go_heap_sys_bytes": 7503872,
+            "go_gc_count": 0,
+            "go_gc_pause_total_ms": 0,
+            "go_peak_goroutines": 158,
+            "go_max_procs": 4,
+            "disk_read_bytes": 46632960,
+            "disk_write_bytes": 20480,
+            "net_read_bytes": 78162,
+            "net_write_bytes": 33666572
+          },
+          "phases": [
+            {
+              "name": "upload",
+              "wall_ms": 48654.75,
+              "count": 1
+            },
+            {
+              "name": "connect",
+              "wall_ms": 507.28,
+              "count": 1
+            },
+            {
+              "name": "sweep_stale_temps",
+              "wall_ms": 78.53,
+              "count": 1
+            },
+            {
+              "name": "create_dirs",
+              "wall_ms": 40.19,
+              "count": 1
+            },
+            {
+              "name": "cleanup",
+              "wall_ms": 26.94,
+              "count": 1
+            },
+            {
+              "name": "local_scan",
+              "wall_ms": 0.28,
+              "count": 1
+            }
+          ],
+          "operations": [
+            {
+              "name": "file_upload",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 96802.03,
+              "avg_ms": 48401.02,
+              "min_ms": 48148.45,
+              "p50_ms": 48653.58,
+              "p90_ms": 48653.58,
+              "p99_ms": 48653.58,
+              "max_ms": 48653.58
+            },
+            {
+              "name": "sftp_write",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 96099.16,
+              "avg_ms": 48049.58,
+              "min_ms": 47489.63,
+              "p50_ms": 48609.54,
+              "p90_ms": 48609.54,
+              "p99_ms": 48609.54,
+              "max_ms": 48609.54
+            },
+            {
+              "name": "ssh_connect",
+              "count": 1,
+              "errors": 0,
+              "total_ms": 466.93,
+              "avg_ms": 466.93,
+              "min_ms": 466.93,
+              "p50_ms": 466.93,
+              "p90_ms": 466.93,
+              "p99_ms": 466.93,
+              "max_ms": 466.93
+            },
+            {
+              "name": "sftp_readdir",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 235.29,
+              "avg_ms": 78.43,
+              "min_ms": 78.39,
+              "p50_ms": 78.44,
+              "p90_ms": 78.46,
+              "p99_ms": 78.46,
+              "max_ms": 78.46
+            },
+            {
+              "name": "sftp_mkdirall",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 80.2,
+              "avg_ms": 40.1,
+              "min_ms": 40.09,
+              "p50_ms": 40.11,
+              "p90_ms": 40.11,
+              "p99_ms": 40.11,
+              "max_ms": 40.11
+            },
+            {
+              "name": "sftp_realpath",
+              "count": 3,
+              "errors": 0,
+              "total_ms": 40.33,
+              "avg_ms": 13.44,
+              "min_ms": 12.93,
+              "p50_ms": 13.38,
+              "p90_ms": 14.02,
+              "p99_ms": 14.02,
+              "max_ms": 14.02
+            },
+            {
+              "name": "sftp_rename",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 30.42,
+              "avg_ms": 15.21,
+              "min_ms": 13.34,
+              "p50_ms": 17.08,
+              "p90_ms": 17.08,
+              "p99_ms": 17.08,
+              "max_ms": 17.08
+            },
+            {
+              "name": "sftp_chmod",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 29.45,
+              "avg_ms": 14.73,
+              "min_ms": 13.38,
+              "p50_ms": 16.08,
+              "p90_ms": 16.08,
+              "p99_ms": 16.08,
+              "max_ms": 16.08
+            },
+            {
+              "name": "sftp_open",
+              "count": 2,
+              "errors": 0,
+              "total_ms": 27.08,
+              "avg_ms": 13.54,
+              "min_ms": 13.51,
+              "p50_ms": 13.57,
+              "p90_ms": 13.57,
+              "p99_ms": 13.57,
+              "max_ms": 13.57
+            }
+          ],
+          "counters": {
+            "auto_changes": 0,
+            "auto_final_connections": 2,
+            "auto_initial_concurrency": 2,
+            "auto_initial_connections": 2,
+            "auto_initial_request_concurrency": 64,
+            "auto_spread_decreases": 0,
+            "auto_spread_increases": 0,
+            "bytes_uploaded": 33554432,
+            "config_concurrency": 2,
+            "config_connections": 2,
+            "config_request_concurrency": 64,
+            "connections_opened": 2,
+            "connections_pool_size": 8,
+            "connections_used": 2,
+            "dirs_deleted": 0,
+            "files_deleted": 0,
+            "files_skipped": 0,
+            "files_uploaded": 2,
+            "link_bdp_bytes": 4933,
+            "link_handshake_us": 466934,
+            "link_observed_stream_bytes_per_second": 344822,
+            "link_rtt_us": 13382,
+            "link_stream_bytes_per_second": 0,
+            "local_read_bytes": 33554432,
+            "workload_bytes": 33554432,
+            "workload_files": 2,
+            "workload_largest_bytes": 16777216,
+            "workload_p50_bytes": 16777216,
+            "workload_p90_bytes": 16777216,
+            "workload_probes": 0,
+            "workload_small_files": 0
+          }
+        }
+      }
+    ]
+  }
+}
