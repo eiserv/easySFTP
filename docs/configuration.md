@@ -398,6 +398,18 @@ exclude: |
 
 - Patterns are matched against the path **relative to the local root** of each
   deployment.
+- The semantics are git's own, not a regex approximation: `?` is a
+  one-character wildcard, `[abc]` / `[!abc]` are character classes, `**`
+  spans directories, a slash anywhere but the end anchors the pattern at
+  the root, and `(`, `+`, `$`, `^`, `|` are literal name characters. The
+  suite pins this with a differential test that runs `git
+  check-ignore` over every table row when git is on PATH.
+- A pattern that cannot be parsed (an unterminated `[...]` class at any
+  unescaped bracket of the line, a lone trailing backslash) fails the run
+  with the offending line named instead of being silently dropped. An
+  escaped `\[` is a literal bracket, not a class, and parses.
+- An escaped trailing space (`foo` + backslash + space) is a literal
+  name; an unescaped trailing space is trimmed, a tab never is.
 - `!pattern` re-includes files excluded by an earlier pattern.
 - In the config file, per-deployment `exclude` lists add to `defaults.exclude`.
 - An ignored directory (e.g. `node_modules/`) is skipped without being walked
@@ -405,6 +417,21 @@ exclude: |
   automatically disabled as soon as any pattern is a `!` re-include, because a
   re-include may point below an ignored directory; results are identical either
   way, only planning speed differs.
+- One difference from git is deliberate: a `!` re-include below an ignored
+  directory is honored when it is later than every excluded ancestor
+  (`dist/` then `!dist/keep.txt` uploads `keep.txt`), where git stops at the
+  excluded directory and never reaches the file. The pruning above is what
+  makes that both possible and exact: with pruning off, every file is walked
+  and the last matching pattern wins. An earlier re-include does not shield
+  a path from a directory exclude that comes after it (`!important.txt` then
+  `secrets/` still excludes `secrets/important.txt`; `a/b/` then
+  `!a/b/x.txt` then `a/` still excludes `a/b/x.txt`, because `a/` is the
+  later line even though the directory it excludes is shallower), the same
+  last-line rule git applies everywhere else.
+- Character classes negate with `!` or `^` (`[!o]`, `[^o]`), as git's
+  fnmatch does. POSIX classes inside brackets (`[[:digit:]]`) are not
+  supported and match literally; that is the one known class difference
+  from git.
 
 ## Outputs
 
