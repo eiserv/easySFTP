@@ -3,7 +3,7 @@ module github.com/eiserv/easySFTP
 go 1.26.7
 
 require (
-	github.com/pkg/sftp v1.13.11
+	github.com/pkg/sftp v1.13.12
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/text v0.43.0
