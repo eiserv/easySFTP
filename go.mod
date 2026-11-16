@@ -4,13 +4,13 @@ go 1.26.7
 
 require (
 	github.com/pkg/sftp v1.13.12
-	golang.org/x/crypto v0.58.0
-	golang.org/x/sync v0.24.0
-	golang.org/x/text v0.43.0
+	golang.org/x/crypto v0.59.0
+	golang.org/x/sync v0.25.0
+	golang.org/x/text v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	github.com/kr/fs v0.1.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 )
